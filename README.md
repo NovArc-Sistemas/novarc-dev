@@ -43,7 +43,9 @@ repositório sempre valem acima das skills: se ele exigir autorização para pus
 ## Instalação
 
 **Antes de começar:** Claude Code 2.1.293 ou mais novo. Para a revisão de plano, o
-[Codex CLI](https://github.com/openai/codex) instalado e autenticado.
+[Codex CLI](https://github.com/openai/codex) instalado e autenticado numa conta com acesso ao modelo `gpt-6-sol`,
+que a `novarc-codex-review` fixa em toda rodada. Sem ele, a revisão para e avisa; fale com a NOVARC antes de começar
+o primeiro conjunto.
 
 No prompt do Claude Code:
 
