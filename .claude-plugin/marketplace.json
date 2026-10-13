@@ -1,0 +1,14 @@
+{
+  "name": "novarc-dev",
+  "owner": {
+    "name": "NOVARC Sistemas"
+  },
+  "description": "Skills de desenvolvimento da NOVARC para os desenvolvedores dos clientes: construção e encerramento de conjuntos de specs ligados ao artefato de planejamento.",
+  "plugins": [
+    {
+      "name": "novarc",
+      "source": "./",
+      "description": "novarc-session-build, novarc-session-end, novarc-codex-review e o mod Maestro."
+    }
+  ]
+}

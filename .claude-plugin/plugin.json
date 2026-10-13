@@ -1,0 +1,9 @@
+{
+  "name": "novarc",
+  "description": "NOVARC development skills for client developers: novarc-session-build (build a set of specs from a NOVARC planning artifact), novarc-session-end (close the branch and report back to the artifact), novarc-codex-review (adversarial plan review) and the Maestro mod (execution band above the prompt, /maestro pane, milestone hooks).",
+  "author": {
+    "name": "NOVARC Sistemas",
+    "email": "projetos@novarcsistemas.com"
+  },
+  "types": "./types/index.d.ts"
+}
