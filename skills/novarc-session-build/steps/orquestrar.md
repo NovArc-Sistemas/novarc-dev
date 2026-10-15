@@ -7,7 +7,7 @@ Input: `/novarc-session-build orquestrar <artifact url> [C01 C02 ...]` (no ids =
 
 Why this mode exists: each set session is its own session-build orchestrator, and the original has no arbitration
 between runs (see `<skills>/novarc-session-build/core/steps/step-05-orchestrate.md` §5.3 and §5.7). This session is that
-arbiter: a fork budget, one slot per kind at a time (`verify`, `producao`), visual validation, the signal that
+arbiter: a builder budget, one slot per kind at a time (`verify`, `producao`), visual validation, the signal that
 closes a set, and telling the user what can start.
 
 ## 1. Name and ledger
@@ -38,14 +38,32 @@ closes a set, and telling the user what can start.
    `situacao !== "parcial"`).
 5. Show the user a pt-BR table: conjunto, título, etapa, status, validação, pode começar (sim / por quê não).
 
-## 3. Dispatch rules (the user pastes each prompt into a new session)
+## 3. Dispatch rules (opening a set session)
+
+Three ways, all with the set prompt (`conjuntos[].prompt`) **verbatim**; the only edit ever made is dropping the
+`Fechamento:` line in way 1 when the user did not choose it (that line is the user's authorization):
+
+1. **The user asks in this session** ("abre C01", "pode abrir C02 e C03"). The `Fechamento:` line authorizes an
+   automatic close-out only when the user saw it and chose it, so: pass the prompt verbatim when the request asked
+   for it ("abre C01 com fechamento") or answered yes after you quoted the line; otherwise pass it **without** the
+   `Fechamento:` line (the close-out stays manual, the same effect as Willian deleting it from a pasted prompt), and
+   say so in one line. Then open each with
+   `mcp__ccd_session__start_session`, `initiation: "user_asked"`, `context: "fresh"`, `use_worktree: false` (a set
+   session runs on the client repo's main checkout and opens its own spec sessions), `name: "novarc-<codigo>-<C>"`
+   cut to 24 characters, `prompt` = the set prompt.
+2. **A set becomes startable in a turn the user did not write** (a `CONJUNTO <C> merge` message): the app refuses a
+   start there. Propose it with `initiation: "own_initiative"` and the full prompt; the card shows it, `Fechamento:`
+   line included, so the click is the same act as pasting it. Never work around the refusal.
+3. **The user pastes the prompt** into a new session themselves. Still valid.
+
+The rules below decide **whether** a set may be offered, whichever way it opens.
 
 - **Default serial.** Give one set prompt (`conjuntos[].prompt`, verbatim) at a time, in `ordem`.
 - **`paraleloCom` is permission, not an instruction.** A second set may run alongside only when one lists the other
-  in `paraleloCom`, neither depends on the other, and the fork budget allows it.
-- **Fork budget, default 3, across all set sessions on this machine.** Live units = forks recorded in each running
-  set's `<main checkout>/.superpowers/session-build/*/ledger.md` whose `fork-<slug>.md` has no `DONE` line, plus one
-  per running N = 1 set session. Before offering a set, live units + its in-scope spec count (1 when N = 1) must not
+  in `paraleloCom`, neither depends on the other, and the builder budget allows it.
+- **Builder budget, default 3, across all set sessions on this machine.** Live units = builders (linked spec
+  sessions or forks) recorded in each running set's `<main checkout>/.superpowers/session-build/*/ledger.md` whose
+  `fork-<slug>.md` has no `DONE` line, plus one per running N = 1 set session. Before offering a set, live units + its in-scope spec count (1 when N = 1) must not
   exceed the budget; otherwise say which set it waits for. The user may change the budget in this session.
 - Before offering anything, measure the machine once (process count / load), as step-05 §5.4 duty 3 says. A loaded
   machine waits.
@@ -116,12 +134,13 @@ writes the block. Lift it with `LIBERA <C>`. Never write `execucao/{C}` yourself
 For each running set's specs, recompute the etapa from evidence (table "Reconciliation sources" in
 `../references/milestones.md`: `CODEX APPROVED` lines, `git ls-remote origin <branch>`, `gh pr list --head <branch>`,
 `git merge-base --is-ancestor` after `git fetch origin`). When the evidence is ahead of the database, send
-`MARCO <S> <etapa> <proof>` to that set's session (its `sessao` field). If that session is gone, tell the user which
+`MARCO <S> <etapa> <proof>` to that set's session, `execucao/{C}.sessao` (never `specs/{S}.sessao`, which names the
+last writer, possibly a spec session). If that session is gone, tell the user which
 milestone is missing; `/novarc-session-end` reconciles it at close-out.
 
 ## 7. Report
 
-On request and whenever a set concludes: the pt-BR table of section 2, live forks against the budget, the verify
+On request and whenever a set concludes: the pt-BR table of section 2, live builders against the budget, the verify
 queue, validation results with failures, and the next prompt(s) to paste.
 
 ## Red flags - stop
@@ -130,6 +149,6 @@ queue, validation results with failures, and the next prompt(s) to paste.
 - About to grant a second slot of a kind while one of that kind is outstanding.
 - About to accept a `LIBERA` from a session that does not hold that grant.
 - About to send `FECHA` with a validation older than the head, an open block, or a dependency not concluded.
-- About to offer a set whose dependency is not concluded, or beyond the fork budget.
+- About to offer a set whose dependency is not concluded, or beyond the builder budget.
 - About to treat `paraleloCom` as an order to run in parallel.
 - About to write code or edit a set's worktree.

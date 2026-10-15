@@ -1,6 +1,6 @@
 ---
 name: novarc-session-build
-description: Use when a NOVARC planning artifact drives the build - "/novarc-session-build conjunto <link> C01", "/novarc-session-build orquestrar <link>", "roda o conjunto", "orquestra os conjuntos". Mode conjunto builds one set (conjunto) of specs by running the original session-build by reference with a short override list, writing milestones to the artifact database. Mode orquestrar coordinates the set sessions (fork budget, one verify slot at a time, visual validation against the simulator). NOT for a build without a NOVARC planning artifact (use a plain session-build flow), NOT for planning or writing specs (NOVARC's planning skills do that), NOT for closing a branch (use novarc-session-end).
+description: Use when a NOVARC planning artifact drives the build - "/novarc-session-build conjunto <link> C01", "/novarc-session-build orquestrar <link>", "roda o conjunto", "orquestra os conjuntos". Mode conjunto builds one set (conjunto) of specs by running the original session-build by reference with a short override list, writing milestones to the artifact database. Mode orquestrar coordinates the set sessions (builder budget, one verify slot at a time, visual validation against the simulator). NOT for a build without a NOVARC planning artifact (use a plain session-build flow), NOT for planning or writing specs (NOVARC's planning skills do that), NOT for closing a branch (use novarc-session-end).
 ---
 
 # NOVARC Session Build
@@ -45,18 +45,23 @@ explicitly override, the original wins. Where the original says `codex-review`, 
 
 NOVARC additions, binding in both modes:
 
-1. **One writer per field.** The set session process (the session-build main thread: inline builder when N = 1,
-   session-build orchestrator when N >= 2, plus the `novarc` mod loaded in that session) is the only writer of
-   `execucao/{C}` and of every `specs/{id}` field except `validacao`. The NOVARC orchestrator writes ONLY
-   `specs/{id}.validacao`. Forks never call `ArtifactData`.
+1. **One writer per field.** The set session (the session-build main thread: inline builder when N = 1,
+   session-build orchestrator when N >= 2) is the only writer of `execucao/{C}`. Each `specs/{id}` document, every
+   field except `validacao`, has exactly one writer: the session that builds that spec. N = 1: the set session.
+   N >= 2: that spec's linked session during its build phase, and the set session before and after it, by the
+   ownership-by-phase table in `references/milestones.md` (the `novarc` mod loaded in the spec session writes the
+   milestones of its own pushes); on the fork fallback the set session writes for the fork, because forks never
+   call `ArtifactData`. A spec session
+   never writes another spec's document or `execucao/*`. The NOVARC orchestrator writes ONLY `specs/{id}.validacao`.
 2. **Derived, never stored.** `execucao/{C}` stores only `{sessao, iniciadoEm, bloqueios}`. A set's etapa, branches,
    PRs, validation state and displayed status are computed on read from its `specs/{id}` documents
    (`references/milestones.md`, "Derivation").
 3. **Every write is pinned.** `get`, then `update` with `if_version` of the writer's own fields only. `set` only to
    create a missing document (no `if_version`). Never `set` over an existing document.
 4. **The orchestrator has a name.** It is `execucao.orquestrador` from plano.json, addressed by that name with
-   `SendMessage`. Never `"main"` for set session to orchestrator traffic. (Inside a set, forks still report to their
-   own session-build orchestrator with `SendMessage to: "main"` as the fork contract says; that is unchanged.)
+   `SendMessage`. Never `"main"` for set session to orchestrator traffic. Inside a set, builders report to their
+   own set session: linked spec sessions to its `local_...` id, forks with `SendMessage to: "main"`. Only the set
+   session talks to the NOVARC orchestrator.
 
 ## Message vocabulary (one line each, at the start of the message)
 
@@ -69,14 +74,15 @@ NOVARC additions, binding in both modes:
 | orq -> set | `HOLD <C> <reason>` | set session writes `bloqueios.hold` and holds at the next phase boundary |
 | orq -> set | `LIBERA <C>` | hold lifted; set session verifies and clears `bloqueios.hold` |
 | orq -> set | `VALIDACAO <C-Sxx> <aprovado\|reprovado> <falhas>` | courtesy copy of the durable `specs/{id}.validacao` |
-| orq -> set | `MARCO <C-Sxx> <etapa> <proof>` | reconciliation: a milestone the orchestrator observed in git or the ledger that the database lacks; the set session re-verifies the proof and writes it |
+| orq -> set | `MARCO <C-Sxx> <etapa> <proof>` | reconciliation: a milestone the orchestrator observed in git or the ledger that the database lacks; the set session forwards it to the spec session while that session owns the document (until its `DONE` is accepted), otherwise re-verifies the proof and writes it |
 
 Reply to an incoming message by copying its `from` attribute as `to`.
 
 ## Authorization
 
 Identical to session-build's (invariant 1 of the original), for the specs of this set only, plus: writes to the
-artifact database collections `execucao` and `specs`, own documents only, with the field ownership above. Never a PR,
+artifact database collections `execucao` and `specs`, own documents only, with the field ownership above. A spec
+session is authorized for its own `specs/{id}` document only. Never a PR,
 never a delivery merge, never a hook bypass. The orchestrator mode builds nothing and writes no code.
 
 ## Red flags - stop
@@ -90,3 +96,5 @@ never a delivery merge, never a hook bypass. The orchestrator mode builds nothin
 - About to address the NOVARC orchestrator as `main`.
 - About to clear a `bloqueios` key without re-checking its specific cause.
 - About to let a fork call `ArtifactData`.
+- About to write, from a spec session, another spec's document or any `execucao/*` document.
+- About to message the NOVARC orchestrator from a spec session (only the set session talks to it).

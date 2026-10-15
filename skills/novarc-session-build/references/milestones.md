@@ -1,7 +1,8 @@
 # Milestones: database write procedure
 
-Used by the set session (conjunto mode, novarc-session-end) for `specs/{id}` and `execucao/{C}`, and by the
-orchestrator for `specs/{id}.validacao` only. Tool: `ArtifactData` with the artifact `url`.
+Used by the set session (conjunto mode, novarc-session-end) for `execucao/{C}` and, when it builds or writes for a
+fork, for `specs/{id}`; by each linked spec session for its own `specs/{id}` only; and by the orchestrator for
+`specs/{id}.validacao` only. Tool: `ArtifactData` with the artifact `url`.
 
 ## Etapa order (monotonic)
 
@@ -16,11 +17,11 @@ There is no `validado` etapa (validation lives in `validacao`) and no `bloqueado
 
 | Document | Fields this procedure writes | Writer |
 |---|---|---|
-| `specs/{id}` | `etapa`, `at`, `origem: "agente"`, `sessao`, plus when known: `branch`, `headSha`, `pr`, `revisao`, `reserva`, `desvios`, `pendings`, `bloqueios.<causa>` | set session |
+| `specs/{id}` | `etapa`, `at`, `origem: "agente"`, `sessao`, plus when known: `branch`, `headSha`, `pr`, `revisao`, `reserva`, `desvios`, `pendings`, `bloqueios.<causa>` | the spec's builder session: the set session when N = 1 or on the fork fallback, the linked spec session when N >= 2 (`reserva` and `revisao` stay with the set session, which claims at load) |
 | `specs/{id}` | `validacao: {resultado, sha, marcadoresOk, falhas: [{mudanca, n, motivo}]}` | orchestrator |
 | `execucao/{C}` | `sessao`, `iniciadoEm`, `bloqueios.<causa>` | set session |
 
-`sessao` = the set session's title. `at` = ISO timestamp in UTC. `headSha` is written with `branch-publicada` and
+`sessao` = the title of the session writing (the set session, or the spec session `novarc-<codigo>-<C>-<S>`). `at` = ISO timestamp in UTC. `headSha` is written with `branch-publicada` and
 again with every later push the ledger reports (`PUSHED <branch> <range>`), so a validation is bound to a commit.
 
 ## Write a milestone (target etapa T on `specs/{id}`)
@@ -31,10 +32,21 @@ again with every later push the ledger reports (`PUSHED <branch> <range>`), so a
 3. Otherwise `update` with `if_version` = the version just read and `data` = `{etapa: T, at, origem: "agente",
    sessao}` plus the known fields (`branch`, `headSha`, `pr`).
 4. On a version conflict: re-read and restart at step 2. At most 3 attempts in total.
-5. After the third failure: append to the session-build ledger
+5. After the third failure: append to the session-build ledger (a spec session adds `--fork <slug>`)
    `<skills>/novarc-session-build/core/scripts/ledger.py append --dir <abs ledger dir> --type NOTE --text "MARCO-FALHOU specs/<id> <T> <error>"`
    (ledger.py accepts only its known types, so the line is a `NOTE` whose text starts with `MARCO-FALHOU`), and name
    it in the run report to the user.
+
+**Ownership of a `specs/{id}` document moves by phase, never shared at one time** (N >= 2 with linked sessions):
+
+| Phase | Writer of `specs/{id}` (all fields but `validacao`) |
+|---|---|
+| load: `reserva`, `revisao`, `iniciado` | the set session |
+| build: `plano-aprovado`, `implementando`, `branch-publicada`, every later `headSha` | the spec session, from its first READY until the set session **accepts** its `DONE` (diff read, core step-05 duty 4); a `DONE` the diff refutes reopens the spec session and ownership never left it |
+| after the `DONE` is accepted: reconciliation, `VALIDACAO` rework that reopens the spec session, close-out (`pr-aberto`, `merge`) | the set session again; if it reopens the spec session for rework, ownership returns to that session until its next `DONE` |
+
+`sessao` is informational (the last writer's title). Routing never reads it: the set session is
+`execucao/{C}.sessao`, and the spec sessions are in the set's `ledger.md`.
 
 Never write a milestone to `execucao/{C}`: the set's etapa is derived.
 

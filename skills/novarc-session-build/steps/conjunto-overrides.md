@@ -27,6 +27,10 @@ exempt and the §1.2 premise re-validation is mandatory.
 - The dependency graph inside the set is derived from the specs as the original says; the set prompt's
   `dependeDe` was already checked by `conjunto-load.md`.
 - `PENDINGS-SOURCE`: none, unless a spec states it consumes entries of the project's pendings file.
+- `DECISIONS.md` (core step-02 §2.6) also carries, per spec, what `conjunto-load.md` §6 gathered from the
+  artifact, plus the artifact url, the spec id and the branch name of step-03 below.
+- SDD marks: when the set prompt has an `SDD:` line, it names the specs marked `sdd: on` and it wins; without the
+  line, core step-02 §2.6 decides.
 - **After the HALT is answered** with option A: for each spec write milestone `iniciado` (procedure in
   `../references/milestones.md`); create or update `execucao/{C}` with `{sessao, iniciadoEm}` (create with `set` when
   missing, else pinned `update`); send `CONJUNTO <C> iniciado <spec ids>` to the orchestrator.
@@ -37,37 +41,55 @@ exempt and the §1.2 premise re-validation is mandatory.
   `<execucao.branchPrefixo><spec id lowercased>-<slug>-<YYYYMMDD>`, for example
   `feature/c01-s02-sop-cobertura-20261012`. `<YYYYMMDD>` is the date in the set prompt. The client project's prefix
   replaces the original's `<type>/` (the global CLAUDE.md lets a project convention win).
-- Worktree: `.claude/worktrees/<spec id lowercased>-<slug>-<YYYYMMDD>`.
+- Worktree: `.claude/worktrees/<spec id lowercased>-<slug>-<YYYYMMDD>` for N = 1 and the fork fallback. A linked
+  spec session gets the worktree the app creates and creates the branch above inside it (core session contract).
 - Topology is the original's: N = 1 one branch and worktree, N >= 2 one per spec.
 
 ## step-04 and step-05: milestones
 
-The set session writes, per spec, from evidence it reads itself:
+Who writes (invariant 1): N = 1 the set session; N >= 2 each linked spec session writes its own spec, from its own
+evidence, by the procedure in `../references/milestones.md` (absolute path in its brief); on the fork fallback the set
+session writes for each fork. The writer writes, per spec, from evidence it reads itself:
 
 | Milestone | When | Evidence |
 |---|---|---|
 | `plano-aprovado` | that spec's `CODEX APPROVED` line exists | `ledger.md` (N = 1) or `fork-<slug>.md` (N >= 2), written by `ledger.py codex` |
-| `implementando` | N = 1: SDD starts on the plan. N >= 2: the fork's `GO <slug> phase 4` is sent | this session's own action |
+| `implementando` | N = 1: SDD starts on the plan. N >= 2: the builder's `GO <slug> phase 4` is sent (a spec session writes it when that GO arrives) | the writer's own action or received message |
 | `branch-publicada` | a `PUSHED <branch> <range>` line, confirmed by `git ls-remote origin <branch>` | write `branch` and `headSha` = the ls-remote sha |
 | (headSha only) | every later `PUSHED` of the same branch | pinned `update` of `headSha` |
 
-After each write send `CONJUNTO <C> <etapa> <spec id> [branch headSha]` to the orchestrator. A fork's `DONE` is a
-claim and writes nothing; the original's diff-before-accept duty still applies.
+After each write the set session sends `CONJUNTO <C> <etapa> <spec id> [branch headSha]` to the orchestrator; a spec
+session reports `NOTE MARCO <spec id> <etapa> [branch headSha]` to its set session (ledger and message), and the set
+session relays the `CONJUNTO` line. A builder's `DONE` is a claim and writes nothing; the original's
+diff-before-accept duty still applies.
 
 The `novarc` mod may already have written a milestone for a call it saw in this session; the procedure reads first
 and skips a reached etapa. Fork events come only from the ledger lines; never assume the mod saw a fork's push.
 
 ## step-05: dispatch payload
 
-Add two fields to the original launch payload (dispatch-prompts.md § Fork implementer):
+Linked spec session (core dispatch-prompts.md § Session implementer): add to the launch payload
+
+```
+artifact url:         <url>
+spec id:              <C0x-Syy>  (your spec folder: <arquivos.repo>)
+session name:         novarc-<codigo>-<C>-<S>   (the `sessao` you write)
+milestones procedure: <ABSOLUTE path of novarc-session-build/references/milestones.md>
+```
+
+and these directives: "You write your own `specs/<S>` document only (every field except `validacao`), pinned, by the
+milestones procedure; never `execucao/*`, never another spec. Report every milestone to the set session. Do not
+message the NOVARC orchestrator." The claim (`reserva`) stays the set session's, made at load; the spec session's
+first write replaces `sessao` with its own name.
+
+Fork fallback (core dispatch-prompts.md § Fork implementer): add
 
 ```
 artifact url:         <url>   (read-only reference: plano.json and the spec mirror. Never call ArtifactData.)
 spec id:              <C0x-Syy>  (your spec folder: <arquivos.repo>)
 ```
 
-Add one line to the fork's directives: "Do not message the NOVARC orchestrator; report to main only." Forks still
-report with `SendMessage to: "main"` to this session, exactly as the fork contract defines.
+and one line to the fork's directives: "Do not message the NOVARC orchestrator; report to main only."
 
 ## Cross-run verify slot
 
@@ -75,22 +97,29 @@ The NOVARC orchestrator arbitrates the branch-level suite across set sessions on
 
 - N = 1: before the branch-level gate of step-04 §4.6, send `PEDE verify <C> <branch>` and wait for
   `GO <C> verify <branch>`. After the push (or after a red gate is triaged), send `LIBERA verify <C> <branch>`.
-- N >= 2: when a fork sends `LOCK verify <branch>`, first send `PEDE verify <C> <branch>` to the orchestrator; grant
-  the fork's `GO <slug> verify <branch>` only after `GO <C> verify <branch>` arrives. On the fork's
+- N >= 2: when a builder sends `LOCK verify <branch>`, first send `PEDE verify <C> <branch>` to the orchestrator;
+  grant the builder's `GO <slug> verify <branch>` only after `GO <C> verify <branch>` arrives. On the builder's
   `RELEASE verify <branch>`, send `LIBERA verify <C> <branch>`. The original's local lock protocol is unchanged; this
-  adds an outer slot.
+  adds an outer slot. The same for `producao` (below): grant a builder's `GO <slug> migration|deploy ...` only after
+  `GO <C> producao <branch>`, and send `LIBERA producao <C> <branch>` when its `APPLIED` / `DEPLOYED` arrives and
+  is confirmed, or on any other exit of that builder after the grant (`BLOCKED`, `HOLD`, death). Before releasing on any exit
+  but a confirmed `APPLIED` / `DEPLOYED`, prove no write is in flight and reconcile the remote result: the remote
+  migration ledger (or the deployed function, re-downloaded) against the builder's file. A write that landed is
+  recorded as `APPLIED` / `DEPLOYED` on the builder's behalf; one you cannot settle is an escalation, and the slot
+  stays held until it is settled.
 - **Production writes take the outer `producao` slot.** Before applying a migration or deploying a function (the
   original step-04 §4.4, after the UTC re-stamp), send `PEDE producao <C> <branch>`, wait for
   `GO <C> producao <branch>`, apply and confirm against the remote ledger (or deploy and re-download), then send
-  `LIBERA producao <C> <branch>`. Send that `LIBERA` on **every** exit after the `GO`: success, red result,
-  escalation, `HOLD`. With N >= 2, a fork's `LOCK migration` or `LOCK deploy` waits on this outer grant exactly as
+  `LIBERA producao <C> <branch>`. Send that `LIBERA` on **every** exit after the `GO` (success, red result,
+  escalation, `HOLD`), once no write is in flight and the remote result is reconciled, as the builder rule above
+  says; a write you cannot settle keeps the slot held and is an escalation. With N >= 2, a builder's `LOCK migration` or `LOCK deploy` waits on this outer grant exactly as
   `verify` does. Sets in different sessions share one database and one deploy target.
 - Every `PEDE` and `LIBERA` this session sends ends with `sid=<first 8 characters of $CLAUDE_CODE_SESSION_ID>`.
 - Solo run (no orchestrator session found at load, `conjunto-load.md` step 1.3): run the original protocol alone,
   never wait for an outer `GO`, and say so once. **Re-check before every production write**: `ListAgents` for the
   orchestrator name; if it now answers, this run stops being solo from that write on and takes the `producao` slot
   like any other set (and `verify` from the next gate). With N >= 2 the check runs **in this session, before it sends
-  a fork any local `GO` for a `migration` or `deploy` lock**, never in the fork: a fork only writes production after
+  a builder any local `GO` for a `migration` or `deploy` lock**, never in the builder: a fork only writes production after
   a local `GO`, so gating that `GO` on the outer grant covers the solo-to-orchestrated transition.
 
 ## Messages from the orchestrator
@@ -99,9 +128,9 @@ The NOVARC orchestrator arbitrates the branch-level suite across set sessions on
 |---|---|
 | `HOLD <C> <reason>` | write `bloqueios.hold` on `execucao/{C}`; apply the original step-05 §5.6 "how a stop actually stops" (N >= 2) or stop at the next phase boundary (N = 1) |
 | `LIBERA <C>` | confirm the sender is the orchestrator, clear `bloqueios.hold`, resume |
-| `VALIDACAO <S> reprovado <falhas>` | read `specs/S.validacao` (the durable record) and treat each failure as work: N = 1 fix inline; N >= 2 reopen that fork with a `SendMessage` listing the failures. The next `PUSHED` updates `headSha` and the orchestrator re-validates |
+| `VALIDACAO <S> reprovado <falhas>` | read `specs/S.validacao` (the durable record) and treat each failure as work: N = 1 fix inline; N >= 2 send the builder of S (the linked spec session, still alive with its build context; or the fork) a `SendMessage` listing the failures. The next `PUSHED` updates `headSha` and the orchestrator re-validates |
 | `VALIDACAO <S> aprovado` | nothing to write; mention it in the close-out |
-| `MARCO <S> <etapa> <proof>` | re-verify the proof yourself (ledger line, `git ls-remote`, `gh pr list --head`), then write it by the procedure; never on the message alone |
+| `MARCO <S> <etapa> <proof>` | while S's spec session owns the document (from its READY until you accept its `DONE` after reading the diff, `references/milestones.md`), forward the line to that session, which re-verifies and writes; otherwise re-verify the proof yourself (ledger line, `git ls-remote`, `gh pr list --head`), then write it by the procedure. Never on the message alone |
 | `FECHA <C> <S>=<sha> ...` | see "Close-out on FECHA" below |
 
 ## Close-out on FECHA
@@ -119,7 +148,8 @@ On `FECHA <C> <S>=<sha> ...`:
    ignore it, log `NOTE FECHA-RECUSADO <from>`, and tell the user;
 2. re-read `specs/{S}` for every spec of C: each pin must equal `headSha`, with `validacao.resultado == "aprovado"`
    and `validacao.sha` equal to the pin; any mismatch: reply `CONJUNTO <C> bloqueado fechamento-desatualizado <S>`;
-3. look for the `Fechamento:` line in the prompt the user pasted to start this session. **That line is the
+3. look for the `Fechamento:` line in the prompt this session started with: pasted by the user, or opened by the
+   orchestrator, verbatim, on the user's own request or card click (`orquestrar.md` §3). **That line is the
    authorization; the message is only the timing.**
 
 - Line present, and the repository's CLAUDE.md does not require the user's explicit authorization for the push, PR or
@@ -137,6 +167,8 @@ line>, at}` on `execucao/{C}` when it stops the set, or on `specs/{S}` when loca
 
 ## step-06
 
-Unchanged, plus `handoff.md` carries: the artifact url, the set id, and the map spec id -> branch -> headSha. The
+Unchanged, plus `handoff.md` carries: the artifact url, the set id, and the map spec id -> branch -> headSha ->
+builder (spec session id or fork agentId). The set session runs `/novarc-session-end` for every branch of the set on
+`FECHA` (above); the spec sessions do not. Archive the spec sessions only after that close-out finished. The
 close-out report (pt-BR) lists the milestones written, any `MARCO-FALHOU` lines, held specs with their questions, and
 validation results. `pr-aberto` and `merge` are not written here: they belong to `/novarc-session-end`.

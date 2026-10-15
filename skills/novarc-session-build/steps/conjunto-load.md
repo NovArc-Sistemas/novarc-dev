@@ -91,6 +91,10 @@ Read and keep, for the specs still in scope:
   listed to the user before anything else, as `mudança / marcador / motivo`. These are the first work items of a
   resumed run.
 
+With N >= 2 the specs are built by linked sessions that inherit none of this. Everything in this section that a
+builder needs (the linked decisions, answered `pendencias` with their `falta`, relevant `notas`, validation failures
+to fix first) goes into step-02's `DECISIONS.md`, per spec, together with the artifact url and the spec id.
+
 Tell the user in one pt-BR message: specs in scope, specs held and why, dependencies satisfied, branch names that
 step-03 will use (see overrides).
 
