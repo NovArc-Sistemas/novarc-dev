@@ -1,4 +1,5 @@
 // Pure helpers of the novarc mod: no engine calls here, so tests can exercise them directly.
+import type { Raia } from './execucao'
 
 export const ETAPAS = ['iniciado', 'plano-aprovado', 'implementando', 'branch-publicada', 'pr-aberto', 'merge'] as const
 export type Etapa = (typeof ETAPAS)[number]
@@ -12,9 +13,30 @@ export const ETAPA_LABEL: Record<Etapa, string> = {
   merge: 'mergeado',
 }
 
+/** Band wording for a set session ("Em implementação"), distinct from ETAPA_LABEL used by faixaConjunto. */
+export const ETAPA_FAIXA: Record<Etapa, string> = {
+  iniciado: 'Iniciado',
+  'plano-aprovado': 'Plano aprovado',
+  implementando: 'Em implementação',
+  'branch-publicada': 'Branch publicada',
+  'pr-aberto': 'PR aberto',
+  merge: 'Mergeado',
+}
+
 export type PlanoSpec = { id: string; conjunto: string; slug: string; mudancas?: string[] }
 export type PlanoConjunto = { id: string; titulo: string; specs: string[]; dependeDe?: string[]; prompt?: string }
-export type Plano = { conjuntos?: PlanoConjunto[]; specs?: PlanoSpec[]; execucao?: { orquestrador?: string } }
+export type Plano = {
+  conjuntos?: PlanoConjunto[]
+  specs?: PlanoSpec[]
+  execucao?: { orquestrador?: string }
+  projeto?: { cliente?: string; nomeCurto?: string; codigo?: string }
+}
+
+/** Project code and display name ("<cliente> · <nomeCurto>") of a plan. */
+export function projetoDoPlano(p: Plano): { codigo: string | null; projeto: string | null } {
+  const { cliente, nomeCurto, codigo } = p.projeto ?? {}
+  return { codigo: codigo ?? null, projeto: cliente && nomeCurto ? `${cliente} · ${nomeCurto}` : cliente ?? nomeCurto ?? null }
+}
 export type SpecDoc = {
   etapa?: Etapa | null
   bloqueios?: Record<string, { motivo?: string }>
@@ -31,21 +53,132 @@ export function rank(etapa: string | null | undefined): number {
   return etapa ? ETAPAS.indexOf(etapa as Etapa) : -1
 }
 
+/** Spec id (C01-S01) carried by a branch name, or null. */
+export function idDaBranch(branch: string): string | null {
+  const m = branch.toLowerCase().match(/(?:^|[\/-])(c\d{2}-s\d{2})(?:-|$)/)
+  return m ? m[1].toUpperCase() : null
+}
+
 /** Maps a branch name to its spec by the exact spec id it carries (R16): feature/c01-s02-slug-20261012 -> C01-S02. */
 export function specDaBranch(branch: string, plano: Plano): PlanoSpec | null {
-  const m = branch.toLowerCase().match(/(?:^|[\/-])(c\d{2}-s\d{2})(?:-|$)/)
-  if (!m) return null
-  const id = m[1].toUpperCase()
+  const id = idDaBranch(branch)
+  if (!id) return null
   return (plano.specs || []).find(s => s.id === id) || null
 }
 
-/** Branch named in a `git push` command line, if any (the last non-flag argument after the remote). */
+type Tok = string | { op: string }
+
+/**
+ * Splits a shell command line into words and operators. Quoted text is one word and never an operator; redirections
+ * (`2>&1`, `>&2`, `&>f`, `>f`, `2>f`, `<f`) are dropped, target included. Null when a quote is left open.
+ */
+function lexar(cmd: string): Tok[] | null {
+  const out: Tok[] = []
+  let w = ''
+  let tem = false
+  let q = ''
+  const fim = () => {
+    if (tem) out.push(w)
+    w = ''
+    tem = false
+  }
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (q) {
+      if (ch === q) q = ''
+      else if (ch === '\\' && q === '"' && i + 1 < cmd.length) w += cmd[++i]
+      else w += ch
+    } else if (ch === '"' || ch === "'") {
+      q = ch
+      tem = true
+    } else if (ch === '\\' && i + 1 < cmd.length) {
+      w += cmd[++i]
+      tem = true
+    } else if (ch === '>' || ch === '<' || (ch === '&' && cmd[i + 1] === '>')) {
+      if (/^\d+$/.test(w)) {
+        w = ''
+        tem = false
+      } else fim()
+      while (i + 1 < cmd.length && /[>&<]/.test(cmd[i + 1])) i++
+      while (i + 1 < cmd.length && /[ \t]/.test(cmd[i + 1])) i++
+      while (i + 1 < cmd.length && !/[\s;|&]/.test(cmd[i + 1])) i++
+    } else if (ch === '&' && cmd[i + 1] === '&') {
+      fim()
+      out.push({ op: '&&' })
+      i++
+    } else if (ch === '|' && cmd[i + 1] === '|') {
+      fim()
+      out.push({ op: '||' })
+      i++
+    } else if (/[;|&#\n\r]/.test(ch)) {
+      fim()
+      out.push({ op: ch })
+    } else if (/\s/.test(ch)) fim()
+    else {
+      w += ch
+      tem = true
+    }
+  }
+  if (q) return null
+  fim()
+  return out
+}
+
+/**
+ * Words of each command of an `&&` chain, or null when anything else could break the proof that every one ran and
+ * succeeded: an unquoted `||`, `;`, `|`, `&`, `#` or newline. Quoted text is never a segment.
+ */
+export function comandosEncadeados(cmd: string): string[][] | null {
+  const t = lexar(cmd)
+  if (!t) return null
+  const segs: string[][] = [[]]
+  for (const x of t) {
+    if (typeof x === 'string') segs[segs.length - 1]!.push(x)
+    else if (x.op === '&&') segs.push([])
+    else return null
+  }
+  return segs.some(s => !s.length) ? null : segs // an empty segment is a shell syntax error
+}
+
+/** Words of the last command of an `&&` chain (see comandosEncadeados), or null. */
+export function ultimoComando(cmd: string): string[] | null {
+  const segs = comandosEncadeados(cmd)
+  return segs ? segs[segs.length - 1]! : null
+}
+
+/** A word that may precede the command name: an env assignment (`FOO=1`) or the `time` / `command` prefix. */
+const prefixo = (x: Tok) => typeof x === 'string' && (/^[A-Za-z_]\w*=/.test(x) || x === 'time' || x === 'command')
+
+/**
+ * Words after `gh pr create` where a command starts (any position, operators tolerated, env assignments and
+ * `time`/`command` before it), or null. Success is proven by the PR url in the output, not by the chain.
+ */
+export function prCreate(cmd: string): string[] | null {
+  const t = lexar(cmd)
+  if (!t) return null
+  for (let i = 0; i + 2 < t.length; i++) {
+    let j = i
+    while (j > 0 && prefixo(t[j - 1]!)) j--
+    if (t[i] === 'gh' && t[i + 1] === 'pr' && t[i + 2] === 'create' && (j === 0 || typeof t[j - 1] !== 'string')) {
+      const rest: string[] = []
+      for (let j = i + 3; j < t.length && typeof t[j] === 'string'; j++) rest.push(t[j] as string)
+      return rest
+    }
+  }
+  return null
+}
+
+/**
+ * Branch named in a `git push` that the Bash result proves ran: the last `git push [flags] <remote> <ref>` of an `&&`
+ * chain. A delete push (`--delete`, `-d` alone or combined like `-fd`, `:<ref>`) publishes nothing: null.
+ */
 export function branchDoPush(command: string): string | null {
-  const m = command.match(/\bgit\s+push\b([^;&|]*)/)
-  if (!m) return null
-  const args = m[1].trim().split(/\s+/).filter(a => a && !a.startsWith('-'))
+  const w = comandosEncadeados(command)?.filter(x => x[0] === 'git' && x[1] === 'push').pop()
+  if (!w || w.some(a => a === '--delete' || /^-[^-]*d/.test(a))) return null
+  const args = w.slice(2).filter(a => !a.startsWith('-'))
   if (args.length < 2) return null
   const ref = args[args.length - 1]
+  if (ref.startsWith(':')) return null
   return ref.includes(':') ? ref.split(':').pop() || null : ref
 }
 
@@ -109,6 +242,26 @@ export function faixaConjunto(c: PlanoConjunto, e: EstadoConjunto): string {
   return `${c.id} · ${etapa} · ${e.feitos}/${e.total} specs${fim}`
 }
 
+/** Idle band text: how many runs other sessions on this machine hold. */
+export function faixaOcioso(outras: number): string {
+  return outras === 0 ? 'nenhuma execução aqui' : `${outras} execução(ões) na máquina`
+}
+
+export function faixaOrq(vivos: number): string {
+  return `${vivos} conjuntos vivos`
+}
+
+/** One square per spec lane: DONE green, open lock or BLOCKED red, else in progress. */
+export function quadrados(raias: Raia[]): ('success' | 'error' | 'claude')[] {
+  return raias.map(r => (r.celulas[r.celulas.length - 1] === 'feito' ? 'success' : r.lockAberto || r.ultimo === 'BLOCKED' ? 'error' : 'claude'))
+}
+
+/** Whether the band is hidden, idle (nothing to show yet) or active. */
+export function estadoFaixa(modo: 'auto' | 'on' | 'off', papel: string | null, txt: string | null, nunca: boolean): 'oculta' | 'ociosa' | 'ativa' {
+  if (nunca || modo === 'off') return 'oculta'
+  return modo === 'on' || papel || txt ? 'ativa' : 'ociosa'
+}
+
 export type DbDoc = { id: string; data: Record<string, unknown>; version: number }
 
 /**
@@ -128,4 +281,9 @@ export function lerDocs(text: string): DbDoc[] {
     }
   }
   return out
+}
+
+/** Documents of a list/get text by id, versions kept. */
+export function porId(texto: string): Record<string, DbDoc> {
+  return Object.fromEntries(lerDocs(texto).map(d => [d.id, d]))
 }

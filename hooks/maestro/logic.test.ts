@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { aFechar, branchDoPush, estadoConjunto, faixaConjunto, lerDocs, liberados, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
+import { VAZIA, anotar, raia } from './execucao'
+import { aFechar, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
 
 const plano: Plano = {
   conjuntos: [
@@ -85,4 +86,85 @@ test('reads the artifact url of an orchestrate invocation only', async () => {
   expect(urlOrquestrar('orquestrar https://claude.ai/artifact/abc C01 C02')).toBe('https://claude.ai/artifact/abc')
   expect(urlOrquestrar('conjunto https://claude.ai/artifact/abc C01')).toBe(null)
   expect(urlOrquestrar('orquestrar')).toBe(null)
+})
+
+test('band state, idle and orchestrator texts, set-band squares', () => {
+  expect(estadoFaixa('auto', null, null, false)).toBe('ociosa')
+  expect(estadoFaixa('on', null, null, false)).toBe('ativa')
+  expect(estadoFaixa('off', 'spec', null, false)).toBe('oculta')
+  expect(estadoFaixa('auto', 'spec', null, true)).toBe('oculta')
+  expect(faixaOcioso(0)).toBe('nenhuma execução aqui')
+  expect(faixaOcioso(2)).toBe('2 execução(ões) na máquina')
+  expect(faixaOrq(3)).toBe('3 conjuntos vivos')
+  const t = Date.parse('2026-10-15T12:00:00Z')
+  let ex = anotar(VAZIA, 'a', { tipo: 'DONE', texto: '', at: t })
+  ex = anotar(ex, 'b', { tipo: 'LOCK', texto: 'db', at: t })
+  ex = anotar(ex, 'c', { tipo: 'TASK', texto: '1/2', at: t })
+  expect(quadrados(Object.values(ex.forks).map(f => raia(f, t)))).toEqual(['success', 'error', 'claude'])
+})
+
+test('ultimoComando reads only a chain of && and branchDoPush follows it', async () => {
+  const b = 'feature/c01-s01-sop-base-20261012'
+  expect(ultimoComando('git add . && git push -u origin x')).toEqual(['git', 'push', '-u', 'origin', 'x'])
+  expect(ultimoComando('echo "a && b"')).toEqual(['echo', 'a && b'])
+  for (const c of ['true || git push origin x', 'git push origin x || true', 'git push origin x; echo', 'git push origin x | cat', 'git push origin x &', 'true # git push origin x', 'a\ngit push origin x']) expect(ultimoComando(c)).toBeNull()
+  expect(branchDoPush(`git add . && git push -u origin ${b}`)).toBe(b)
+  expect(branchDoPush(`echo "git push origin ${b}"`)).toBeNull()
+  expect(branchDoPush(`git -C x push origin ${b}`)).toBeNull()
+  expect(branchDoPush('git push')).toBeNull()
+  expect(branchDoPush('git push origin')).toBeNull()
+  expect(branchDoPush(`git push origin HEAD:${b}`)).toBe(b)
+})
+
+test('porId keeps the version of each document', async () => {
+  const t = '=== BEGIN ===\n{"id":"C01-S01","data":{"etapa":"merge"},"version":7,"updatedAt":"x"}\n=== END ==='
+  expect(porId(t)['C01-S01']!.version).toBe(7)
+  expect(porId(t)['C01-S01']!.data.etapa).toBe('merge')
+})
+
+test('redirections are not operators and gh pr create is found anywhere a command starts', async () => {
+  const b = 'feature/c01-s01-sop-base-20261012'
+  for (const r of ['2>&1', '>&2', '&>f.log', '>f.log', '2>f.log', '2>>f.log']) expect(branchDoPush(`git push origin ${b} ${r}`)).toBe(b)
+  expect(branchDoPush(`git push origin ${b} 2>&1 | cat`)).toBeNull()
+  expect(prCreate('gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('git push origin x || gh pr create --head y')).toEqual(['--head', 'y'])
+  expect(prCreate('echo "gh pr create"')).toBeNull()
+  expect(prCreate('echo gh pr create')).toBeNull()
+})
+
+test('branchDoPush finds the git push segment anywhere in an && chain, never past another operator', async () => {
+  const b = 'feature/c01-s01-sop-base-20261012'
+  expect(branchDoPush(`git add . && git push -u origin ${b} && gh pr create --title x --body y`)).toBe(b)
+  expect(prCreate(`git add . && git push -u origin ${b} && gh pr create --title x --body y`)).toEqual(['--title', 'x', '--body', 'y'])
+  for (const c of [`git push origin ${b} && gh pr create || true`, `git push origin ${b} && gh pr create; echo`, `git push origin ${b} && gh pr create | cat`, `git push origin ${b} && x &`, `git push origin ${b} && x # y`, `git push origin ${b} && x
+y`]) expect(branchDoPush(c)).toBeNull()
+})
+
+test('pendencias: prCreate after env assignments, time or command; never after a plain word', () => {
+  expect(prCreate('FOO=1 gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('FOO=1 BAR=2 gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('time gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('command gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('git add . && GH_DEBUG=1 gh pr create --head x')).toEqual(['--head', 'x'])
+  expect(prCreate('echo FOO=1 gh pr create')).toBeNull()
+  expect(prCreate('FOO=1 echo gh pr create')).toBeNull()
+  expect(prCreate('echo time gh pr create')).toBeNull()
+  expect(prCreate('echo "FOO=1 gh pr create"')).toBeNull()
+})
+
+test('pendencias: a delete push names no published branch', () => {
+  const b = 'feature/c01-s01-sop-base-20261012'
+  expect(branchDoPush(`git push --delete origin ${b}`)).toBeNull()
+  expect(branchDoPush(`git push -d origin ${b}`)).toBeNull()
+  expect(branchDoPush(`git push origin :${b}`)).toBeNull()
+  expect(branchDoPush(`git add . && git push origin --delete ${b}`)).toBeNull()
+  expect(branchDoPush(`git push origin HEAD:${b}`)).toBe(b)
+})
+
+test('review: combined short flags with d are a delete push', () => {
+  const b = 'feature/c01-s01-sop-base-20261012'
+  expect(branchDoPush(`git push -fd origin ${b}`)).toBeNull()
+  expect(branchDoPush(`git push -df origin ${b}`)).toBeNull()
+  expect(branchDoPush(`git push -uf origin ${b}`)).toBe(b)
+  expect(branchDoPush(`git push --dry-run origin ${b}`)).toBe(b)
 })
