@@ -273,7 +273,7 @@ test('an orchestrator look plus a push touches only specs, execucao, config; onl
   await $.tool.call({ tool: 'Bash', command: `git push -u origin ${B}` })
   await esperar(() => escritas.length > 0)
   await dormir(60)
-  expect([...new Set(todas.map(c => c.collection))].sort()).toEqual(['config', 'execucao', 'specs'])
+  expect([...new Set(todas.map(c => c.collection))].sort()).toEqual(['config', 'execucao', 'pendencias', 'specs'])
   expect(escritas.length).toBe(1)
   expect([escritas[0].collection, escritas[0].doc_id]).toEqual(['specs', 'C01-S01'])
   for (const c of todas) expect(/sessao|"cwd"|ledgerDir/.test(JSON.stringify(c))).toBe(false)

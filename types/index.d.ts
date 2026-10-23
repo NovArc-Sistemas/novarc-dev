@@ -8,6 +8,54 @@ export type Contexto = {
   papel: 'conjunto' | 'orquestrador' | 'spec' | null
 }
 
+// ---- C02-S02: the Pendências tab (hooks/maestro/pendencias.ts)
+
+export type EntradaRepo = {
+  id: string | null
+  titulo: string
+  status: string
+  secao: string
+  quem: 'equipe' | 'cliente'
+  oQue: string
+  porQue: string
+  destrava: string
+  /** p-ids of planning questions the entry names. */
+  planejamento: string[]
+}
+export type ACaminho = { spec: string; ref: string; tipo: 'PARKED' | 'BLOCKED' | 'CUT'; texto: string; at: string }
+export type ItemPendencia = {
+  id: string
+  ref: string
+  fonte: 'plano' | 'repo' | 'a-caminho'
+  titulo: string
+  texto: string
+  status: string
+  quem: 'socio' | 'cliente' | 'pre-fechamento' | 'aceita'
+  fase: string | null
+  spec: string | null
+  destino: string | null
+  alerta: 'resolvida-no-repo' | 'reaberta' | null
+  alertaTexto: string | null
+  enviada: boolean
+  at: number | null
+}
+export type Divergencia = { pid: string; ref: string; tipo: 'resolvida-no-repo' | 'reaberta'; chave: string }
+export type DocResumo = { tot: number; abertos: number; OPEN: number; GATED: number; WATCH: number; ACCEPTED: number; CLOSED: number; ilegiveis: number; equipe: number; cliente: number }
+export type FiltroDoc = 'todos' | 'abertos' | 'presos' | 'aceitos' | 'fechados'
+export type EstadoPendencias = {
+  itens: ItemPendencia[]
+  /** null: the repository has neither ai/pendings nor PENDINGS.md. */
+  repo: EntradaRepo[] | null
+  resumo: DocResumo | null
+  contador: { n: number; fase: string } | null
+  divergencias: Divergencia[]
+  falhas: { plano: boolean; repo: boolean; ledger: boolean }
+  /** Phase ids of the plan, for the filter row. */
+  fases: string[]
+}
+/** The Pendências tab's own view: phase filter, project doc open, search, filter, open doc item. */
+export type VistaPendencias = { fase: string | null; docAberto: boolean; busca: string; filtro: FiltroDoc; itemDoc: string | null }
+
 /** One checkpoint of a fork (ledger.py keyword), from a fork message or a ledger line. */
 export type Evento = { tipo: string; texto: string; at: number }
 /** `sessao`: the linked spec session id; `spec`: the cNN-sNN id read from the READY `branch=`. */
@@ -146,7 +194,7 @@ declare module 'claude-code' {
       exec: Execucao
       /** auto: the band shows itself; on: forced by "ativar"; off: "desativar" or "nunca neste projeto". */
       maestroModo: 'auto' | 'on' | 'off'
-      maestroAba: 'agora' | 'execucao' | 'locks'
+      maestroAba: 'agora' | 'execucao' | 'locks' | 'pendencias'
       /** null until this session's first registry read (Agora shows `lendo o registro…`). */
       maestroOutras: Registro[] | null
       /** Where this session's registry entry landed: the per-session file or the store fallback. */
@@ -167,9 +215,15 @@ declare module 'claude-code' {
         nOutras: number
         /** Orchestrator only: a set ready to close (green band). */
         verde: { titulo: string; texto: string; dica: string } | null
+        /** Orchestrator only (C02-S02): divergences or the pending counter, when no alert is shown. */
+        pend: { tipo: 'divergente' | 'contador'; texto: string } | null
       } | null
       /** Alerts of this session (lock órfão, slot, calada), the toast dedupe and the last sweep. */
       maestroAlertas: Alertas | null
+      /** Orchestrator only (C02-S02): the Pendências list, counter, divergences and source failures; repository text stays here (R31). */
+      maestroPendencias: EstadoPendencias | null
+      /** The Pendências tab's view: phase filter, doc open, search, filter, open doc item. */
+      maestroPendVista: Partial<VistaPendencias> | null
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

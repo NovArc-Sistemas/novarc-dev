@@ -2,6 +2,7 @@
 // fork through the ledger.py checkpoints. No engine calls here, so tests exercise them directly.
 import type { Alerta, Evento, Execucao, Fork, LinhaSweep, Registro, Slots } from '../../types'
 import { idDaBranch, urlOrquestrar, type EspelhoConjunto, type Proposta, type Ritmo } from './logic'
+import { itensACaminho } from './pendencias'
 
 /** The checkpoint track drawn per fork, in protocol order (ledger.py CHECKPOINTS, the ones that advance a fork). */
 export const TRILHA = ['READY', 'PLAN', 'CODEX', 'SURFACES', 'TASK', 'LOCK', 'PUSHED', 'DONE'] as const
@@ -12,6 +13,11 @@ const KW = new Set([
   'READY', 'PLAN', 'CODEX', 'SURFACES', 'TASK', 'LOCK', 'RELEASE', 'APPLIED', 'DEPLOYED', 'PUSHED',
   'BLOCKED', 'WAITING', 'PARKED', 'DONE', 'GO', 'HOLD', 'COORDINATE', 'MERGE',
 ])
+/** A ledger line may also be a NOTE (PRE-FECHAMENTO, CUT, ...): kept as an event, never a message checkpoint (R26). */
+const KW_LEDGER = new Set([...KW, 'NOTE'])
+
+/** A lane's checkpoints: every event but NOTE, which moves no lane and resets no quiet clock. */
+export const marcos = (evs: Evento[]) => (evs.some(e => e.tipo === 'NOTE') ? evs.filter(e => e.tipo !== 'NOTE') : evs)
 
 
 export const VAZIA: Execucao = { papel: null, ledgerDir: null, forks: {} }
@@ -26,7 +32,7 @@ export function checkpoint(texto: string): { tipo: string; resto: string } | nul
 /** One fork-<slug>.md / ledger.md line written by ledger.py: `KW text  # 2026-10-15T12:00:00Z`. */
 export function linhaLedger(linha: string): Evento | null {
   const m = linha.match(/^([A-Z]+)\s(.*?)\s+#\s(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s*$/)
-  if (!m || !KW.has(m[1]!)) return null
+  if (!m || !KW_LEDGER.has(m[1]!)) return null
   return { tipo: m[1]!, texto: (m[2] ?? '').trim(), at: Date.parse(m[3]!) }
 }
 
@@ -266,6 +272,8 @@ export type Raia = { slug: string; celulas: Celula[]; rotulos: string[]; ultimo:
 
 /** One lane: furthest checkpoint reached, open locks (LOCK without RELEASE/APPLIED) and minutes since the last event. */
 export function raia(f: Fork, agora: number): Raia {
+  const evs = marcos(f.eventos)
+  if (evs !== f.eventos) f = { ...f, eventos: evs }
   const tipos = f.eventos.map(e => e.tipo)
   const idx = Math.max(-1, ...tipos.map(t => TRILHA.indexOf(t as Etapa)))
   const locks = tipos.filter(t => t === 'LOCK').length
@@ -530,7 +538,7 @@ export function ritmo(forks: Fork[]): Ritmo {
   const gaps: number[] = []
   const locks: number[] = []
   for (const f of forks) {
-    const evs = [...f.eventos].sort((a, b) => a.at - b.at)
+    const evs = [...marcos(f.eventos)].sort((a, b) => a.at - b.at)
     for (let i = 1; i < evs.length; i++) gaps.push((evs[i]!.at - evs[i - 1]!.at) / 60_000)
     evs.forEach((e, i) => {
       if (e.tipo !== 'LOCK') return
@@ -649,10 +657,13 @@ export function resumoEspelho(ex: Execucao, linhas: LinhaSweep[], vistoEm: Recor
   }
   const specs: EspelhoConjunto['specs'] = {}
   for (const f of Object.values(ex.forks)) {
-    const ult = f.eventos[f.eventos.length - 1]
+    const ms = marcos(f.eventos)
+    const ult = ms[ms.length - 1]
     if (ult) specs[specDaLane(ex, f.slug)] = { ultimo: ult.tipo, texto: textoCheckpoint(ult), at: new Date(ult.at).toISOString() }
   }
-  return { locks, specs, ritmo: ritmo(Object.values(ex.forks)) }
+  // C02-S02: PARKED, BLOCKED and `NOTE CUT` per spec, numbered here once (the orchestrator's pane reads them, R24)
+  const aCaminho = itensACaminho(Object.fromEntries(Object.values(ex.forks).map(f => [specDaLane(ex, f.slug), f.eventos])))
+  return { locks, specs, ritmo: ritmo(Object.values(ex.forks)), aCaminho }
 }
 
 /** The outstanding locks of an espelho as rows (orchestrator alerts, the tab, the page). */

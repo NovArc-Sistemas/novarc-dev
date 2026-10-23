@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Execucao, Registro } from '../../types'
 import {
   VAZIA, alerta, alertaRaias, anotar, cartoesAgora, chamadaLedger, checkpoint, ehBuild, faixaConjuntoRaias, laneDaMensagem, lerLedger, linhaConjunto,
-  novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, slugDoSpawn, vivo,
+  novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, resumoEspelho, ritmo, slugDoSpawn, vivo,
 } from './execucao'
 import { ETAPA_FAIXA, idDaBranch, projetoDoPlano, quadrados } from './logic'
 
@@ -213,6 +213,33 @@ test('pendencias: laneDaMensagem matches a lowercase set id; orquestrar is case-
 test('review: laneDaMensagem finds a fork by a lowercase stored spec id', () => {
   const ex: Execucao = { ...VAZIA, conjunto: 'C01', forks: { olhos: { slug: 'olhos', spec: 'c01-s01', eventos: [] } } }
   expect(laneDaMensagem(ex, 'LOCK db C01-S01 migration')).toBe('olhos')
+})
+
+// ---- C02-S02: NOTE lines and the items on the way
+
+test('NOTE lines fold as events and move no lane', () => {
+  const evs = lerLedger('TASK 2/5  # 2026-10-15T12:00:00Z\nNOTE PRE-FECHAMENTO C06-S02 C06-S02:3 x  # 2026-10-15T12:10:00Z\nNOTE CUT y  # 2026-10-15T12:20:00Z\n')
+  expect(evs.map(e => e.tipo)).toEqual(['TASK', 'NOTE', 'NOTE'])
+  expect(evs[2]!.texto).toBe('CUT y')
+  const r = raia({ slug: 'c06-s02', eventos: evs }, T0 + 30 * 60_000)
+  expect(r.ultimo).toBe('TASK')
+  expect(r.minutos).toBe(30)
+  expect(r.rotulos[4]).toBe('2/5')
+  // a NOTE after DONE never makes a finished spec quiet
+  const feito = lerLedger('DONE c06-s02  # 2026-10-15T12:00:00Z\nNOTE x  # 2026-10-15T12:30:00Z\n')
+  expect(alertaRaias([raia({ slug: 'c06-s02', eventos: feito }, T0 + 60 * 60_000)])).toBe(null)
+  expect(checkpoint('NOTE algo')).toBe(null)
+  expect(ritmo([{ slug: 'a', eventos: evs }]).amostras).toBe(0)
+})
+
+test('espelho carries aCaminho with stable refs and keeps specs.ultimo off NOTE', () => {
+  const evs = lerLedger('TASK 1/3  # 2026-10-30T09:00:00Z\nPARKED fila ignora o deploy de EF; medido em 2 runs  # 2026-10-30T10:00:00Z\nNOTE CUT ordem por prioridade  # 2026-10-30T10:05:00Z\nPARKED token sbp_123abc  # 2026-10-30T10:06:00Z\n')
+  const ex: Execucao = { ...VAZIA, papel: 'conjunto', conjunto: 'C06', forks: { 'c06-s02': { slug: 'c06-s02', spec: 'C06-S02', eventos: evs } } }
+  const e = resumoEspelho(ex, [], {})
+  expect(e.aCaminho!.map(i => [i.spec, i.tipo, i.ref])).toEqual([['C06-S02', 'PARKED', 'C06-S02:3'], ['C06-S02', 'CUT', 'C06-S02:2'], ['C06-S02', 'PARKED', 'C06-S02:1']])
+  expect(e.aCaminho![0]!.texto).toBe('PARKED')
+  expect(e.aCaminho![2]!.texto).toBe('fila ignora o deploy de EF; medido em 2 runs')
+  expect(e.specs['C06-S02']!.ultimo).toBe('PARKED')
 })
 
 test('shell variables in --dir and --fork are not taken as a path or a lane (F2)', () => {

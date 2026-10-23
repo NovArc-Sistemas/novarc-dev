@@ -1,5 +1,5 @@
 // Pure helpers of the novarc mod: no engine calls here, so tests can exercise them directly.
-import type { Slots } from '../../types'
+import type { ACaminho, Slots } from '../../types'
 import type { Raia } from './execucao'
 
 export const ETAPAS = ['iniciado', 'plano-aprovado', 'implementando', 'branch-publicada', 'pr-aberto', 'merge'] as const
@@ -54,6 +54,8 @@ export type EspelhoConjunto = {
   locks: Record<string, { spec: string; desde: string; estado: 'GRANTED-NOT-RELEASED' | 'UNGRANTED'; espera?: string[] }>
   specs: Record<string, { ultimo: string; texto: string; at: string }>
   ritmo: Ritmo
+  /** C02-S02: items on the way to the pending doc (absent in mirrors written before it). */
+  aCaminho?: ACaminho[]
   at: string
 }
 export type ConjuntoDoc = { iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }>; espelho?: EspelhoConjunto }

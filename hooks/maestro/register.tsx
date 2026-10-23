@@ -7,7 +7,7 @@ import type { Register } from 'claude-code'
 
 import type { Alerta, Alertas, Contexto, Evento, Execucao, LinhaSweep, Registro, Slots } from '../../types'
 import {
-  LIMIARES_PADRAO, VAZIA, TRILHA, alerta, anotar, calados, cartoesAgora, chamadaLedger, checkpoint, cortar, daMinhaExecucao, ehBuild,
+  LIMIARES_PADRAO, VAZIA, TRILHA, alerta, anotar, calados, marcos, cartoesAgora, chamadaLedger, checkpoint, cortar, daMinhaExecucao, ehBuild,
   faixaConjuntoRaias, laneDaMensagem, lerSweep, linhaConjunto, locksDoEspelho, marcadorDir, montarAlertas, novasLinhas, novosToasts, orfaos,
   papelDaBranch, papelDoPrompt, papelDoSkill, progresso, proposta, raia, raiasPorConjunto, resumoEspelho, ritmo, ritmoTotal, slotsAbertos,
   slotsPresos, slugDoSpawn, textoLimiares, vivo, type LockAberto, type Raia,
@@ -41,6 +41,25 @@ import {
   type Ritmo,
   type SpecDoc,
 } from './logic'
+import {
+  contadorDe,
+  enviadosDoLedger,
+  itensACaminho,
+  lerArquivos,
+  lerLegado,
+  lerListaEstrita,
+  montarItens,
+  resumoDoc,
+  slotPendencias,
+  textoDivergencia,
+  unirRepo,
+  type EntradaRepo,
+  type EstadoPendencias,
+  type ItemPendencia,
+  type PlanoPend,
+  type Resposta,
+} from './pendencias'
+import { VISTA_PADRAO, abaPendencias, rotuloAba, type VistaPendencias } from './pendencias-aba'
 
 const PANE = 'novarc-maestro'
 const CTX = { plugin: 'novarc', key: 'ctx' } as const
@@ -58,6 +77,9 @@ const ETAPA = { plugin: 'novarc', key: 'maestroEtapa' } as const
 const FAIXA_DADOS = { plugin: 'novarc', key: 'maestroFaixaDados' } as const
 // C02-S01: this session's alerts, toast dedupe, last sweep and what the Locks e filas tab draws.
 const ALERTAS = { plugin: 'novarc', key: 'maestroAlertas' } as const
+// C02-S02: the Pendências tab's joined list (orchestrator), and the tab's own view (phase filter, doc, search).
+const PEND = { plugin: 'novarc', key: 'maestroPendencias' } as const
+const PEND_VISTA = { plugin: 'novarc', key: 'maestroPendVista' } as const
 const NUNCA = 'maestro-nunca'
 
 async function chamar($: any, input: Record<string, unknown>): Promise<string> {
@@ -193,6 +215,13 @@ async function atualizar($: any, doTimer = false): Promise<void> {
         await alertasAgora($)
       } catch (err) {
         await logarUmaVez($, 'orquestracao', err)
+      }
+    }
+    if (!velho(g)) {
+      try {
+        await refrescarPendencias($, g)
+      } catch (err) {
+        await logarUmaVez($, 'pendencias', err)
       }
     }
     if (!velho(g)) await prepararFaixa($)
@@ -633,7 +662,8 @@ async function alertasAgora($: any, run?: Execucao): Promise<void> {
   if (ex.papel === 'conjunto') {
     unidadesS = Object.values(ex.forks).map(f => {
       const r = raia(f, agora)
-      const ult = f.eventos[f.eventos.length - 1]
+      const ms = marcos(f.eventos) // a NOTE resets no quiet clock (R26)
+      const ult = ms[ms.length - 1]
       return { unidade: r.rotulo ?? r.slug, at: ult?.at ?? agora, feito: r.ultimo === 'DONE' }
     })
   }
@@ -661,7 +691,8 @@ async function alertasAgora($: any, run?: Execucao): Promise<void> {
     espelhadoEm,
   }
   if (velho(g)) return
-  await $.state.set(ALERTAS, { ...(await alertas($)), lista, alertasVistos: t.vistos, limiares: lim, vista })
+  const pend = (await alertas($)).alertasVistos.filter(k => k.startsWith('pend:'))
+  await $.state.set(ALERTAS, { ...(await alertas($)), lista, alertasVistos: [...t.vistos, ...pend], limiares: lim, vista })
   for (const tx of t.toasts) {
     try {
       $.ui.toast(tx)
@@ -669,6 +700,172 @@ async function alertasAgora($: any, run?: Execucao): Promise<void> {
       // no toast surface: the band still shows it
     }
   }
+}
+
+// ---- C02-S02: pendencias-refresh (orchestrator)
+
+// The last good planning answers (kept when a list fails, R29), and the repository parse keyed by its source marker (R32).
+let respostas: Record<string, DbDoc> | null = null
+let repoMarcador: string | null = null
+let repoCache: EntradaRepo[] | null = null
+
+const lista = async ($: any, dir: string) => {
+  try {
+    return (await $.fs.list(dir)) as { name: string; kind: string; size: number; mtimeMs: number }[]
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The repository pendings: ai/pendings/<ID>.md files when that folder exists (plus the legacy file, the file wins), else
+ * PENDINGS.md at the root, else docs/PENDINGS.md; null when there is none. Re-read only when the marker moved.
+ */
+async function lerRepo($: any, cwd: string): Promise<EntradaRepo[] | null> {
+  const arquivos = (await lista($, `${cwd}/ai/pendings`))?.filter(f => f.kind !== 'dir' && /\.md$/i.test(f.name)) ?? null
+  let legado: { path: string; size: number; mtimeMs: number } | null = null
+  for (const dir of [cwd, `${cwd}/docs`]) {
+    const f = (await lista($, dir))?.find(x => x.name === 'PENDINGS.md' && x.kind !== 'dir')
+    if (f) {
+      legado = { path: `${dir}/PENDINGS.md`, size: f.size, mtimeMs: f.mtimeMs }
+      break
+    }
+  }
+  if (!arquivos && !legado) {
+    repoMarcador = null
+    repoCache = null
+    return null
+  }
+  const marcador = JSON.stringify([(arquivos ?? []).map(f => [f.name, f.size, f.mtimeMs]), legado && [legado.path, legado.size, legado.mtimeMs]])
+  if (marcador === repoMarcador && repoCache) return repoCache
+  const doArquivo = arquivos
+    ? lerArquivos(await Promise.all(arquivos.map(async f => ({ nome: f.name, texto: String(await $.fs.read(`${cwd}/ai/pendings/${f.name}`)) }))))
+    : []
+  const doLegado = legado ? lerLegado(String(await $.fs.read(legado.path))) : []
+  repoCache = unirRepo(doArquivo, doLegado)
+  repoMarcador = marcador
+  return repoCache
+}
+
+/**
+ * One refresh of the Pendências list: one `pendencias` list (R34), the repository pendings, the items on the way from
+ * the sets' espelhos (reserve fork mode: this session's own lanes), the items sent to pre-close from this session's
+ * ledger. Each source fails alone (R29); repository text stays in this session's state (R31). Toasts each new divergence.
+ */
+async function refrescarPendencias($: any, g: number): Promise<void> {
+  const ex = await exec($)
+  if (ex.papel !== 'orquestrador') return
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  const antes = ((await $.state.get(PEND)).value ?? null) as EstadoPendencias | null
+  const falhas = { plano: false, repo: false, ledger: false }
+  const plano = (c?.plano ?? null) as (Plano & PlanoPend) | null
+  if (c?.artefato) {
+    try {
+      const l = lerListaEstrita(await chamar($, { tool: 'ArtifactData', action: 'list', url: c.artefato, collection: 'pendencias', query: { limit: 1000 } }))
+      if (!l) throw new Error('pendencias: list unreadable')
+      respostas = l
+    } catch {
+      falhas.plano = true
+    }
+  }
+  let repo: EntradaRepo[] | null
+  try {
+    repo = await lerRepo($, cwdSessao)
+  } catch {
+    falhas.repo = true
+    repo = repoCache
+  }
+  try {
+    await lerLedgerOrq($, ex)
+  } catch {
+    falhas.ledger = true
+  }
+  if (velho(g)) return
+  const es = espelhos()
+  const done = new Set<string>()
+  let aCaminho = es.flatMap(([, e]) => e.aCaminho ?? [])
+  for (const [, e] of es) for (const [spec, v] of Object.entries(e.specs)) if (v.ultimo === 'DONE') done.add(spec)
+  if (!es.length && Object.keys(ex.forks).length) {
+    // reserve fork mode: no set session mirrors, this session holds the lanes itself
+    aCaminho = itensACaminho(Object.fromEntries(Object.values(ex.forks).map(f => [f.spec ?? f.slug, f.eventos])))
+    for (const f of Object.values(ex.forks)) if (f.eventos.some(x => x.tipo === 'DONE')) done.add(f.spec ?? f.slug)
+  }
+  const resp = Object.fromEntries(Object.entries(respostas ?? {}).map(([id, d]) => [id, d.data as Resposta]))
+  const { itens, divergencias } = montarItens({ plano, resp, repo: repo ?? [], aCaminho, done, enviados: enviadosDoLedger(eventosOrq) })
+  let contador = antes?.contador ?? null
+  if (plano && !falhas.plano && banco) {
+    const specs = Object.fromEntries(Object.entries(banco.specs).map(([id, d]) => [id, d.data])) as Record<string, SpecDoc>
+    const execucao = Object.fromEntries(Object.entries(banco.execucao).map(([id, d]) => [id, d.data])) as Record<string, ConjuntoDoc>
+    const status = Object.fromEntries((plano.conjuntos ?? []).map(cj => [cj.id, estadoConjunto(cj, specs, execucao[cj.id]).status]))
+    contador = contadorDe(plano, resp, status)
+  } else if (!plano) contador = null
+  const estado: EstadoPendencias = {
+    itens: falhas.plano && antes ? [...antes.itens.filter(i => i.fonte === 'plano'), ...itens.filter(i => i.fonte !== 'plano')] : itens,
+    repo,
+    resumo: repo ? resumoDoc(repo) : null,
+    contador,
+    divergencias: falhas.plano && antes ? antes.divergencias : divergencias,
+    falhas,
+    fases: (plano?.fases ?? []).map(f => f.id),
+  }
+  await $.state.set(PEND, estado)
+  // one toast per divergence key (R23), only while no more urgent alert is active: a key not toasted yet waits for the
+  // alert to clear; keys of divergences gone are dropped, so a recurrence toasts again
+  const al = await alertas($)
+  const atuais = new Set(estado.divergencias.map(d => d.chave))
+  const vistos = al.alertasVistos.filter(k => !k.startsWith('pend:') || atuais.has(k))
+  if (!al.lista.length) {
+    for (const d of estado.divergencias) {
+      if (vistos.includes(d.chave)) continue
+      vistos.push(d.chave)
+      try {
+        $.ui.toast(textoDivergencia(d))
+      } catch {
+        // no toast surface: the band still shows it
+      }
+    }
+  }
+  await $.state.set(ALERTAS, { ...al, alertasVistos: vistos })
+}
+
+/** The tab selected: one refresh on demand, under the poll's reentrancy flag. */
+async function pendenciasAgora($: any): Promise<void> {
+  if (atualizando) return
+  atualizando = true
+  const g = geracao
+  try {
+    await refrescarPendencias($, g)
+    if (!velho(g)) await prepararFaixa($)
+  } catch (err) {
+    await logarUmaVez($, 'pendencias', err)
+  } finally {
+    if (!velho(g)) atualizando = false
+  }
+}
+
+/** "marcar como enviada ao cliente": only `pendencias/<id>.enviada`, pinned (R16); a refused write toasts (R17). */
+async function marcarEnviada($: any, i: ItemPendencia): Promise<void> {
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  if (!c?.artefato || i.fonte !== 'plano') return
+  let by = 'Maestro'
+  try {
+    const r = await $.process.run(['git', 'config', 'user.name'], { cwd: cwdSessao })
+    by = (r.exitCode === 0 && String(r.stdout).trim()) || by
+  } catch {
+    // no git: the default name
+  }
+  const enviada = { by, at: new Date().toISOString() }
+  const r = await gravarFixado($, c.artefato, 'pendencias', i.id, { enviada })
+  if (r.r === 'falhou') {
+    try {
+      $.ui.toast(`Não foi possível marcar ${i.id} como enviada: a gravação em pendencias/${i.id} falhou`)
+    } catch {
+      // no toast surface
+    }
+    return
+  }
+  const e = ((await $.state.get(PEND)).value ?? null) as EstadoPendencias | null
+  if (e) await $.state.set(PEND, { ...e, itens: e.itens.map(x => (x.fonte === 'plano' && x.id === i.id ? { ...x, enviada: true } : x)) })
 }
 
 /** "usar o medido" (orchestrator pane): one pinned update of `config/orquestracao.limiares` (R15). */
@@ -1007,6 +1204,9 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   hashOrq = null
   cursorOrq = null
   eventosOrq = []
+  respostas = null
+  repoMarcador = null
+  repoCache = null
   slotsOrq = { verify: { dono: null, fila: [] }, producao: { dono: null, fila: [] } }
   prontos = []
   papelConhecido = false
@@ -1025,6 +1225,8 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   await $.state.set(FAIXA_DADOS, null)
   await $.state.set(ONDE, null)
   await $.state.set(ALERTAS, null)
+  await $.state.set(PEND, null)
+  await $.state.set(PEND_VISTA, null)
 }
 
 async function nunca($: any): Promise<string[]> {
@@ -1049,6 +1251,8 @@ export type FaixaDados = {
   nOutras: number
   /** Orchestrator only: a set ready to close with nothing held (green band). */
   verde: { titulo: string; texto: string; dica: string } | null
+  /** Orchestrator only (C02-S02): divergences or the pending counter, shown only when no alert is (R19). */
+  pend: { tipo: 'divergente' | 'contador'; texto: string } | null
 }
 
 /**
@@ -1064,6 +1268,7 @@ export function dadosFaixa(
   eu: string,
   alertas: Alerta[] = [],
   verdes: { conjunto: string; n: number }[] = [],
+  pendencias: EstadoPendencias | null = null,
 ): FaixaDados {
   const minhas = Object.values(ex.forks).map(f => raia(f, agora))
   let texto: string
@@ -1093,6 +1298,7 @@ export function dadosFaixa(
     alerta: al,
     nOutras: outras.filter(r => r.sessao !== eu).length,
     verde: v ? { titulo: 'pronto para fechar', texto: `${v.conjunto} com as ${v.n} specs em DONE, sem lock aberto`, dica: 'peça o FECHA na conversa' } : null,
+    pend: ex.papel === 'orquestrador' && !al ? slotPendencias(pendencias) : null,
   }
 }
 
@@ -1110,14 +1316,15 @@ async function prepararFaixa($: any, ex?: Execucao): Promise<void> {
       sessao,
       run.papel === 'orquestrador' || run.papel === 'conjunto' ? (((await $.state.get(ALERTAS)).value as Alertas | null)?.lista ?? []) : [],
       run.papel === 'orquestrador' ? prontos : [],
+      run.papel === 'orquestrador' ? (((await $.state.get(PEND)).value ?? null) as EstadoPendencias | null) : null,
     ),
   )
 }
 
-const SEM_FAIXA: FaixaDados = { papel: null, txt: null, rotulo: 'NOVARC', texto: 'ativo', extra: null, quadrados: [], alerta: null, nOutras: 0, verde: null }
+const SEM_FAIXA: FaixaDados = { papel: null, txt: null, rotulo: 'NOVARC', texto: 'ativo', extra: null, quadrados: [], alerta: null, nOutras: 0, verde: null, pend: null }
 
 /** The band above the prompt: lays out prepared fields only (idle, orchestrator, set, spec, or switched on with no run). */
-function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes: { ativar: Acao; nunca: Acao; painel: Acao; ver: Acao }): any {
+function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes: { ativar: Acao; nunca: Acao; painel: Acao; ver: Acao; verPend: Acao }): any {
   const { Box, Text, Button } = ui
   if (estadoFaixa(modo, f.papel, f.txt, false) === 'ociosa') {
     return (
@@ -1142,11 +1349,14 @@ function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes:
         </Text>
       )}
       {f.alerta && <Text color="error">● {f.alerta}</Text>}
+      {!f.alerta && f.pend && <Text color={f.pend.tipo === 'divergente' ? 'error' : 'warning'}>● {f.pend.texto}</Text>}
       {f.verde && <Text color="success" bold>{f.verde.titulo}</Text>}
       {f.verde && <Text>{f.verde.texto}</Text>}
       {f.verde && <Text dimColor>{f.verde.dica}</Text>}
       {f.alerta ? (
         <Button key="ver" hotkey="1" variant="primary" onPress={acoes.ver}>ver</Button>
+      ) : f.pend ? (
+        <Button key="ver-pend" hotkey="1" variant="primary" onPress={acoes.verPend}>ver</Button>
       ) : (
         <Button key="painel" hotkey="1" variant="secondary" onPress={acoes.painel}>painel</Button>
       )}
@@ -1165,7 +1375,10 @@ type DadosPainel = {
   agora: number
   eu: string
   alertas: Alertas | null
-  acoes: { aba: (a: string) => Acao; abrir: Acao; usarMedido: Acao }
+  pendencias: EstadoPendencias | null
+  vista: VistaPendencias
+  temArtefato: boolean
+  acoes: { aba: (a: string) => Acao; abrir: Acao; usarMedido: Acao; pend: Parameters<typeof abaPendencias>[5] }
 }
 
 const MAX_LOCKS = 50
@@ -1226,8 +1439,19 @@ function painelArvore(ui: any, d: DadosPainel): any {
       <Button key="t-agora" variant={d.aba === 'agora' ? 'primary' : 'secondary'} onPress={d.acoes.aba('agora')}>Agora</Button>
       <Button key="t-exec" variant={d.aba === 'execucao' ? 'primary' : 'secondary'} onPress={d.acoes.aba('execucao')}>Execução</Button>
       <Button key="t-locks" variant={d.aba === 'locks' ? 'primary' : 'secondary'} onPress={d.acoes.aba('locks')}>Locks e filas</Button>
+      {d.ex.papel === 'orquestrador' && (
+        <Button key="t-pend" variant={d.aba === 'pendencias' ? 'primary' : 'secondary'} onPress={d.acoes.aba('pendencias')}>{rotuloAba(d.pendencias)}</Button>
+      )}
     </Box>
   )
+  if (d.aba === 'pendencias' && d.ex.papel === 'orquestrador') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        {abas}
+        {abaPendencias(ui, d.pendencias, d.vista, d.temArtefato, d.agora, d.acoes.pend)}
+      </Box>
+    )
+  }
   if (d.aba === 'locks') {
     return (
       <Box flexDirection="column" gap={1}>
@@ -1598,11 +1822,14 @@ export const registerMaestro: Register = on => {
       nunca: async () => { await garantirSessao($); await $.store.set(NUNCA, [...(await nunca($)), cwdSessao]); await $.state.set(MODO, 'off'); cancelarLoops() },
       painel: async () => { await garantirSessao($); await olharAgora($); await $.ui.open({ id: PANE, title: 'Maestro' }) },
       ver: async () => { await garantirSessao($); await $.state.set(ABA, 'locks'); await olharAgora($); await $.ui.open({ id: PANE, title: 'Maestro' }) },
+      verPend: async () => { await garantirSessao($); await $.state.set(ABA, 'pendencias'); await $.ui.open({ id: PANE, title: 'Maestro' }) },
     })
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+    const vista = { ...VISTA_PADRAO, ...(((await $.state.get(PEND_VISTA)).value ?? {}) as Partial<VistaPendencias>) }
+    const mudarVista = async (m: Partial<VistaPendencias>) => { await $.state.set(PEND_VISTA, { ...vista, ...m }) }
     return painelArvore($.ui.resolve(e), {
       aba: ((await $.state.get(ABA)).value ?? 'agora') as string,
       ex: await exec($),
@@ -1614,10 +1841,33 @@ export const registerMaestro: Register = on => {
       agora: Date.now(),
       eu: sessao,
       alertas: ((await $.state.get(ALERTAS)).value ?? null) as Alertas | null,
+      pendencias: ((await $.state.get(PEND)).value ?? null) as EstadoPendencias | null,
+      vista: vista,
+      temArtefato: !!c?.artefato,
       acoes: {
-        aba: a => async () => { await garantirSessao($); await $.state.set(ABA, a) },
+        aba: a => async () => {
+          await garantirSessao($)
+          await $.state.set(ABA, a)
+          if (a === 'pendencias') await pendenciasAgora($)
+        },
         abrir: async () => { await garantirSessao($); await $.state.set(ABA, 'execucao') },
         usarMedido: async () => { await garantirSessao($); await usarMedido($) },
+        pend: {
+          fase: f => () => mudarVista({ fase: f }),
+          copiar: i => async () => { await $.ui.copy({ text: i.texto }) },
+          abrir: async () => {
+            if (c?.artefato) await $.tool.call({ tool: 'Artifact', action: 'open', url: c.artefato })
+          },
+          // the person's words to the orchestrator agent, which sends the directive (d-diretivas-diretas); the mod sends nothing
+          preFechamento: i => async () => {
+            if (i.spec) await $.prompt.submit({ text: `Mande para o pré-fechamento de ${i.spec}: ${i.ref}` })
+          },
+          enviada: i => async () => { await garantirSessao($); await marcarEnviada($, i) },
+          doc: () => mudarVista({ docAberto: !vista.docAberto }),
+          busca: t => () => mudarVista({ busca: t }),
+          filtro: f => () => mudarVista({ filtro: f }),
+          itemDoc: id => () => mudarVista({ itemDoc: id }),
+        },
       },
     })
   }).catch(($, e, next) => next(e))

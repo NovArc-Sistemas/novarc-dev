@@ -131,6 +131,7 @@ The NOVARC orchestrator arbitrates the branch-level suite across set sessions on
 | `VALIDACAO <S> reprovado <falhas>` | read `specs/S.validacao` (the durable record) and treat each failure as work: N = 1 fix inline; N >= 2 send the builder of S (the linked spec session, still alive with its build context; or the fork) a `SendMessage` listing the failures. The next `PUSHED` updates `headSha` and the orchestrator re-validates |
 | `VALIDACAO <S> aprovado` | nothing to write; mention it in the close-out |
 | `MARCO <S> <etapa> <proof>` | while S's spec session owns the document (from its READY until you accept its `DONE` after reading the diff, `references/milestones.md`), forward the line to that session, which re-verifies and writes; otherwise re-verify the proof yourself (ledger line, `git ls-remote`, `gh pr list --head`), then write it by the procedure. Never on the message alone |
+| `PRE-FECHAMENTO <S> <ref> <texto>` | the transport `from` must equal the recorded `NOTE ORQUESTRADOR` row (same check as FECHA below) and S must be a spec of this set; otherwise ignore it, append `NOTE PRE-FECHAMENTO-RECUSADO <from>` and tell the user. Accepted: append `NOTE PRE-FECHAMENTO <S> <ref> <texto>`, then forward the same line by `SendMessage` to the spec session of S while that session owns the spec (`references/milestones.md`), else treat the item as this session's own close-out work before `DONE`. Reply nothing: the result shows up as the spec's next checkpoints |
 | `FECHA <C> <S>=<sha> ...` | see "Close-out on FECHA" below |
 
 ## Close-out on FECHA
