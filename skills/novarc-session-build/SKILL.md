@@ -51,9 +51,13 @@ NOVARC additions, binding in both modes:
    N >= 2: that spec's linked session during its build phase, and the set session before and after it, by the
    ownership-by-phase table in `references/milestones.md` (the `novarc` mod loaded in the spec session writes the
    milestones of its own pushes); on the fork fallback the set session writes for the fork, because forks never
-   call `ArtifactData`. A spec session
-   never writes another spec's document or `execucao/*`. The NOVARC orchestrator writes ONLY `specs/{id}.validacao`.
-2. **Derived, never stored.** `execucao/{C}` stores only `{sessao, iniciadoEm, bloqueios}`. A set's etapa, branches,
+   call `ArtifactData`. The `novarc` mod loaded in the set session also writes `execucao/{C}.espelho`, the mirror of
+   the set's ledger; a spec session never writes it. A spec session
+   never writes another spec's document or `execucao/*`. The NOVARC orchestrator writes ONLY `specs/{id}.validacao`
+   and, through its mod, the singleton `config/orquestracao` (slots, thresholds); never `execucao/*`.
+2. **Derived, never stored.** `execucao/{C}` stores only `{sessao, iniciadoEm, bloqueios, espelho}`; `espelho`
+   mirrors the ledger on disk (outstanding locks, each spec's last checkpoint, the rhythm), so it is not derived from
+   other documents. A set's etapa, branches,
    PRs, validation state and displayed status are computed on read from its `specs/{id}` documents
    (`references/milestones.md`, "Derivation").
 3. **Every write is pinned.** `get`, then `update` with `if_version` of the writer's own fields only. `set` only to

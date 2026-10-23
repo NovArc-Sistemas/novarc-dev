@@ -5,11 +5,17 @@
 // entry so the Agora tab of any session sees all runs on the machine.
 import type { Register } from 'claude-code'
 
-import type { Contexto, Execucao, Registro } from '../../types'
-import { VAZIA, TRILHA, alerta, alertaRaias, anotar, cartoesAgora, chamadaLedger, checkpoint, daMinhaExecucao, ehBuild, faixaConjuntoRaias, laneDaMensagem, linhaConjunto, novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, slugDoSpawn, vivo, type Raia } from './execucao'
+import type { Alerta, Alertas, Contexto, Evento, Execucao, LinhaSweep, Registro, Slots } from '../../types'
+import {
+  LIMIARES_PADRAO, VAZIA, TRILHA, alerta, anotar, calados, cartoesAgora, chamadaLedger, checkpoint, cortar, daMinhaExecucao, ehBuild,
+  faixaConjuntoRaias, laneDaMensagem, lerSweep, linhaConjunto, locksDoEspelho, marcadorDir, montarAlertas, novasLinhas, novosToasts, orfaos,
+  papelDaBranch, papelDoPrompt, papelDoSkill, progresso, proposta, raia, raiasPorConjunto, resumoEspelho, ritmo, ritmoTotal, slotsAbertos,
+  slotsPresos, slugDoSpawn, textoLimiares, vivo, type LockAberto, type Raia,
+} from './execucao'
 import {
   ETAPA_FAIXA,
   aFechar,
+  prontosSemLock,
   branchDoPush,
   estadoConjunto,
   estadoFaixa,
@@ -28,7 +34,11 @@ import {
   urlOrquestrar,
   type ConjuntoDoc,
   type DbDoc,
+  type EspelhoConjunto,
+  type OrquestracaoDoc,
   type Plano,
+  type Proposta,
+  type Ritmo,
   type SpecDoc,
 } from './logic'
 
@@ -46,6 +56,8 @@ const POR_DIR = { plugin: 'novarc', key: 'maestroPorDir' } as const
 const ETAPA = { plugin: 'novarc', key: 'maestroEtapa' } as const
 // The band's laid-out fields, computed by prepararFaixa after every look, poll and event: the band reads only this (R34).
 const FAIXA_DADOS = { plugin: 'novarc', key: 'maestroFaixaDados' } as const
+// C02-S01: this session's alerts, toast dedupe, last sweep and what the Locks e filas tab draws.
+const ALERTAS = { plugin: 'novarc', key: 'maestroAlertas' } as const
 const NUNCA = 'maestro-nunca'
 
 async function chamar($: any, input: Record<string, unknown>): Promise<string> {
@@ -88,28 +100,61 @@ async function lerColecao($: any, url: string, collection: string): Promise<Reco
 /** The last complete read of the planning database, versions kept; replaced only when all three lists of a look succeed. */
 let banco: { specs: Record<string, DbDoc>; execucao: Record<string, DbDoc>; config: Record<string, DbDoc>; at: number } | null = null
 
-/** Writes a milestone on specs/<id> when the stored etapa is earlier (R3): get, compare, pinned update, 3 attempts. */
-async function marco($: any, url: string, specId: string, etapa: string, campos: Record<string, unknown>): Promise<string> {
+type Gravacao = { r: 'criado' | 'gravado' | 'ja-estava' | 'falhou'; versao: number | null }
+type Campos = Record<string, unknown> | ((doc: DbDoc | null) => Record<string, unknown>)
+
+/**
+ * One pinned write of the writer's own fields (D4): `get` (skipped on the first attempt when `o.versao` is known, with
+ * `o.doc` the document held for it), `update` with `if_version`, `set` without it only when the document is missing; a
+ * refused pin re-reads and retries, 3 attempts. A function `campos` is recomposed from each attempt's document, so a
+ * retry never re-sends stale fields. `o.aceita` false: the stored document already holds it (`ja-estava`).
+ */
+async function gravarFixado(
+  $: any,
+  url: string,
+  colecao: string,
+  id: string,
+  campos: Campos,
+  o: { versao?: number | null; doc?: DbDoc | null; criar?: Record<string, unknown>; aceita?: (doc: DbDoc) => boolean } = {},
+): Promise<Gravacao> {
+  const versaoDe = (t: string) => {
+    const m = t.match(/\bversion (\d+)/i)
+    return m ? Number(m[1]) : null
+  }
+  const dados = (doc: DbDoc | null) => (typeof campos === 'function' ? campos(doc) : campos)
   for (let i = 0; i < 3; i++) {
-    const t = await chamar($, { tool: 'ArtifactData', action: 'get', url, collection: 'specs', doc_id: specId })
-    const [doc] = lerDocs(t)
-    if (!doc) {
-      try {
-        await chamar($, { tool: 'ArtifactData', action: 'set', url, collection: 'specs', doc_id: specId, data: { etapa, ...campos, at: new Date().toISOString(), origem: 'mod' } })
-        return 'criado'
-      } catch {
-        continue
+    let doc: DbDoc | null
+    let versao: number
+    if (i === 0 && o.versao) {
+      doc = o.doc ?? null
+      versao = o.versao
+    } else {
+      doc = lerDocs(await chamar($, { tool: 'ArtifactData', action: 'get', url, collection: colecao, doc_id: id }))[0] ?? null
+      if (!doc) {
+        try {
+          const t = await chamar($, { tool: 'ArtifactData', action: 'set', url, collection: colecao, doc_id: id, data: o.criar ?? dados(null) })
+          return { r: 'criado', versao: versaoDe(t) }
+        } catch {
+          continue
+        }
       }
+      versao = doc.version
     }
-    if (rank(doc.data.etapa as string) >= rank(etapa)) return 'ja-estava'
+    if (doc && o.aceita && !o.aceita(doc)) return { r: 'ja-estava', versao }
     try {
-      await chamar($, { tool: 'ArtifactData', action: 'update', url, collection: 'specs', doc_id: specId, if_version: doc.version, data: { etapa, ...campos, at: new Date().toISOString(), origem: 'mod' } })
-      return 'gravado'
+      const t = await chamar($, { tool: 'ArtifactData', action: 'update', url, collection: colecao, doc_id: id, if_version: versao, data: dados(doc) })
+      return { r: 'gravado', versao: versaoDe(t) }
     } catch {
-      // version moved: re-read and retry
+      // version moved (or the call failed): re-read and retry
     }
   }
-  return 'falhou'
+  return { r: 'falhou', versao: null }
+}
+
+/** Writes a milestone on specs/<id> when the stored etapa is earlier (R3), through gravarFixado. */
+async function marco($: any, url: string, specId: string, etapa: string, campos: Record<string, unknown>): Promise<string> {
+  const dados = () => ({ etapa, ...campos, at: new Date().toISOString(), origem: 'mod' })
+  return (await gravarFixado($, url, 'specs', specId, dados, { aceita: d => rank(d.data.etapa as string) < rank(etapa) })).r
 }
 
 /** Re-reads the current branch, so a session that switches branch or worktree after start follows it. */
@@ -142,6 +187,14 @@ async function atualizar($: any, doTimer = false): Promise<void> {
   try {
     if (doTimer && ((await $.state.get(MODO)).value === 'off' || !(await exec($)).papel)) return
     await refrescar($, g)
+    if (!velho(g)) {
+      try {
+        await gravarOrquestracao($, g)
+        await alertasAgora($)
+      } catch (err) {
+        await logarUmaVez($, 'orquestracao', err)
+      }
+    }
     if (!velho(g)) await prepararFaixa($)
   } catch {
     // keep the last band
@@ -167,13 +220,14 @@ async function refrescar($: any, g: number): Promise<void> {
     if (velho(g)) return
     await $.state.set(LINHAS, ls)
     if (c.papel === 'orquestrador') {
-      const prontos = liberados(plano, specs, execucao)
+      prontos = prontosSemLock(plano, specs, execucao, slotsOrq, Date.now())
+      const liberadosAgora = liberados(plano, specs, execucao)
       const publicados = (plano.specs || []).filter(s => specs[s.id]?.etapa === 'branch-publicada' && specs[s.id]?.validacao?.sha !== specs[s.id]?.headSha).map(s => s.id)
       const fechar = aFechar(plano, specs, execucao)
       const txt = [
         publicados.length ? `validar: ${publicados.join(', ')}` : '',
         fechar.length ? `fechar: ${fechar.join(', ')}` : '',
-        prontos.length ? `liberado: ${prontos.join(', ')}` : '',
+        liberadosAgora.length ? `liberado: ${liberadosAgora.join(', ')}` : '',
       ]
         .filter(Boolean)
         .join(' · ')
@@ -207,7 +261,26 @@ async function orquestrar($: any, url: string | null, papel: 'orquestrador' | 'c
     const plano = await lerPlano($, url)
     if (plano) await $.state.set(CTX, { artefato: url, plano, conjunto, spec: null, papel })
   }
-  if (!poll && (await $.state.get(MODO)).value !== 'off') poll = $.clock.every(5 * 60 * 1000, () => atualizar($, true))
+  const g = geracao
+  const ligado = (await $.state.get(MODO)).value !== 'off'
+  // check and set with no await between: two callers never arm two polls; an ending session arms none
+  if (ligado && !poll && !encerrando && !velho(g)) poll = $.clock.every(5 * 60 * 1000, () => atualizar($, true))
+}
+
+// True from the first line of session.end until zerarSessao bumped the generation: nothing arms a poll in between.
+let encerrando = false
+
+/**
+ * Arms the 5-minute poll in any session of a recognised run whose context holds a plan (R28 keeps a role-less session
+ * idle): a set or spec session after a hot reload, a spec session whose plan came from artefato.txt.
+ */
+async function garantirPoll($: any): Promise<void> {
+  if (poll || encerrando) return
+  const g = geracao
+  if ((await $.state.get(MODO)).value === 'off' || !(await exec($)).papel) return
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  if (!c?.artefato || !c.plano) return
+  if (!poll && !encerrando && !velho(g)) poll = $.clock.every(5 * 60 * 1000, () => atualizar($, true))
 }
 
 // ---- v2 olhos: the run as seen from this session, no artifact needed
@@ -266,7 +339,9 @@ let cursor: Record<string, { size: number; mtimeMs: number; consumido: number }>
 
 /** Folds into `ex` the complete lines each fork-<slug>.md of `dir` gained since the last fold; a shrunk file refolds from 0. */
 async function dobrar($: any, dir: string, ex: Execucao, alvo: string, g: number): Promise<Execucao> {
-  for (const f of await $.fs.list(dir)) {
+  const lista = await $.fs.list(dir)
+  if (!velho(g)) marcadores[alvo + dir] = marcadorDir(lista) // the sweep's change marker, from this same list (R2)
+  for (const f of lista) {
     const m = String(f.name).match(/^fork-(.+)\.md$/)
     if (!m) continue
     const p = `${dir}/${f.name}`
@@ -317,6 +392,298 @@ async function lerConjuntos($: any): Promise<void> {
     }
   }
   if (!velho(g)) await $.state.set(POR_DIR, { ...porDir })
+}
+
+// ---- C02-S01: automatic lock sweep, alerts and the planning-database mirrors (detection only: nothing is ever sent)
+
+const SWEEP_ATRASO = 5000
+// Per ledger dir (keyed like `cursor`): the marker of the fork files the last fold listed.
+let marcadores: Record<string, string> = {}
+// The pending debounced sweep, the one in flight, and when the last one started (R31).
+let adiada: { cancel: () => void } | null = null
+let varrendo = false
+let ultimaVarredura = 0
+// The ledger.py this session's agent ran (absolute path), preferred over the plugin's copy.
+let scriptLedger: string | null = null
+// `<slug> <kind> <resource>` -> first time a stampless outstanding lock was seen (its age, Decision 3).
+let vistoEm: Record<string, string> = {}
+// Mirror writes: the last written content hash and version of execucao/{C}, and of config/orquestracao.
+let hashEspelho: string | null = null
+let versaoEspelho: number | null = null
+let espelhadoEm: number | null = null
+let hashOrq: string | null = null
+// Orchestrator: its own ledger.md read incrementally, the slots paired from it, the sets ready to close.
+let cursorOrq: { size: number; mtimeMs: number; consumido: number } | null = null
+let eventosOrq: Evento[] = []
+let slotsOrq: Slots = { verify: { dono: null, fila: [] }, producao: { dono: null, fila: [] } }
+let prontos: { conjunto: string; n: number }[] = []
+
+const NOVO_ALERTAS = (): Alertas => ({ lista: [], alertasVistos: [], sweep: null, limiares: { ...LIMIARES_PADRAO }, olhares: 0 })
+
+async function alertas($: any): Promise<Alertas> {
+  return ((await $.state.get(ALERTAS)).value as Alertas | null) ?? NOVO_ALERTAS()
+}
+
+/** The session that holds the fork ledgers: the set session, or the reserve fork mode's dispatcher. */
+const podeVarrer = (ex: Execucao) =>
+  !!ex.ledgerDir && (ex.papel === 'conjunto' || (ex.papel === 'orquestrador' && Object.values(ex.forks).some(f => f.agentId)))
+
+function agendar($: any, ms: number): void {
+  adiada?.cancel()
+  try {
+    adiada = $.clock.after(ms, () => {
+      adiada = null
+      void varrer($, 'adiada')
+    })
+  } catch {
+    adiada = null // no timer: the next look sweeps when the marker moved
+  }
+}
+
+/** A ledger checkpoint was seen (Bash hook or received message): one sweep 5 s after the last mark (R1). Never awaits it. */
+async function marcarSujo($: any): Promise<void> {
+  if (podeVarrer(await exec($))) agendar($, SWEEP_ATRASO)
+}
+
+/**
+ * Runs `ledger.py sweep` (the only owner of the per-resource pairing, R3) and keeps its result in `maestroAlertas.sweep`.
+ * One in flight and one per 5 s across both triggers (R31); a run that is no result keeps the previous rows (R5).
+ */
+async function varrer($: any, origem: 'olhar' | 'adiada'): Promise<void> {
+  const g = geracao
+  const ex = await exec($)
+  if (!podeVarrer(ex) || varrendo) return
+  varrendo = true // claimed before the first await: two triggers never both start a sweep
+  let agoraMs: number
+  try {
+    agoraMs = Number(await $.clock.now())
+  } catch {
+    agoraMs = Date.now()
+  }
+  const passou = agoraMs - ultimaVarredura
+  if (passou < SWEEP_ATRASO) {
+    varrendo = false
+    if (origem === 'adiada') agendar($, SWEEP_ATRASO - passou)
+    return
+  }
+  ultimaVarredura = agoraMs
+  adiada?.cancel()
+  adiada = null
+  try {
+    const marcador = marcadores[ex.ledgerDir!] ?? ''
+    let lido: { linhas: LinhaSweep[]; semLeitura: boolean }
+    try {
+      // the plugin's directory may be reported as the folder holding plugin.json (.claude-plugin/): skills/ sits beside it
+      const raiz = String($.plugin.root).replace(/[\\/]\.claude-plugin[\\/]?$/, '')
+      const script = scriptLedger ?? `${raiz}/skills/novarc-session-build/core/scripts/ledger.py`
+      const r = await $.process.run(['python', script, 'sweep', '--dir', ex.ledgerDir!])
+      lido = lerSweep(String(r?.stdout ?? ''), Number(r?.exitCode))
+    } catch {
+      lido = { linhas: [], semLeitura: true }
+    }
+    if (velho(g)) return
+    const al = await alertas($)
+    if (!lido.semLeitura) {
+      const agora = new Date().toISOString()
+      const vivos: Record<string, string> = {}
+      for (const l of lido.linhas) if (l.desde === null) vivos[`${l.slug} ${l.kind} ${l.resource}`] = vistoEm[`${l.slug} ${l.kind} ${l.resource}`] ?? agora
+      vistoEm = vivos
+    }
+    // no reading: the old rows stay and the old marker too, so the next look tries again
+    const sweep = lido.semLeitura
+      ? { marcador: al.sweep?.marcador ?? '', linhas: al.sweep?.linhas ?? [], at: Date.now(), semLeitura: true }
+      : { marcador, linhas: lido.linhas, at: Date.now(), semLeitura: false }
+    await $.state.set(ALERTAS, { ...al, sweep })
+    if (velho(g)) return
+    await alertasAgora($)
+    if (!velho(g)) await prepararFaixa($)
+  } finally {
+    if (!velho(g)) varrendo = false
+  }
+}
+
+const daBanco = <T,>(d: DbDoc | undefined) => (d?.data ?? null) as T | null
+
+/** Set session, every 5th timer look: `config/orquestracao.limiares`, else 15 and 20 (R17). */
+async function lerLimiares($: any): Promise<void> {
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  let lim = { ...LIMIARES_PADRAO }
+  try {
+    if (c?.artefato) {
+      const d = lerDocs(await chamar($, { tool: 'ArtifactData', action: 'get', url: c.artefato, collection: 'config', doc_id: 'orquestracao' }))[0]
+      const l = (d?.data as Partial<OrquestracaoDoc> | undefined)?.limiares
+      if (l && Number.isFinite(l.calado) && Number.isFinite(l.lockOrfao)) lim = { calado: l.calado, lockOrfao: l.lockOrfao }
+    }
+  } catch {
+    // read failed: the defaults
+  }
+  await $.state.set(ALERTAS, { ...(await alertas($)), limiares: lim })
+}
+
+/** Set session: writes `execucao/{C}.espelho` when the summary changed, only after a valid sweep (R19, R20, R21, R22). */
+async function espelhar($: any, ex: Execucao): Promise<void> {
+  if (ex.papel !== 'conjunto' || !ex.conjunto) return
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  const al = await alertas($)
+  if (!c?.artefato || !al.sweep || al.sweep.semLeitura) return
+  const resumo = resumoEspelho(ex, al.sweep.linhas, vistoEm)
+  const hash = JSON.stringify(resumo)
+  if (hash === hashEspelho) return
+  const espelho: EspelhoConjunto = { ...resumo, at: new Date().toISOString() }
+  const g = geracao
+  const r = await gravarFixado($, c.artefato, 'execucao', ex.conjunto, { espelho }, { versao: versaoEspelho })
+  if (velho(g) || r.r === 'falhou') return // nothing stored: the next look retries
+  hashEspelho = hash
+  versaoEspelho = r.versao
+  espelhadoEm = Date.now()
+}
+
+/** Orchestrator: the new complete lines of its own ledger.md (slot lines), read only when the file changed. */
+async function lerLedgerOrq($: any, ex: Execucao): Promise<void> {
+  if (ex.papel !== 'orquestrador' || !ex.ledgerDir) return
+  let f: { size: number; mtimeMs: number } | undefined
+  try {
+    f = (await $.fs.list(ex.ledgerDir)).find((x: { name: string }) => x.name === 'ledger.md')
+  } catch {
+    return // no ledger dir yet: no slot lines, the slots stay as they were
+  }
+  if (!f || (cursorOrq && cursorOrq.size === f.size && cursorOrq.mtimeMs === f.mtimeMs)) return
+  const texto = String(await $.fs.read(`${ex.ledgerDir}/ledger.md`))
+  const de = cursorOrq && f.size >= cursorOrq.size ? cursorOrq.consumido : 0
+  if (de === 0) eventosOrq = []
+  const n = novasLinhas(texto, de)
+  cursorOrq = { size: f.size, mtimeMs: f.mtimeMs, consumido: n.consumido }
+  eventosOrq = [...eventosOrq, ...n.eventos]
+  slotsOrq = slotsAbertos(eventosOrq)
+}
+
+/** Every set's espelho the last poll read (orchestrator). */
+const espelhos = () =>
+  Object.entries(banco?.execucao ?? {})
+    .map(([id, d]) => [id, (d.data as ConjuntoDoc).espelho] as const)
+    .filter((x): x is readonly [string, EspelhoConjunto] => !!x[1])
+
+const limiaresDoBanco = () => {
+  const l = daBanco<OrquestracaoDoc>(banco?.config?.orquestracao)?.limiares
+  return l && Number.isFinite(l.calado) && Number.isFinite(l.lockOrfao) ? { calado: l.calado, lockOrfao: l.lockOrfao } : { ...LIMIARES_PADRAO }
+}
+
+/** Orchestrator, on each poll: `config/orquestracao` (run, slots, thresholds, proposal) when its content changed (R24). */
+async function gravarOrquestracao($: any, g: number): Promise<void> {
+  const ex = await exec($)
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  const runId = (ex.ledgerDir ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+  if (ex.papel !== 'orquestrador' || !c?.artefato || !c.plano || !/^\d{8}-\d{4}$/.test(runId)) return
+  await lerLedgerOrq($, ex)
+  const atual = banco?.config?.orquestracao ?? null
+  const guardado = daBanco<OrquestracaoDoc>(atual ?? undefined)
+  const agora = new Date().toISOString()
+  let prop = proposta(espelhos().map(([, e]) => e.ritmo), agora)
+  if (prop && guardado?.proposta && prop.calado === guardado.proposta.calado && prop.lockOrfao === guardado.proposta.lockOrfao && prop.amostras === guardado.proposta.amostras) {
+    prop = { ...prop, at: guardado.proposta.at }
+  }
+  const sessao = (c.plano as Plano).execucao?.orquestrador ?? titulo
+  const campos = (doc: DbDoc | null) => {
+    const d = (doc?.data ?? null) as Partial<OrquestracaoDoc> | null
+    return {
+      runId,
+      sessao,
+      iniciadaEm: d?.runId === runId && d.iniciadaEm ? d.iniciadaEm : agora,
+      slots: slotsOrq,
+      limiares: d?.limiares ?? { ...LIMIARES_PADRAO, fonte: 'padrao', at: agora },
+      proposta: prop,
+      at: agora,
+    }
+  }
+  const semHora = (o: ReturnType<typeof campos>) => JSON.stringify({ ...o, at: null, iniciadaEm: null, proposta: o.proposta ? { ...o.proposta, at: null } : null })
+  const hash = semHora(campos(atual))
+  if (hash === hashOrq || velho(g)) return
+  const r = await gravarFixado($, c.artefato, 'config', 'orquestracao', campos, { versao: atual?.version ?? null, doc: atual })
+  if (!velho(g) && r.r !== 'falhou') hashOrq = hash
+}
+
+/**
+ * Alert scan (orchestrator and set session): orphan locks, held slots, quiet sets and specs, ranked (R11); one toast per
+ * new key (R8); the Locks e filas rows. Reads state, the last sweep and the last poll only.
+ */
+async function alertasAgora($: any, run?: Execucao): Promise<void> {
+  const ex = run ?? (await exec($))
+  if (ex.papel !== 'orquestrador' && ex.papel !== 'conjunto') return
+  const g = geracao
+  const al = await alertas($)
+  const agora = Date.now()
+  let locks: LockAberto[] = []
+  let unidadesC: { unidade: string; at: number; feito: boolean }[] = []
+  let unidadesS: { unidade: string; at: number; feito: boolean }[] = []
+  let lim = al.limiares
+  let rit: Ritmo = ritmo(Object.values(ex.forks))
+  let prop: Proposta | null = null
+  let slots: Slots | null = null
+  if (ex.papel === 'orquestrador') {
+    lim = limiaresDoBanco()
+    const es = espelhos()
+    locks = es.flatMap(([, e]) => locksDoEspelho(e))
+    unidadesS = es.flatMap(([, e]) => Object.entries(e.specs).map(([s, v]) => ({ unidade: s, at: Date.parse(v.at), feito: v.ultimo === 'DONE' })))
+    unidadesC = Object.entries(ex.conjuntos ?? {}).map(([cj, v]) => ({ unidade: cj, at: v.at, feito: /^(pronto|merge)$/i.test(v.etapa) }))
+    rit = ritmoTotal(es.map(([, e]) => e.ritmo))
+    prop = daBanco<OrquestracaoDoc>(banco?.config?.orquestracao)?.proposta ?? proposta(es.map(([, e]) => e.ritmo), new Date(agora).toISOString())
+    slots = slotsOrq
+  }
+  if (al.sweep) locks = [...locks, ...locksDoEspelho({ locks: resumoEspelho(ex, al.sweep.linhas, vistoEm).locks })]
+  if (ex.papel === 'conjunto') {
+    unidadesS = Object.values(ex.forks).map(f => {
+      const r = raia(f, agora)
+      const ult = f.eventos[f.eventos.length - 1]
+      return { unidade: r.rotulo ?? r.slug, at: ult?.at ?? agora, feito: r.ultimo === 'DONE' }
+    })
+  }
+  const lista: Alerta[] = montarAlertas(
+    {
+      orfaos: orfaos(locks, agora, lim.lockOrfao),
+      slots: slots ? slotsPresos(slots, agora, lim.lockOrfao) : [],
+      conjuntos: calados(unidadesC, agora, lim.calado),
+      specs: calados(unidadesS, agora, lim.calado),
+    },
+    agora,
+  )
+  const t = novosToasts(lista, al.alertasVistos)
+  const minutos = (iso: string) => Math.floor((agora - Date.parse(iso)) / 60_000)
+  const vista: NonNullable<Alertas['vista']> = {
+    locks: locks
+      .map(l => ({ ...l, minutos: minutos(l.desde), orfao: minutos(l.desde) >= lim.lockOrfao }))
+      .sort((a, b) => (b.minutos || 0) - (a.minutos || 0)),
+    slots,
+    unidades: [...unidadesC, ...unidadesS]
+      .filter(u => !u.feito)
+      .map(u => ({ unidade: u.unidade, minutos: Math.floor((agora - u.at) / 60_000), calada: Math.floor((agora - u.at) / 60_000) >= lim.calado })),
+    ritmo: rit,
+    proposta: prop,
+    espelhadoEm,
+  }
+  if (velho(g)) return
+  await $.state.set(ALERTAS, { ...(await alertas($)), lista, alertasVistos: t.vistos, limiares: lim, vista })
+  for (const tx of t.toasts) {
+    try {
+      $.ui.toast(tx)
+    } catch {
+      // no toast surface: the band still shows it
+    }
+  }
+}
+
+/** "usar o medido" (orchestrator pane): one pinned update of `config/orquestracao.limiares` (R15). */
+async function usarMedido($: any): Promise<void> {
+  const ex = await exec($)
+  const c = ((await $.state.get(CTX)).value ?? null) as Contexto | null
+  const prop = (await alertas($)).vista?.proposta
+  if (ex.papel !== 'orquestrador' || !c?.artefato || !prop) return
+  const limiares = { calado: prop.calado, lockOrfao: prop.lockOrfao, fonte: 'medido' as const, at: new Date().toISOString() }
+  const atual = banco?.config?.orquestracao ?? null
+  const r = await gravarFixado($, c.artefato, 'config', 'orquestracao', { limiares }, { versao: atual?.version ?? null, doc: atual })
+  if (r.r === 'falhou' || !banco) return
+  banco.config.orquestracao = { id: 'orquestracao', version: r.versao ?? (atual?.version ?? 0) + 1, data: { ...(atual?.data ?? {}), limiares } }
+  await alertasAgora($)
+  await prepararFaixa($)
 }
 
 // <gitdir> of the session's checkout, resolved by one `git rev-parse --git-dir` at start and after a checkout/switch.
@@ -448,6 +815,11 @@ async function olharAgora($: any, doTimer = false): Promise<void> {
     let ex = await exec($)
     if (doTimer && !ex.papel) return
     try {
+      await garantirPoll($) // self-healing: a look that finds no poll arms it
+    } catch (err) {
+      await logarUmaVez($, 'garantirPoll', err)
+    }
+    try {
       ex = await lerDir($, ex)
     } catch (err) {
       await logarUmaVez($, 'lerDir', err)
@@ -469,6 +841,43 @@ async function olharAgora($: any, doTimer = false): Promise<void> {
     } catch (err) {
       await logarUmaVez($, 'lerConjuntos', err)
     }
+    if (velho(g)) return
+    // C02-S01 steps, each on its own: sweep when the marker moved (R2), then on the timer's looks only the limiares read
+    // (every 5th, R17) and the mirror write (R19), then the alert scan
+    try {
+      if (podeVarrer(ex) && marcadores[ex.ledgerDir!] !== undefined && marcadores[ex.ledgerDir!] !== (await alertas($)).sweep?.marcador) await varrer($, 'olhar')
+    } catch (err) {
+      await logarUmaVez($, 'varrer', err)
+    }
+    if (velho(g)) return
+    try {
+      if (doTimer && ex.papel === 'conjunto') {
+        const al = await alertas($)
+        const olhares = al.olhares + 1
+        if (velho(g)) return
+        await $.state.set(ALERTAS, { ...al, olhares })
+        if ((olhares - 1) % 5 === 0) await lerLimiares($)
+      }
+    } catch (err) {
+      await logarUmaVez($, 'lerLimiares', err)
+    }
+    if (velho(g)) return
+    try {
+      if (doTimer) await espelhar($, ex)
+    } catch (err) {
+      await logarUmaVez($, 'espelhar', err)
+    }
+    if (velho(g)) return
+    try {
+      if (ex.papel === 'orquestrador') await lerLedgerOrq($, ex)
+    } catch (err) {
+      await logarUmaVez($, 'lerLedgerOrq', err)
+    }
+    try {
+      if (!velho(g) && (ex.papel === 'orquestrador' || ex.papel === 'conjunto')) await alertasAgora($, ex)
+    } catch (err) {
+      await logarUmaVez($, 'alertas', err)
+    }
     if (!velho(g)) await prepararFaixa($, ex)
   } catch {
     // the gate's state read failed: the next tick tries again
@@ -480,8 +889,10 @@ async function olharAgora($: any, doTimer = false): Promise<void> {
 function cancelarLoops(): void {
   poll?.cancel()
   olhar?.cancel()
+  adiada?.cancel()
   poll = null
   olhar = null
+  adiada = null
 }
 
 /** `ativar`: band forced on; a recognised run gets its look (and the orchestrator its poll) back. */
@@ -492,6 +903,7 @@ async function ativar($: any): Promise<void> {
   if (!ex.papel) return
   if (ex.papel === 'orquestrador') await orquestrar($, null)
   await ligar($, ex.papel)
+  await garantirPoll($)
 }
 
 // The artifact half of the latest session start (plan read, context, first refresh); a milestone that needs the context
@@ -509,6 +921,7 @@ async function iniciarSessao($: any, cwd: string, esperar = true): Promise<void>
   const minha = (carregando = new Promise<void>(r => (pronto = r)))
   let branch: string | null = null
   cancelarLoops() // a timer still held from before a reload is replaced, never doubled
+  encerrando = false // a new session never inherits an end that did not finish
   const g = geracao
   try {
     sessao = await $.session.id()
@@ -526,6 +939,7 @@ async function iniciarSessao($: any, cwd: string, esperar = true): Promise<void>
       if (ex.papel === 'orquestrador') await orquestrar($, null)
       await ligar($, ex.papel)
     }
+    await garantirPoll($) // a set or spec session with a plan gets its poll back too
     await registrar($)
     await lerOutras($)
     if (!velho(g)) await prepararFaixa($)
@@ -552,6 +966,7 @@ async function carregarContexto($: any, cwd: string, branch: string | null, g: n
     if (velho(g)) return
     await plantar($, plano, artefato)
     await atualizar($)
+    await garantirPoll($)
   } catch {
     // no plan context: the run is still followed without it
   }
@@ -571,6 +986,7 @@ async function garantirSessao($: any): Promise<void> {
 /** Forgets the ended session: every module variable and every Maestro state key back to a fresh session's. */
 async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void> {
   geracao++
+  encerrando = false // from here every older caller is velho(g); cleared before any write that may fail
   banco = null
   carregando = Promise.resolve()
   sessao = ''
@@ -580,6 +996,19 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   cursor = {}
   cacheReg = {}
   porDir = {}
+  marcadores = {}
+  varrendo = false
+  ultimaVarredura = 0
+  scriptLedger = null
+  vistoEm = {}
+  hashEspelho = null
+  versaoEspelho = null
+  espelhadoEm = null
+  hashOrq = null
+  cursorOrq = null
+  eventosOrq = []
+  slotsOrq = { verify: { dono: null, fila: [] }, producao: { dono: null, fila: [] } }
+  prontos = []
   papelConhecido = false
   olhando = false
   atualizando = false
@@ -595,6 +1024,7 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   await $.state.set(ETAPA, null)
   await $.state.set(FAIXA_DADOS, null)
   await $.state.set(ONDE, null)
+  await $.state.set(ALERTAS, null)
 }
 
 async function nunca($: any): Promise<string[]> {
@@ -602,7 +1032,8 @@ async function nunca($: any): Promise<string[]> {
 }
 
 const COR: Record<string, string> = { feito: 'success', agora: 'claude', travado: 'error', vazio: 'inactive' }
-const TRILHA_TXT = TRILHA.map(t => t.toLowerCase().padEnd(9)).join('')
+// One fixed-width column per TRILHA step: the engine collapses spaces inside a Text, so columns come from layout.
+const COLUNA = 9
 const MAX_RAIAS = 21
 
 type Acao = () => Promise<void>
@@ -616,21 +1047,34 @@ export type FaixaDados = {
   quadrados: string[]
   alerta: string | null
   nOutras: number
+  /** Orchestrator only: a set ready to close with nothing held (green band). */
+  verde: { titulo: string; texto: string; dica: string } | null
 }
 
-/** The band's fields from the run, the poll text, the registry, the sets' ledgers and the stage label. */
-export function dadosFaixa(ex: Execucao, txt: string | null, outras: Registro[], porDir: Record<string, Execucao>, etapa: string | null, agora: number, eu: string): FaixaDados {
+/**
+ * The band's fields from the run, the poll text, the registry, the stage label, this session's alerts (the most urgent
+ * first, R11) and, in the orchestrator, the sets ready to close.
+ */
+export function dadosFaixa(
+  ex: Execucao,
+  txt: string | null,
+  outras: Registro[],
+  etapa: string | null,
+  agora: number,
+  eu: string,
+  alertas: Alerta[] = [],
+  verdes: { conjunto: string; n: number }[] = [],
+): FaixaDados {
   const minhas = Object.values(ex.forks).map(f => raia(f, agora))
   let texto: string
   let quad: Raia[] = []
-  let al: string | null = null
+  const al = ex.papel === 'orquestrador' || ex.papel === 'conjunto' ? alertas[0]?.texto ?? null : null
+  const v = ex.papel === 'orquestrador' && !al ? verdes[0] : undefined
   if (ex.papel === 'orquestrador') {
     // before this session's own registry entry is read back, its run is empty: `0 conjuntos vivos` until the look
     // that follows (it writes the entry, then reads the registry)
     const run = daMinhaExecucao(outras, eu)
     texto = faixaOrq(run.filter(r => r.papel === 'conjunto' && vivo(r, agora)).length)
-    // a LOCK seen only in a set's ledger surfaces here (A19), next to the reserve fork mode's own lanes
-    al = alertaRaias([...raiasPorConjunto(run, porDir, agora).flatMap(b => b.raias), ...minhas])
   } else if (ex.papel === 'conjunto') {
     quad = ex.conjunto ? minhas : []
     texto = quad.length ? faixaConjuntoRaias(ex.conjunto!, etapa, quad) : 'sessão de conjunto'
@@ -648,6 +1092,7 @@ export function dadosFaixa(ex: Execucao, txt: string | null, outras: Registro[],
     quadrados: quadrados(quad),
     alerta: al,
     nOutras: outras.filter(r => r.sessao !== eu).length,
+    verde: v ? { titulo: 'pronto para fechar', texto: `${v.conjunto} com as ${v.n} specs em DONE, sem lock aberto`, dica: 'peça o FECHA na conversa' } : null,
   }
 }
 
@@ -660,18 +1105,19 @@ async function prepararFaixa($: any, ex?: Execucao): Promise<void> {
       run,
       ((await $.state.get(FAIXA)).value ?? null) as string | null,
       ((await $.state.get(OUTRAS)).value ?? []) as Registro[],
-      (run.papel === 'orquestrador' ? (await $.state.get(POR_DIR)).value ?? {} : {}) as Record<string, Execucao>,
       (run.papel === 'conjunto' ? (await $.state.get(ETAPA)).value ?? null : null) as string | null,
       Date.now(),
       sessao,
+      run.papel === 'orquestrador' || run.papel === 'conjunto' ? (((await $.state.get(ALERTAS)).value as Alertas | null)?.lista ?? []) : [],
+      run.papel === 'orquestrador' ? prontos : [],
     ),
   )
 }
 
-const SEM_FAIXA: FaixaDados = { papel: null, txt: null, rotulo: 'NOVARC', texto: 'ativo', extra: null, quadrados: [], alerta: null, nOutras: 0 }
+const SEM_FAIXA: FaixaDados = { papel: null, txt: null, rotulo: 'NOVARC', texto: 'ativo', extra: null, quadrados: [], alerta: null, nOutras: 0, verde: null }
 
 /** The band above the prompt: lays out prepared fields only (idle, orchestrator, set, spec, or switched on with no run). */
-function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes: { ativar: Acao; nunca: Acao; painel: Acao }): any {
+function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes: { ativar: Acao; nunca: Acao; painel: Acao; ver: Acao }): any {
   const { Box, Text, Button } = ui
   if (estadoFaixa(modo, f.papel, f.txt, false) === 'ociosa') {
     return (
@@ -696,7 +1142,14 @@ function faixaArvore(ui: any, modo: 'auto' | 'on' | 'off', f: FaixaDados, acoes:
         </Text>
       )}
       {f.alerta && <Text color="error">● {f.alerta}</Text>}
-      <Button key="painel" hotkey="1" variant={f.alerta ? 'primary' : 'secondary'} onPress={acoes.painel}>painel</Button>
+      {f.verde && <Text color="success" bold>{f.verde.titulo}</Text>}
+      {f.verde && <Text>{f.verde.texto}</Text>}
+      {f.verde && <Text dimColor>{f.verde.dica}</Text>}
+      {f.alerta ? (
+        <Button key="ver" hotkey="1" variant="primary" onPress={acoes.ver}>ver</Button>
+      ) : (
+        <Button key="painel" hotkey="1" variant="secondary" onPress={acoes.painel}>painel</Button>
+      )}
     </Box>
   )
 }
@@ -711,24 +1164,75 @@ type DadosPainel = {
   onde: string | null
   agora: number
   eu: string
-  acoes: { aba: (a: string) => Acao; abrir: Acao }
+  alertas: Alertas | null
+  acoes: { aba: (a: string) => Acao; abrir: Acao; usarMedido: Acao }
 }
 
-/** The pane `novarc-maestro`: tabs Agora, Execução, Locks, from state alone. */
+const MAX_LOCKS = 50
+
+/** The Locks e filas tab: held resources, the orchestrator's slots, quiet units, the thresholds line. */
+function abaLocks(ui: any, d: DadosPainel): any[] {
+  const { Box, Text, Button } = ui
+  const al = d.alertas
+  const v = al?.vista
+  const papel = d.ex.papel
+  const conj = papel === 'conjunto'
+  const linhas: any[] = []
+  const lim = al?.limiares ?? LIMIARES_PADRAO
+  if (conj && !al?.sweep) linhas.push(<Text dimColor>varrendo o ledger…</Text>)
+  if (al?.sweep?.semLeitura) linhas.push(<Text color="error">varredura sem leitura</Text>)
+  const locks = v?.locks ?? []
+  linhas.push(<Text bold>{`${locks.filter(l => l.orfao).length} lock órfão · ${locks.length} recursos em uso`}</Text>)
+  if (!locks.length) linhas.push(<Text dimColor>Nenhum lock aberto.</Text>)
+  const c = cortar(locks, MAX_LOCKS)
+  c.linhas.forEach((l, i) =>
+    linhas.push(
+      <Box key={`l-${i}`} flexDirection="row" gap={1}>
+        <Text bold>{l.resource}</Text>
+        <Text>{l.spec}</Text>
+        <Text color={l.orfao ? 'error' : 'subtle'}>{l.orfao ? `${l.minutos} min sem RELEASE` : `${l.minutos} min`}</Text>
+        {l.espera?.length ? <Text dimColor>{`espera ${l.espera.join(' › ')}`}</Text> : null}
+      </Box>,
+    ),
+  )
+  if (c.mais > 0) linhas.push(<Text dimColor>{`mais ${c.mais}`}</Text>)
+  if (v?.slots) {
+    for (const kind of ['verify', 'producao'] as const) {
+      const s = v.slots[kind]
+      const m = s.dono ? Math.floor((d.agora - Date.parse(s.dono.desde)) / 60_000) : 0
+      linhas.push(<Text>{s.dono ? `${kind}  ${s.dono.conjunto}  ${m} min` : `${kind}  livre`}</Text>)
+      if (s.fila.length) linhas.push(<Text dimColor>{`fila: ${s.fila.map(f => f.conjunto).join(' › ')}`}</Text>)
+    }
+  }
+  for (const u of v?.unidades ?? []) {
+    linhas.push(
+      <Box key={`u-${u.unidade}`} flexDirection="row" gap={1}>
+        <Text>{`${u.unidade}  sem sinal há ${u.minutos} min`}</Text>
+        <Text color={u.calada ? 'error' : 'success'}>{u.calada ? 'calada' : 'ok'}</Text>
+      </Box>,
+    )
+  }
+  linhas.push(<Text dimColor>{textoLimiares(lim, v?.ritmo ?? { checkpointMin: null, lockMin: null, amostras: 0 })}</Text>)
+  if (papel === 'orquestrador' && v?.proposta) linhas.push(<Button key="usar-medido" onPress={d.acoes.usarMedido}>usar o medido</Button>)
+  if (conj && v?.espelhadoEm) linhas.push(<Text dimColor>{`espelhado no planejamento há ${Math.max(0, Math.round((d.agora - v.espelhadoEm) / 1000))} s`}</Text>)
+  return linhas
+}
+
+/** The pane `novarc-maestro`: tabs Agora, Execução, Locks e filas, from state alone. */
 function painelArvore(ui: any, d: DadosPainel): any {
   const { Box, Text, Button } = ui
   const abas = (
     <Box flexDirection="row" gap={1}>
       <Button key="t-agora" variant={d.aba === 'agora' ? 'primary' : 'secondary'} onPress={d.acoes.aba('agora')}>Agora</Button>
       <Button key="t-exec" variant={d.aba === 'execucao' ? 'primary' : 'secondary'} onPress={d.acoes.aba('execucao')}>Execução</Button>
-      <Button key="t-locks" variant={d.aba === 'locks' ? 'primary' : 'secondary'} onPress={d.acoes.aba('locks')}>Locks</Button>
+      <Button key="t-locks" variant={d.aba === 'locks' ? 'primary' : 'secondary'} onPress={d.acoes.aba('locks')}>Locks e filas</Button>
     </Box>
   )
   if (d.aba === 'locks') {
     return (
       <Box flexDirection="column" gap={1}>
         {abas}
-        <Text dimColor>Locks chega na fase 2.</Text>
+        {abaLocks(ui, d)}
       </Box>
     )
   }
@@ -747,17 +1251,28 @@ function painelArvore(ui: any, d: DadosPainel): any {
     const proprias = corta(Object.values(d.ex.forks).map(f => raia(f, d.agora)))
     const ls = orq ? [] : d.linhas
     const vazio = resta === MAX_RAIAS && ls.length === 0
+    const cabecalho = (
+      <Box flexDirection="row">
+        {TRILHA.map(t => (
+          <Box key={`h-${t}`} width={COLUNA} flexShrink={0}>
+            <Text dimColor>{t.toLowerCase()}</Text>
+          </Box>
+        ))}
+      </Box>
+    )
     const lane = (r: Raia, k: string) => (
       <Box key={`r-${k}-${r.slug}`} flexDirection="column">
         <Box flexDirection="row" gap={1}>
           <Text bold>{r.rotulo ?? r.slug}</Text>
-          <Text color={r.minutos !== null && r.minutos >= 15 && r.ultimo !== 'DONE' ? 'error' : 'subtle'}>{r.minutos === null ? 'sem eventos' : `há ${r.minutos} min · ${r.ultimo}`}</Text>
+          <Text color={r.minutos !== null && r.minutos >= (d.alertas?.limiares.calado ?? LIMIARES_PADRAO.calado) && r.ultimo !== 'DONE' ? 'error' : 'subtle'}>{r.minutos === null ? 'sem eventos' : `há ${r.minutos} min · ${r.ultimo}`}</Text>
         </Box>
-        <Text>
+        <Box flexDirection="row">
           {r.celulas.map((c, i) => (
-            <Text color={COR[c]}>{(c === 'vazio' ? '·' : (r.rotulos[i] ?? '')).slice(0, 8).padEnd(9)}</Text>
+            <Box key={`c-${i}`} width={COLUNA} flexShrink={0}>
+              <Text color={COR[c]}>{(c === 'vazio' ? '·' : (r.rotulos[i] ?? '')).slice(0, 8)}</Text>
+            </Box>
           ))}
-        </Text>
+        </Box>
       </Box>
     )
     return (
@@ -768,11 +1283,11 @@ function painelArvore(ui: any, d: DadosPainel): any {
         {blocos.map((b, i) => (
           <Box key={`b-${i}`} flexDirection="column">
             <Text bold>{b.titulo ? `${b.conjunto} · ${b.titulo}` : b.conjunto}</Text>
-            {b.raias.length > 0 && <Text dimColor>{TRILHA_TXT}</Text>}
+            {b.raias.length > 0 && cabecalho}
             {b.raias.map(r => lane(r, String(i)))}
           </Box>
         ))}
-        {proprias.length > 0 && <Text dimColor>{TRILHA_TXT}</Text>}
+        {proprias.length > 0 && cabecalho}
         {proprias.map(r => lane(r, 'p'))}
         {fora > 0 && <Text dimColor>{`mais ${fora}`}</Text>}
         {ls.length > 0 && <Text bold>Conjuntos do planejamento</Text>}
@@ -830,6 +1345,7 @@ export const registerMaestro: Register = on => {
   on('session.end', async ($, e, next) => {
     // a /clear fires no session.start: a cwd in the never-list keeps the band off for the next session
     let modo: 'auto' | 'off' = 'auto'
+    encerrando = true // before the cancel: a poll check in flight arms nothing until zerarSessao bumped the generation
     try {
       cancelarLoops()
       if (sessao) {
@@ -883,7 +1399,8 @@ export const registerMaestro: Register = on => {
       const lg = chamadaLedger(cmd)
       if (lg) {
         // A fork's ledger call carries its agentId: that makes this session the orchestrator.
-        await ligar($, e.agentId ? 'orquestrador' : lg.fork ? 'spec' : 'conjunto', lg.dir)
+        // a --dir/--fork holding a shell variable arrives null: the known ledger dir stays, no lane is made from it
+        await ligar($, e.agentId ? 'orquestrador' : lg.temFork ? 'spec' : 'conjunto', lg.dir)
         if (lg.fork && lg.tipo) await $.state.set(EXEC, anotar(await exec($), lg.fork, { tipo: lg.tipo, texto: lg.texto ?? '', at: Date.now() }, e.agentId))
         try {
           await lerDir($)
@@ -891,6 +1408,9 @@ export const registerMaestro: Register = on => {
           // ledger dir not readable from here: lanes keep their state, the registry is still written
         }
         await registrar($)
+        if (lg.script) scriptLedger = lg.script
+        // a lock checkpoint schedules the debounced sweep; the hook never waits on it (R1, R30)
+        if (/^(LOCK|RELEASE|APPLIED|DEPLOYED)$/.test(lg.tipo ?? '')) await marcarSujo($)
       }
       if (/\bgit\s+(checkout|switch|worktree)\b/.test(cmd)) {
         // the linked spec session's first act is `git switch -c <spec branch>`: that branch names its role
@@ -1051,6 +1571,7 @@ export const registerMaestro: Register = on => {
           if (cp && lane) {
             await $.state.set(EXEC, anotar(ex, lane, { tipo: cp.tipo, texto: cp.resto, at: Date.now() }))
             await registrar($)
+            await marcarSujo($) // a spec session's checkpoint sweeps even when this agent never calls ledger.py (R1)
           }
         } else if (ex.papel === 'orquestrador') {
           const lc = linhaConjunto(e.text)
@@ -1076,6 +1597,7 @@ export const registerMaestro: Register = on => {
       ativar: async () => { await garantirSessao($); await ativar($); await olharAgora($); await $.ui.open({ id: PANE, title: 'Maestro' }) },
       nunca: async () => { await garantirSessao($); await $.store.set(NUNCA, [...(await nunca($)), cwdSessao]); await $.state.set(MODO, 'off'); cancelarLoops() },
       painel: async () => { await garantirSessao($); await olharAgora($); await $.ui.open({ id: PANE, title: 'Maestro' }) },
+      ver: async () => { await garantirSessao($); await $.state.set(ABA, 'locks'); await olharAgora($); await $.ui.open({ id: PANE, title: 'Maestro' }) },
     })
   }).catch(($, e, next) => next(e))
 
@@ -1091,9 +1613,11 @@ export const registerMaestro: Register = on => {
       onde: ((await $.state.get(ONDE)).value ?? null) as string | null,
       agora: Date.now(),
       eu: sessao,
+      alertas: ((await $.state.get(ALERTAS)).value ?? null) as Alertas | null,
       acoes: {
         aba: a => async () => { await garantirSessao($); await $.state.set(ABA, a) },
         abrir: async () => { await garantirSessao($); await $.state.set(ABA, 'execucao') },
+        usarMedido: async () => { await garantirSessao($); await usarMedido($) },
       },
     })
   }).catch(($, e, next) => next(e))

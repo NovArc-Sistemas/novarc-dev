@@ -48,6 +48,35 @@ export type Registro = {
   conjuntos?: Record<string, { etapa: string; texto: string; at: number }>
 }
 
+/** One `SWEEP OUTSTANDING` line of `ledger.py sweep`; `desde` null when the LOCK line had no stamp (`since=-`). */
+export type LinhaSweep = { slug: string; kind: string; resource: string; estado: string; desde: string | null }
+/** One alert: `chave` dedupes the toast, `texto` is the band text, `toast` the toast text. */
+export type Alerta = { chave: string; texto: string; toast: string; nivel: 'erro' | 'ok'; at: number }
+export type Slot = { dono: { conjunto: string; branch: string; desde: string } | null; fila: { conjunto: string; branch: string; desde: string }[] }
+/** The orchestrator's `verify` / `producao` slots, paired from its own ledger.md. */
+export type Slots = { verify: Slot; producao: Slot }
+/** Session-only alert state: the band and the Locks e filas tab read it. */
+export type Alertas = {
+  lista: Alerta[]
+  /** Alert keys already toasted; a key leaves when its cause clears. */
+  alertasVistos: string[]
+  /** Set session: the last sweep, its dir marker and whether it was a real reading. */
+  sweep: { marcador: string; linhas: LinhaSweep[]; at: number; semLeitura: boolean } | null
+  limiares: { calado: number; lockOrfao: number }
+  /** Set session: timer looks so far (limiares read cadence, survives hot reload). */
+  olhares: number
+  /** What the Locks e filas tab draws, computed with the alerts (the pane reads state only). */
+  vista?: {
+    locks: { spec: string; kind: string; resource: string; desde: string; estado: string; espera?: string[]; minutos: number; orfao: boolean }[]
+    slots: Slots | null
+    unidades: { unidade: string; minutos: number; calada: boolean }[]
+    ritmo: { checkpointMin: number | null; lockMin: number | null; amostras: number }
+    proposta: { calado: number; lockOrfao: number; amostras: number; at: string } | null
+    /** Set session: when the espelho was last written (ms), for `espelhado no planejamento há N s`. */
+    espelhadoEm: number | null
+  }
+}
+
 // ---- Acervo: the artifact organizer (private plugin only)
 
 /** A named list of people the user shares artifacts with. */
@@ -136,7 +165,11 @@ declare module 'claude-code' {
         quadrados: string[]
         alerta: string | null
         nOutras: number
+        /** Orchestrator only: a set ready to close (green band). */
+        verde: { titulo: string; texto: string; dica: string } | null
       } | null
+      /** Alerts of this session (lock órfão, slot, calada), the toast dedupe and the last sweep. */
+      maestroAlertas: Alertas | null
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

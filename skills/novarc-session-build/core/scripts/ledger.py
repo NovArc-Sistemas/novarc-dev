@@ -267,6 +267,9 @@ def cmd_sweep(args):
 
     A resource with no name is tracked under the sentinel "-", so an unnamed
     lock still has to be released explicitly.
+
+    Each outstanding line carries `since=<ISO>`, the stamp `append` wrote on the
+    LOCK line (`  # <ISO>`), or `since=-` for a LOCK written by hand.
     """
     if not os.path.isdir(args.dir):
         die("no such ledger directory: %s (absolute path into the MAIN checkout)" % args.dir)
@@ -311,6 +314,7 @@ def cmd_sweep(args):
         slug = fname[len("fork-"):-len(".md")]
         held = {}            # (kind, resource) -> raw line that requested it
         for line in read_lines(os.path.join(args.dir, fname)):
+            stamp = re.search(r"\s#\s*(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s*$", line)
             body = line.split("#")[0]
             toks = body.split()
             if not toks:
@@ -324,7 +328,7 @@ def cmd_sweep(args):
                 kind, res = _kv(toks, "LOCK")
                 _warn_kind(kind, warned)
                 for r in (res or ["-"]):
-                    held[(kind, r)] = body.strip()
+                    held[(kind, r)] = (body.strip(), stamp.group(1) if stamp else "-")
                 continue
 
             if toks[0] == "RELEASE":
@@ -346,14 +350,14 @@ def cmd_sweep(args):
             for r in res:
                 held.pop((kind, r), None)
 
-        for (kind, resource), raw in sorted(held.items()):
+        for (kind, resource), (raw, since) in sorted(held.items()):
             state = ("GRANTED-NOT-RELEASED"
                      if (slug, kind, resource) in granted
                      else "UNGRANTED")
-            outstanding.append((slug, kind, resource, state, raw))
+            outstanding.append((slug, kind, resource, state, raw, since))
 
-    for slug, kind, resource, state, raw in outstanding:
-        print("SWEEP OUTSTANDING %s %s %s [%s] %s" % (slug, kind, resource, state, raw))
+    for slug, kind, resource, state, raw, since in outstanding:
+        print("SWEEP OUTSTANDING %s %s %s [%s] since=%s %s" % (slug, kind, resource, state, since, raw))
     if malformed:
         print("SWEEP WARNING %d GO line(s) not in 'GO <spec-slug> <kind> <resource...>' form "
               "- a grant naming no resource grants nothing; it is not a wildcard" % malformed)

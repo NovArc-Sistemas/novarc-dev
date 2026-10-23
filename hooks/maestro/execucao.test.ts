@@ -26,9 +26,12 @@ test('a ledger.py call yields its absolute dir, fork and type, quoted or not', (
   expect(chamadaLedger('python scripts/ledger.py append --dir "C:\\repo\\ai\\ledger" --fork c02-s01 --type pushed --text "branch x"')).toEqual({
     dir: 'C:\\repo\\ai\\ledger',
     fork: 'c02-s01',
+    temFork: true,
     tipo: 'PUSHED',
     texto: 'branch x',
+    script: null,
   })
+  expect(chamadaLedger('python C:/x/skills/novarc-session-build/core/scripts/ledger.py append --dir C:/l --type LOCK --text "m a"')?.script).toBe('C:/x/skills/novarc-session-build/core/scripts/ledger.py')
   expect(chamadaLedger('python ledger.py sweep --dir /abs/ledger')?.fork).toBe(null)
   expect(chamadaLedger('git push origin x')).toBe(null)
 })
@@ -210,4 +213,56 @@ test('pendencias: laneDaMensagem matches a lowercase set id; orquestrar is case-
 test('review: laneDaMensagem finds a fork by a lowercase stored spec id', () => {
   const ex: Execucao = { ...VAZIA, conjunto: 'C01', forks: { olhos: { slug: 'olhos', spec: 'c01-s01', eventos: [] } } }
   expect(laneDaMensagem(ex, 'LOCK db C01-S01 migration')).toBe('olhos')
+})
+
+test('shell variables in --dir and --fork are not taken as a path or a lane (F2)', () => {
+  expect(chamadaLedger('python ledger.py append --dir "$D" --fork "$F" --type LOCK --text "migration a"')).toEqual({
+    dir: null, fork: null, temFork: true, tipo: 'LOCK', texto: 'migration a', script: null,
+  })
+  expect(chamadaLedger('python ledger.py append --dir $D --type NOTE --text x')?.dir).toBe(null)
+  expect(chamadaLedger('python ledger.py append --dir "${D}" --type NOTE --text x')?.dir).toBe(null)
+  expect(chamadaLedger('python ledger.py append --dir C:/x --fork c03-s01 --type TASK --text "1/2"')).toEqual({
+    dir: 'C:/x', fork: 'c03-s01', temFork: true, tipo: 'TASK', texto: '1/2', script: null,
+  })
+  expect(chamadaLedger('python ledger.py sweep --dir /abs/ledger')?.temFork).toBe(false)
+})
+
+const L6 = (args: string) => chamadaLedger(`python ledger.py append ${args}`)
+
+test('finding 6: a --fork inside --text, after a comment or after another command is not read', () => {
+  const r1 = L6('--dir C:/x --type NOTE --text "rework 2 ($ in --dir/--fork becomes data / phantom lane) done"')
+  expect([r1?.fork, r1?.temFork, r1?.dir, r1?.tipo]).toEqual([null, false, 'C:/x', 'NOTE'])
+  expect(L6('--dir C:/x --type NOTE --text "a --fork are b"')?.fork).toBe(null)
+  expect(L6('--dir C:/x --type NOTE --text x # --fork becomes')?.fork).toBe(null)
+  expect(L6('--dir C:/x --type TASK --text "1/2" ; echo --fork z')?.fork).toBe(null)
+  const r5 = L6('--dir C:/x --type NOTE --text x\\ --fork\\ becomes') // real backslashes reach the parser
+  expect([r5?.fork, r5?.texto]).toEqual([null, 'x --fork becomes'])
+})
+
+test('finding 6: a --dir inside --text placed first is not the dir', () => {
+  expect(chamadaLedger('python ledger.py append --text "x --dir /tmp/y" --dir C:/real --type NOTE')?.dir).toBe('C:/real')
+})
+
+test('finding 6: a slug with quotes or punctuation left is not a lane', () => {
+  expect(L6('--dir C:/x --fork dash-v2-10"; echo segura lock')).toBe(null)
+  expect(L6("--dir C:/x --fork 'dash-v2-10;' --type LOCK --text a")?.fork).toBe(null)
+  expect(L6('--dir C:/x --fork \\"$F\\" --type NOTE --text a')?.fork).toBe(null)
+})
+
+test('finding 6: a NOTE text naming branch= gives its lane no spec; a READY does', () => {
+  const nota = anotar(VAZIA, 'x', { tipo: 'NOTE', texto: 'MARCO branch=feat/c02-s01-y-20261021', at: 1 })
+  expect(nota.forks.x!.spec).toBe(undefined)
+  const pronto = anotar(VAZIA, 'x', { tipo: 'READY', texto: 'x branch=feat/c02-s01-y-20261021', at: 1 })
+  expect(pronto.forks.x!.spec).toBe('C02-S01')
+})
+
+test('finding 6 guards: real flags in every quoting form keep working', () => {
+  expect(L6('--dir C:/x --fork=c03-s01 --type TASK --text 1/2')?.fork).toBe('c03-s01')
+  expect(L6('--dir C:/x --fork "c03-s01" --type TASK --text 1/2')?.fork).toBe('c03-s01')
+  expect(L6("--dir='C:/x y' --type TASK --text 1/2")?.dir).toBe('C:/x y')
+  const r = L6('--dir C:/x --fork $F --type NOTE --text y')
+  expect([r?.fork, r?.temFork, r?.tipo]).toEqual([null, true, 'NOTE'])
+  expect(chamadaLedger('echo ledger.py && python ledger.py append --dir C:/x --type TASK --text 1/2')?.dir).toBe('C:/x')
+  const t = L6('--dir C:/x --fork c03-s01 --type NOTE --text "custa $5"')
+  expect([t?.fork, t?.texto]).toEqual(['c03-s01', 'custa $5'])
 })

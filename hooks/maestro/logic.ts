@@ -1,4 +1,5 @@
 // Pure helpers of the novarc mod: no engine calls here, so tests can exercise them directly.
+import type { Slots } from '../../types'
 import type { Raia } from './execucao'
 
 export const ETAPAS = ['iniciado', 'plano-aprovado', 'implementando', 'branch-publicada', 'pr-aberto', 'merge'] as const
@@ -46,7 +47,20 @@ export type SpecDoc = {
   pr?: string
   removido?: boolean
 }
-export type ConjuntoDoc = { iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }> }
+/** Rhythm of a set's ledgers: median minutes between checkpoints and from LOCK to its release, with the sample count. */
+export type Ritmo = { checkpointMin: number | null; lockMin: number | null; amostras: number }
+/** `execucao/{C}.espelho`: the set session mod's mirror of its ledger, replaced whole on each write. */
+export type EspelhoConjunto = {
+  locks: Record<string, { spec: string; desde: string; estado: 'GRANTED-NOT-RELEASED' | 'UNGRANTED'; espera?: string[] }>
+  specs: Record<string, { ultimo: string; texto: string; at: string }>
+  ritmo: Ritmo
+  at: string
+}
+export type ConjuntoDoc = { iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }>; espelho?: EspelhoConjunto }
+export type Limiares = { calado: number; lockOrfao: number; fonte: 'padrao' | 'medido'; at: string }
+export type Proposta = { calado: number; lockOrfao: number; amostras: number; at: string }
+/** `config/orquestracao`: the orchestrator mod's singleton (run, slots, thresholds). */
+export type OrquestracaoDoc = { runId: string; sessao: string; iniciadaEm: string; slots: Slots; limiares: Limiares; proposta: Proposta | null; at: string }
 
 /** Rank of an etapa; -1 for none. */
 export function rank(etapa: string | null | undefined): number {
@@ -227,6 +241,20 @@ export function aFechar(plano: Plano, specs: Record<string, SpecDoc>, conjuntos:
   const cs = plano.conjuntos || []
   const st = new Map(cs.map(c => [c.id, estadoConjunto(c, specs, conjuntos[c.id])]))
   return cs.filter(c => prontoParaFechar(st.get(c.id)!) && (c.dependeDe || []).every(d => st.get(d)?.status === 'concluido')).map(c => c.id)
+}
+
+/**
+ * Sets ready to close with nothing held (orquestrar.md 5.1 condition 4): `aFechar`, a present espelho written in the
+ * last 15 minutes with no lock (an absent or stale mirror is no evidence of no lock), and no verify/producao grant.
+ */
+export function prontosSemLock(plano: Plano, specs: Record<string, SpecDoc>, conjuntos: Record<string, ConjuntoDoc>, slots: Slots, agora: number): { conjunto: string; n: number }[] {
+  const segura = (c: string) => slots.verify.dono?.conjunto === c || slots.producao.dono?.conjunto === c
+  return aFechar(plano, specs, conjuntos)
+    .filter(c => {
+      const e = conjuntos[c]?.espelho
+      return !!e && agora - Date.parse(e.at) <= 15 * 60_000 && Object.keys(e.locks ?? {}).length === 0 && !segura(c)
+    })
+    .map(c => ({ conjunto: c, n: (plano.conjuntos || []).find(x => x.id === c)?.specs.length ?? 0 }))
 }
 
 /** Artifact url of a `/novarc-session-build orquestrar <url> ...` invocation, if that is what the args are. */
