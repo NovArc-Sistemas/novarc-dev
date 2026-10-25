@@ -1,6 +1,8 @@
 // The Pendências tab of the orchestrator pane (C02-S02): drawn from `maestroPendencias` and the pane's own view state
 // only; every read and write happens in register.tsx.
 import type { VistaPendencias } from '../../types'
+import { distribuicaoM } from './desenho'
+import type { Kit } from './kit'
 import { agrupar, abertos, filtrarDoc, linhaDoc, rotuloFase, type EstadoPendencias, type FiltroDoc, type ItemPendencia } from './pendencias'
 
 export type { VistaPendencias }
@@ -31,115 +33,132 @@ function idade(at: number | null, agora: number): string | null {
   return min < 60 * 24 ? `${min} min` : `${Math.floor(min / (60 * 24))} d`
 }
 
-/** The tab label: `Pendências <n>` with the open items. */
-export function rotuloAba(e: EstadoPendencias | null): string {
-  return e ? `Pendências ${abertos(e.itens)}` : 'Pendências'
+/** The tab's count: the open items (the label `📌 Pendências` and the red count are drawn by kit.abas). */
+export function rotuloAba(e: EstadoPendencias | null): number {
+  return e ? abertos(e.itens) : 0
 }
 
-/** The tab body under the tab row. */
-export function abaPendencias(ui: any, e: EstadoPendencias | null, v: VistaPendencias, temArtefato: boolean, agora: number, a: AcoesPendencias): any[] {
-  const { Box, Text, Button } = ui
+const EMOJI_TIPO: Record<string, string> = { PARKED: '📌', BLOCKED: '⛔', CUT: '✂️' }
+
+/** The tab body under the tab row (R17, R18), drawn with the C11-S01 kit; every key and action of C02-S02 kept. */
+export function abaPendencias(ui: any, e: EstadoPendencias | null, v: VistaPendencias, temArtefato: boolean, agora: number, a: AcoesPendencias, k: Kit): any[] {
+  const { Box, Text } = ui
   const Input = 'Input' in ui ? ui.Input : undefined
-  if (!e) return [<Text key="p-lendo" dimColor>lendo pendências…</Text>]
+  if (!e) return [k.cartaoEstado('carregando', 'lendo pendências…')]
   const g = agrupar(e.itens, v.fase)
   const caminho = e.itens.filter(i => i.fonte === 'a-caminho')
   const card = (i: ItemPendencia, col: string) => {
-    const k = `${col}-${i.ref}`
-    const meta = [ORIGEM[i.fonte], i.fase ? `segura F${rotuloFase(i.fase)}` : null, idade(i.at, agora), i.fonte === 'a-caminho' ? `${i.status} ${i.spec}` : i.ref.startsWith('"') ? null : i.ref]
-    return (
-      <Box key={k} flexDirection="column">
-        <Box flexDirection="row" gap={1}>
-          <Text bold>{i.titulo}</Text>
-          {i.alerta && <Text color="error">divergente</Text>}
-          {i.enviada && <Text color="success">enviada ao cliente</Text>}
+    const key = `${col}-${i.ref}`
+    const meta = [ORIGEM[i.fonte], idade(i.at, agora), i.fonte === 'a-caminho' ? `${i.status} ${i.spec}` : null]
+    const id = i.fonte === 'a-caminho' || i.ref.startsWith('"') ? null : i.ref
+    const acoes: [string, string, () => Promise<void>][] = []
+    if (i.fonte === 'plano') acoes.push([`cp-${key}`, 'copiar pergunta', a.copiar(i)])
+    if (i.fonte === 'plano' && temArtefato) acoes.push([`ab-${key}`, 'abrir no planejamento', a.abrir])
+    if (i.spec && (i.fonte === 'a-caminho' || i.quem !== 'pre-fechamento')) acoes.push([`pf-${key}`, 'mandar ao pré-fechamento', a.preFechamento(i)])
+    if (i.fonte === 'plano' && temArtefato && !i.enviada) acoes.push([`en-${key}`, 'marcar como enviada ao cliente', a.enviada(i)])
+    return k.quadro(key, [
+      <Box flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+        <Text bold>{i.titulo}</Text>
+        {i.fase ? k.chip(`segura F${rotuloFase(i.fase)}`, 'ruim') : null}
+        {i.alerta ? k.chip('divergente', 'ruim') : null}
+        {i.enviada ? k.chip('enviada ao cliente', 'ok') : null}
+      </Box>,
+      <Text size="footnote" color="subtle">{meta.filter(Boolean).join(' · ')}</Text>,
+      id ? <Text mono size="footnote" color="subtle">{id}</Text> : null,
+      i.alertaTexto ? <Text size="footnote" color="subtle">{i.alertaTexto}</Text> : null,
+      acoes.length ? (
+        <Box flexDirection="row" gap="sm" flexWrap="wrap">
+          {acoes.map(([chave, rotulo, f], n) => k.botao({ key: chave, primario: n === 0, onPress: f, children: rotulo }))}
         </Box>
-        <Text dimColor>{meta.filter(Boolean).join(' · ')}</Text>
-        {i.alertaTexto && <Text dimColor>{i.alertaTexto}</Text>}
-        <Box flexDirection="row" gap={1}>
-          {i.fonte === 'plano' && <Button key={`cp-${k}`} plain onPress={a.copiar(i)}>copiar pergunta</Button>}
-          {i.fonte === 'plano' && temArtefato && <Button key={`ab-${k}`} plain onPress={a.abrir}>abrir no planejamento</Button>}
-          {i.spec && (i.fonte === 'a-caminho' || i.quem !== 'pre-fechamento') && <Button key={`pf-${k}`} plain onPress={a.preFechamento(i)}>mandar ao pré-fechamento</Button>}
-          {i.fonte === 'plano' && temArtefato && !i.enviada && <Button key={`en-${k}`} plain onPress={a.enviada(i)}>marcar como enviada ao cliente</Button>}
-        </Box>
-      </Box>
-    )
+      ) : null,
+    ], { cor: i.alerta ? 'error' : 'promptBorder' })
   }
   const coluna = (titulo: string, its: ItemPendencia[], col: string) => (
-    <Box key={`col-${col}`} flexDirection="column">
-      <Text bold>{`${titulo} ${its.length}`}</Text>
+    <Box key={`col-${col}`} flexDirection="column" gap="sm" flexGrow={1} width={0}>
+      <Text bold>{`${titulo} · ${its.length}`}</Text>
       {its.length === 0 && <Text>Nada aqui</Text>}
-      {its.length === 0 && <Text dimColor>com este filtro</Text>}
+      {its.length === 0 && <Text size="footnote" color="subtle">com este filtro</Text>}
       {its.slice(0, MAX).map(i => card(i, col))}
-      {its.length > MAX && <Text dimColor>{`mais ${its.length - MAX}`}</Text>}
+      {its.length > MAX && <Text size="footnote" color="subtle">{`mais ${its.length - MAX}`}</Text>}
     </Box>
   )
   const out: any[] = []
-  if (e.falhas.plano) out.push(<Text key="f-plano" dimColor>planejamento não lido</Text>)
-  if (e.falhas.repo) out.push(<Text key="f-repo" dimColor>repositório não lido</Text>)
-  if (e.falhas.ledger) out.push(<Text key="f-ledger" dimColor>ledger não lido</Text>)
+  // the sources that failed while the others were read (R31): one warning card above the rest
+  const falhas = [e.falhas.plano && 'planejamento não lido', e.falhas.repo && 'repositório não lido', e.falhas.ledger && 'ledger não lido'].filter(Boolean) as string[]
+  if (falhas.length) out.push(k.quadro('p-falhas', [<Text>⚠️</Text>, ...falhas.map(f => <Text key={`f-${f}`} color="warning">{f}</Text>)], { cor: 'warning' }))
   out.push(
-    <Box key="p-fases" flexDirection="row" gap={1}>
-      <Text dimColor>fase</Text>
-      <Button key="pf-todas" variant={v.fase === null ? 'primary' : 'secondary'} onPress={a.fase(null)}>todas</Button>
-      {e.fases.map(f => (
-        <Button key={`pf-${f}`} variant={v.fase === f ? 'primary' : 'secondary'} onPress={a.fase(f)}>{`F${rotuloFase(f)}`}</Button>
-      ))}
-    </Box>,
+    ...k.filas('pk', [
+      k.kpi('pk-1', '🙋', String(g.socio.length), 'esperam você ou o cliente'),
+      k.kpi('pk-2', '🔧', String(g.pre.length), 'vão ao pré-fechamento'),
+      k.kpi('pk-3', '📬', String(caminho.length), 'a caminho do doc'),
+    ], 18),
   )
   out.push(
-    <Box key="p-caminho" flexDirection="column">
-      <Text bold>{`${caminho.length} a caminho do doc de pendings`}</Text>
-      <Text dimColor>geradas pelas specs em execução</Text>
-      {caminho.length === 0 && <Text>Nada a caminho</Text>}
-      {caminho.length === 0 && <Text dimColor>as specs ainda não geraram pendência</Text>}
-      {caminho.slice(0, MAX).map(i => (
-        <Box key={`ac-${i.ref}`} flexDirection="row" gap={1}>
+    <Box key="p-fases" flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+      <Text size="caption" color="subtle">fase</Text>
+      <Text color="promptBorder">│</Text>
+      {k.botao({ key: 'pf-todas', primario: v.fase === null, onPress: a.fase(null), children: 'todas' })}
+      {e.fases.map(f => k.botao({ key: `pf-${f}`, primario: v.fase === f, onPress: a.fase(f), children: `F${rotuloFase(f)}` }))}
+    </Box>,
+  )
+  out.push(k.titulo('a caminho do doc de pendings'))
+  out.push(
+    k.quadro('p-caminho', [
+      <Text size="footnote" color="subtle">geradas pelas specs em execução</Text>,
+      caminho.length === 0 ? <Text>Nada a caminho</Text> : null,
+      caminho.length === 0 ? <Text size="footnote" color="subtle">as specs ainda não geraram pendência</Text> : null,
+      ...caminho.slice(0, MAX).map(i => (
+        <Box key={`ac-${i.ref}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+          <Text>{EMOJI_TIPO[i.status] ?? '•'}</Text>
           <Text bold>{i.titulo}</Text>
-          <Text color="claude">{i.spec}</Text>
-          <Text>{TIPO[i.status] ?? i.status}</Text>
-          <Text dimColor>{i.texto}</Text>
-          <Text>{i.destino}</Text>
+          <Text mono size="footnote">{i.spec}</Text>
+          {k.chip(TIPO[i.status] ?? i.status, 'aviso')}
+          <Text size="footnote" color="subtle">{i.texto}</Text>
+          <Text size="footnote">{i.destino}</Text>
         </Box>
-      ))}
-    </Box>,
+      )),
+    ]),
   )
-  out.push(coluna('você ou o cliente', g.socio, 'socio'))
-  out.push(coluna('pré-fechamento', g.pre, 'pre'))
-  out.push(
-    <Box key="col-aceita" flexDirection="column">
-      <Text bold>{`dívida aceita ${g.aceita.n}`}</Text>
-      <Text dimColor>{`${g.aceita.accepted} ACCEPTED · ${g.aceita.watch} WATCH`}</Text>
-    </Box>,
-  )
+  out.push(k.titulo('quem age'))
+  out.push(...k.filas('p-cols', [coluna('🙋 você ou o cliente', g.socio, 'socio'), coluna('🔧 pré-fechamento', g.pre, 'pre')], 26))
+  out.push(k.quadro('col-aceita', [<Text bold>{`📚 ${g.aceita.n} dívidas aceitas`}</Text>, <Text size="footnote" color="subtle">{`${g.aceita.accepted} ACCEPTED · ${g.aceita.watch} WATCH`}</Text>]))
   // the project doc
   if (!e.repo) {
-    out.push(<Text key="p-doc">{linhaDoc(null)}</Text>)
+    out.push(k.quadro('p-doc-card', [<Text key="p-doc">{linhaDoc(null)}</Text>]))
     return out
   }
-  out.push(<Button key="p-doc" plain onPress={a.doc}>{linhaDoc(e.resumo)}</Button>)
+  const r = e.resumo
+  out.push(
+    k.quadro('p-doc-card', [
+      <Box flexDirection="row" gap="sm" alignItems="center">
+        <Text>🗂️</Text>
+        <Box flexGrow={1} width={0}>
+          <Text bold wrap="truncate-end">{linhaDoc(r)}</Text>
+        </Box>
+        {k.botao({ key: 'p-doc', onPress: a.doc, children: v.docAberto ? '🔽 fechar' : '▶️ abrir' })}
+      </Box>,
+      r ? k.sv(distribuicaoM([['OPEN', r.OPEN], ['GATED', r.GATED], ['WATCH', r.WATCH], ['ACCEPTED', r.ACCEPTED], ['CLOSED', r.CLOSED]]), 'distribuição do doc', 0, 8, '') : null,
+    ]),
+  )
   if (!v.docAberto) return out
   const f = filtrarDoc(e.repo, v.busca, v.filtro)
   const aberto = v.itemDoc ? e.repo.find(x => (x.id ?? x.titulo) === v.itemDoc) : undefined
   out.push(
-    <Box key="p-doc-aberto" flexDirection="column">
+    <Box key="p-doc-aberto" flexDirection="column" gap="sm">
       {Input && <Input key="p-busca" placeholder="buscar título ou ID" value={v.busca} submitLabel="buscar" onSubmit={(t: string) => a.busca(t)()} />}
-      <Box flexDirection="row" gap={1}>
-        {(['todos', 'abertos', 'presos', 'aceitos', 'fechados'] as FiltroDoc[]).map(x => (
-          <Button key={`df-${x}`} variant={v.filtro === x ? 'primary' : 'secondary'} onPress={a.filtro(x)}>{x}</Button>
-        ))}
+      <Box flexDirection="row" gap="sm" flexWrap="wrap">
+        {(['todos', 'abertos', 'presos', 'aceitos', 'fechados'] as FiltroDoc[]).map(x => k.botao({ key: `df-${x}`, primario: v.filtro === x, onPress: a.filtro(x), children: x }))}
       </Box>
-      <Text dimColor>{`quem responde: equipe ${e.resumo?.equipe ?? 0} · cliente ${e.resumo?.cliente ?? 0}`}</Text>
-      {f.linhas.map(x => (
-        <Button key={`dl-${x.id ?? x.titulo}`} plain onPress={a.itemDoc((x.id ?? x.titulo) === v.itemDoc ? null : x.id ?? x.titulo)}>{`${x.titulo}  ${x.status}`}</Button>
-      ))}
-      {f.mais > 0 && <Text dimColor>{`mais ${f.mais}: refine a busca`}</Text>}
+      <Text size="footnote" color="subtle">{`quem responde: equipe ${e.resumo?.equipe ?? 0} · cliente ${e.resumo?.cliente ?? 0}`}</Text>
+      {f.linhas.map(x => k.botao({ key: `dl-${x.id ?? x.titulo}`, onPress: a.itemDoc((x.id ?? x.titulo) === v.itemDoc ? null : x.id ?? x.titulo), children: `${x.titulo}  ${x.status}` }))}
+      {f.mais > 0 && <Text size="footnote" color="subtle">{`mais ${f.mais}: refine a busca`}</Text>}
       {aberto && (
         <Box key="p-item" flexDirection="column">
           <Text bold>{aberto.titulo}</Text>
           <Text>{`O que: ${aberto.oQue}`}</Text>
           <Text>{`Por que: ${aberto.porQue}`}</Text>
           <Text>{`Destrava: ${aberto.destrava}`}</Text>
-          <Text dimColor>{`responde: ${aberto.quem}`}</Text>
+          <Text size="footnote" color="subtle">{`responde: ${aberto.quem}`}</Text>
         </Box>
       )}
     </Box>,

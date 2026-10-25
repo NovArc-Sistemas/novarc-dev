@@ -419,13 +419,15 @@ test('tab, counter and one pendencias list per poll; PENDINGS.md read once while
   await orquestrador($, m)
   expect(listasPend(m)).toBe(1)
   const banda = await $.ui.mount(BANDA)
-  expect(await linhaBanda(banda)).toContain('● 2 pendências seguram a fase 6')
+  expect(await linhaBanda(banda)).toContain('🔴 2 pendências seguram a fase 6')
   await poll(m)
   expect(listasPend(m)).toBe(2)
   expect(m.lidos.filter(p => p.endsWith('PENDINGS.md')).length).toBe(1)
   const ui = await $.ui.mount(PAINEL)
   const abas = texto(await ui.drawn())
-  expect(abas.indexOf('Locks e filas')).toBeLessThan(abas.indexOf('Pendências 5'))
+  // C11-S01: the emoji tabs; the open count is the tab's own red bold Text
+  expect(abas.indexOf('🔒 Locks e filas')).toBeLessThan(abas.indexOf('📌 Pendências'))
+  expect((await ui.find({ key: 't-pend' }))?.children).toContainEqual(expect.objectContaining({ type: 'Text', children: [' 5'] }))
   // ver opens the pane on Pendências
   await banda.press({ key: 'ver-pend' })
   expect(texto(await ui.drawn())).toContain('você ou o cliente')
@@ -453,7 +455,7 @@ test('a failed or garbled pendencias list keeps the counter and says planejament
   for (const modo of ['erro', 'lixo'] as const) {
     m.falharLista = modo
     await poll(m)
-    expect(await linhaBanda(banda)).toContain('● 2 pendências seguram a fase 6')
+    expect(await linhaBanda(banda)).toContain('🔴 2 pendências seguram a fase 6')
     const ui = await abrirAba($, m)
     const t = texto(await ui.drawn())
     expect(t).toContain('planejamento não lido')
@@ -486,7 +488,7 @@ test('one divergence over two polls: band and a single toast; an orphan lock out
   await orquestrador($, m)
   await poll(m)
   const banda = await $.ui.mount(BANDA)
-  expect(await linhaBanda(banda)).toContain('● 1 pendências divergentes')
+  expect(await linhaBanda(banda)).toContain('🔴 1 pendências divergentes')
   expect(m.toasts.filter(t => t.startsWith('Resolvida no repositório')).length).toBe(1)
   const ui = await abrirAba($, m)
   expect(texto(await ui.drawn())).toContain('divergente')
@@ -496,7 +498,7 @@ test('one divergence over two polls: band and a single toast; an orphan lock out
   await poll(m)
   const linha = await linhaBanda(banda)
   expect(linha).not.toContain('pendências divergentes')
-  expect(linha).toContain('●')
+  expect(linha).toContain('🔴')
 })
 
 const ESPELHO = (ultimo: string, aCaminho: any[] = [{ spec: 'C06-S02', ref: 'C06-S02:3', tipo: 'PARKED', texto: 'corrigir ordem da fila', at: new Date().toISOString() }]) => ({
@@ -512,9 +514,11 @@ test('a caminho, columns and the card actions', async ($: any, on: any) => {
   await orquestrador($, m)
   const ui = await abrirAba($, m)
   let t = texto(await ui.drawn())
-  expect(t).toContain('1 a caminho do doc de pendings')
+  // C11-S01: the caption and the KPI replace the count line
+  expect(t).toContain('A CAMINHO DO DOC DE PENDINGS')
+  expect((await ui.find({ key: 'pk-3' }))?.text).toBe('📬1a caminho do doc')
   expect(t).toContain('tratar no pré-fechamento')
-  expect(t).toContain('dívida aceita 0')
+  expect(t).toContain('📚 0 dívidas aceitas')
   await ui.press({ key: 'cp-socio-p-exemplo-aberta' })
   expect(m.copias).toEqual(['Qual a regra da fila?'])
   await ui.press({ key: 'ab-socio-p-exemplo-aberta' })
@@ -537,7 +541,7 @@ test('a caminho, columns and the card actions', async ($: any, on: any) => {
   await quieto(m)
   const u = m.tools.filter(x => x.tool === 'ArtifactData' && x.action === 'update').pop()
   expect([u.if_version, Object.keys(u.data)]).toEqual([4, ['enviada']])
-  expect(await ui.find({ type: 'Text', text: /^enviada ao cliente$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ \[enviada ao cliente\] $/ })).toBeDefined()
   // after DONE the item heads for the close-out
   m.db!['execucao/C06'] = { data: ESPELHO('DONE'), version: 2 }
   await poll(m)
@@ -552,7 +556,7 @@ test('a refused enviada write toasts and draws no mark', async ($: any, on: any)
   await ui.press({ key: 'en-socio-p-exemplo-aberta' })
   await quieto(m)
   expect(m.toasts.some(t => t.includes('p-exemplo-aberta') && t.includes('falhou'))).toBe(true)
-  expect(await ui.find({ type: 'Text', text: /^enviada ao cliente$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^ \[enviada ao cliente\] $/ })).toBeUndefined()
 })
 
 test('project doc collapsed, expanded, item facts; 230 items under 2,500 nodes', async ($: any, on: any) => {
@@ -572,3 +576,33 @@ test('project doc collapsed, expanded, item facts; 230 items under 2,500 nodes',
   const t = texto(await ui.drawn())
   for (const s of ['O que: coisa 1', 'Por que: motivo 1', 'Destrava: gatilho 1', 'responde: equipe']) expect(t).toContain(s)
 })
+
+// ---- C11-S01: the Pendências tab drawn with the kit (R13, R17, R18, R28, R31)
+
+test('Pendências on desktop: KPIs, filter row, captions, two columns, debt card, doc card toggle and Input (A12, A16)', async ($: any, on: any) => {
+  const m = mundo(on, { db: dbInteg({ 'execucao/C06': { data: ESPELHO('TASK'), version: 1 } }) })
+  await orquestrador($, m)
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 't-pend' })
+  await quieto(m)
+  const col = async (re: RegExp) => Number((await ui.find({ type: 'Text', text: re }))?.text.match(/· (\d+)$/)?.[1])
+  const socio = await col(/^🙋 você ou o cliente · \d+$/)
+  const pre = await col(/^🔧 pré-fechamento · \d+$/)
+  expect([socio, pre].every(n => Number.isInteger(n))).toBe(true)
+  expect((await ui.find({ key: 'pk-1' }))?.text).toBe(`🙋${socio}esperam você ou o cliente`)
+  expect((await ui.find({ key: 'pk-2' }))?.text).toBe(`🔧${pre}vão ao pré-fechamento`)
+  expect((await ui.find({ key: 'pk-3' }))?.text).toBe('📬1a caminho do doc')
+  expect(await ui.find({ type: 'Text', text: 'fase' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: '│' }))?.props.color).toBe('promptBorder')
+  expect((await ui.find({ key: 'pf-todas' }))?.props.variant).toBe('primary')
+  for (const t of ['A CAMINHO DO DOC DE PENDINGS', 'QUEM AGE']) expect(await ui.find({ type: 'Text', text: t })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^📚 \d+ dívidas aceitas$/ })).toBeDefined()
+  expect((await ui.find({ key: 'p-doc' }))?.text).toBe('▶️ abrir')
+  expect((await ui.findAll({ type: 'Svg' })).some((s: any) => s.props.alt === 'distribuição do doc')).toBe(true)
+  await ui.press({ key: 'p-doc' })
+  expect((await ui.find({ key: 'p-doc' }))?.text).toBe('🔽 fechar')
+  expect((await ui.find({ key: 'p-busca' }))?.props.placeholder).toBe('buscar título ou ID')
+  for (const b of await ui.findAll({ type: 'Button' })) expect(b.props.plain).toBeUndefined()
+  await ui.unmount()
+})
+

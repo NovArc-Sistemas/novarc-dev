@@ -268,7 +268,17 @@ export function novasLinhas(texto: string, consumido: number): { eventos: Evento
 }
 
 export type Celula = 'feito' | 'agora' | 'travado' | 'vazio'
-export type Raia = { slug: string; celulas: Celula[]; rotulos: string[]; ultimo: string | null; minutos: number | null; lockAberto: boolean; rotulo?: string }
+export type Raia = {
+  slug: string
+  celulas: Celula[]
+  rotulos: string[]
+  ultimo: string | null
+  minutos: number | null
+  lockAberto: boolean
+  rotulo?: string
+  /** C11-S01: when each TRILHA step was first seen (ms), null when never: the lanes table's tooltips. */
+  inicios: (number | null)[]
+}
 
 /** One lane: furthest checkpoint reached, open locks (LOCK without RELEASE/APPLIED) and minutes since the last event. */
 export function raia(f: Fork, agora: number): Raia {
@@ -297,6 +307,7 @@ export function raia(f: Fork, agora: number): Raia {
     ultimo: ultimoEv ? ultimoEv.tipo : null,
     minutos: ultimoEv ? Math.floor((agora - ultimoEv.at) / 60_000) : null,
     lockAberto,
+    inicios: TRILHA.map(t => f.eventos.find(e => e.tipo === t)?.at ?? null),
   }
 }
 
@@ -667,6 +678,31 @@ export function resumoEspelho(ex: Execucao, linhas: LinhaSweep[], vistoEm: Recor
 }
 
 /** The outstanding locks of an espelho as rows (orchestrator alerts, the tab, the page). */
+/**
+ * The espelho as written (C11-S01 rework): ArtifactData `update` merges deep, so a lock released (or a spec gone) since
+ * the stored espelho stays in the document unless its key is written as `{ __delete__: true }`. Every key of the stored
+ * espelho's `locks` and `specs` that the new one lacks is deleted, and so is every field a kept entry no longer has (a
+ * lock's `espera` once its queue empties); arrays (`aCaminho`) are replaced whole.
+ */
+export function espelhoParaGravar<E extends { locks: Record<string, unknown>; specs: Record<string, unknown> }>(
+  novo: E,
+  antigo: { locks?: Record<string, unknown> | null; specs?: Record<string, unknown> | null } | null | undefined,
+): E {
+  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+  const DEL = { __delete__: true }
+  // two levels: the entry keys, then the fields of each kept entry
+  const mapa = (velho: unknown, atual: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {}
+    if (obj(velho)) for (const k of Object.keys(velho)) if (!(k in atual)) out[k] = DEL
+    for (const [k, v] of Object.entries(atual)) {
+      const antes = obj(velho) ? velho[k] : undefined
+      out[k] = obj(v) && obj(antes) ? { ...Object.fromEntries(Object.keys(antes).filter(c => !(c in v)).map(c => [c, DEL])), ...v } : v
+    }
+    return out
+  }
+  return { ...novo, locks: mapa(antigo?.locks, novo.locks), specs: mapa(antigo?.specs, novo.specs) }
+}
+
 export function locksDoEspelho(esp: Pick<EspelhoConjunto, 'locks'> | undefined | null): LockAberto[] {
   return Object.entries(esp?.locks ?? {}).map(([k, v]) => {
     const i = k.indexOf(' ')

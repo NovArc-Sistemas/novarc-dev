@@ -1,241 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 import { raiasPorConjunto } from './execucao'
 
-const PLANO = {
-  conjuntos: [{ id: 'C01', titulo: 'Base', specs: ['C01-S01'] }],
-  specs: [{ id: 'C01-S01', conjunto: 'C01', slug: 'olhos' }],
-  projeto: { cliente: 'NOVARC', nomeCurto: 'Maestro', codigo: 'NOVARC-PLUGIN-MAESTRO' },
-  execucao: { orquestrador: 'novarc-orq-NOVARC-PLUGIN-MAESTRO' },
-}
-const URL = 'https://claude.ai/artifact/TESTE'
-const SESSOES = 'C:/Users/t/.claude/maestro/sessoes'
+import {
+  PLANO, URL, SESSOES, norm, gravar, banco, montar, dormir, chamadas, quieto, disparar, tick, armados, escrito, cancelados, registro, iniciar, CONJ, BUILD,
+  partesDaFaixa, type Timer, type Mundo,
+} from './mundo-teste'
 
-// The world beneath the mod, in memory: files (registry, ledgers) with size and mtimeMs as $.fs.list reports them,
-// git answered from `branch` / `head`, the store, held clock periods, and every $ call the mod makes (the `*` hook).
-type Timer = { ms: number; fire: () => void; disparado: boolean; abortado: boolean }
-type Mundo = {
-  branch: string
-  head: string | null
-  gitDir: string
-  id: string
-  home: string | null
-  arquivos: Record<string, { text: string; mtimeMs: number }>
-  store: Record<string, unknown>
-  runs: string[]
-  lidos: string[]
-  listados: string[]
-  logs: string[]
-  tools: unknown[]
-  timers: Timer[]
-  eventos: { at: number; e: any }[]
-  segurar: ((dir: string) => Promise<void> | null) | null
-  falhar: ((path: string) => boolean) | null
-  abertos: string[]
-  semBanco: boolean
-  /** Holds or fails one tool call (Artifact / ArtifactData) the way `segurar` / `falhar` do for files. */
-  segurarTool: ((e: any) => Promise<void> | null) | null
-  falharTool: ((e: any) => boolean) | null
-  /** C02-S01: what `ledger.py sweep` answers (and after how long), the toasts raised, an in-memory planning db. */
-  sweep: { exitCode: number; stdout: string } | (() => { exitCode: number; stdout: string }) | null
-  sweepAtraso: number
-  sweepFalha: boolean
-  toasts: string[]
-  db: Record<string, { data: any; version: number }> | null
-  /** Milliseconds added to $.clock.now (the sweep's 5 s gate), so a test steps time without waiting. */
-  avanco: number
-  /** Holds one plugin state read (`$.state.get`) until the returned promise settles. */
-  segurarEstado: ((e: any) => Promise<void> | null) | null
-  /** Makes one plugin state write (`$.state.set`) throw. */
-  falharEstado: ((e: any) => boolean) | null
-}
-const norm = (p: unknown) => String(p).replace(/\\/g, '/')
-let seq = 0
-function gravar(m: Mundo, path: string, text: string, mtimeMs = Date.now() + ++seq) {
-  m.arquivos[norm(path)] = { text, mtimeMs }
-}
-
-/** An in-memory planning db keyed `<collection>/<id>`: get/list print document lines, writes check `if_version`. */
-function banco(db: Record<string, { data: any; version: number }>, e: any) {
-  const linha = (k: string) => JSON.stringify({ id: k.split('/').pop(), data: db[k]!.data, version: db[k]!.version, updatedAt: 'x' })
-  const k = `${e.collection}/${e.doc_id}`
-  const ok = (t: string) => ({ result: '', text: t, isError: false })
-  if (e.action === 'get') return ok(`=== BEGIN ARTIFACT DB x ===\n${db[k] ? linha(k) : ''}\n=== END ARTIFACT DB x ===`)
-  if (e.action === 'list') return ok(`=== BEGIN ARTIFACT DB x ===\n${Object.keys(db).filter(x => x.startsWith(`${e.collection}/`)).map(linha).join('\n')}\n=== END ARTIFACT DB x ===`)
-  if (e.action === 'set') {
-    if (db[k] && e.if_version === undefined) return { result: '', text: 'exists', isError: true }
-    db[k] = { data: e.data, version: (db[k]?.version ?? 0) + 1 }
-    return ok(`Database update committed. The document is now at version ${db[k]!.version}.`)
-  }
-  if (e.action === 'update') {
-    if (!db[k] || db[k]!.version !== e.if_version) return { result: '', text: 'version conflict', isError: true }
-    db[k] = { data: { ...db[k]!.data, ...e.data }, version: db[k]!.version + 1 }
-    return ok(`Database update committed. The document is now at version ${db[k]!.version}.`)
-  }
-  return ok('ok')
-}
-
-// A run with no planning artifact: no ai/specs, a session-build orchestrator that spawns a fork, the fork reports
-// checkpoints by message and through ledger.py. Nothing touches the host.
-function montar(on: any, escritos: Record<string, string>, branch = 'main', comPlano = false): Mundo {
-  const m: Mundo = {
-    branch, head: null, gitDir: '.git', id: 'sess-1', home: 'C:/Users/t', arquivos: {}, store: {},
-    runs: [], lidos: [], listados: [], logs: [], tools: [], timers: [], eventos: [], segurar: null, falhar: null, abertos: [], semBanco: false,
-    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, avanco: 0, segurarEstado: null, falharEstado: null,
-  }
-  gravar(m, 'C:/repo/ai/ledger/fork-c02-s01.md', 'READY c02-s01  # 2026-10-15T12:00:00Z\nPLAN p.md TASKS 3  # 2026-10-15T12:05:00Z\n', 1)
-  on('*', async ($: any, e: any, next: any) => {
-    m.eventos.push({ at: performance.now(), e })
-    return next(e)
-  })
-  on('session.start', async ($: any, e: any) => ({ cwd: e.cwd }))
-  on('session.end', async ($: any, e: any) => ({ sessionId: e.sessionId }))
-  on('command.register', async () => ({ value: undefined }))
-  on('session.id', async () => ({ value: m.id }))
-  on('session.cwd', async () => ({ value: 'C:/repo' }))
-  on('env.get', async ($: any, e: any) => ({ value: e.name === 'USERPROFILE' && m.home ? m.home : undefined }))
-  on('fs.list', async ($: any, e: any) => {
-    const dir = norm(e.path)
-    m.listados.push(dir)
-    const espera = m.segurar?.(dir)
-    if (espera) await espera
-    const filhos = Object.entries(m.arquivos).filter(([k]) => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
-    // immediate subfolders (ai/specs/<codigo>/artefato.txt), so the artifact half of session start can find its url
-    const pastas = [...new Set(Object.keys(m.arquivos).filter(k => k.startsWith(`${dir}/`) && k.slice(dir.length + 1).includes('/')).map(k => k.slice(dir.length + 1).split('/')[0]!))]
-    if (!filhos.length && !pastas.length) throw new Error('no dir')
-    return {
-      value: [
-        ...filhos.map(([k, f]) => ({ name: k.slice(dir.length + 1), kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })),
-        ...pastas.map(name => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })),
-      ],
-    }
-  })
-  on('fs.read', async ($: any, e: any) => {
-    const p = norm(e.path)
-    m.lidos.push(p)
-    if (m.falhar?.(p)) throw new Error('EBUSY')
-    if (p.endsWith('plano.json')) return { value: JSON.stringify(PLANO) }
-    if (p.endsWith('/HEAD')) return { value: m.head ?? `ref: refs/heads/${m.branch}\n` }
-    return { value: m.arquivos[p]?.text ?? '' }
-  })
-  on('fs.write', async ($: any, e: any) => {
-    const espera = m.segurar?.(norm(e.path))
-    if (espera) await espera
-    escritos[e.path] = e.text
-    gravar(m, e.path, e.text)
-    return { value: undefined }
-  })
-  on('store.get', async ($: any, e: any) => ({ value: m.store[e.key] }))
-  on('store.set', async ($: any, e: any) => {
-    m.store[e.key] = e.value
-    return { value: undefined }
-  })
-  on('store.delete', async ($: any, e: any) => {
-    delete m.store[e.key]
-    return { value: undefined }
-  })
-  on('store.keys', async () => ({ value: Object.keys(m.store) }))
-  on('process.run', async ($: any, e: any) => {
-    m.runs.push(e.argv.join(' '))
-    if (e.argv.includes('sweep')) {
-      if (m.sweepAtraso) await dormir(m.sweepAtraso)
-      if (m.sweepFalha) throw new Error('no python')
-      const s = typeof m.sweep === 'function' ? m.sweep() : m.sweep
-      return { value: { ...(s ?? { exitCode: 0, stdout: 'SWEEP SUMMARY forks=1 grants=0 outstanding=0 ungranted=0\n' }), stderr: '' } }
-    }
-    return { value: { exitCode: 0, stdout: e.argv.includes('--git-dir') ? `${m.gitDir}\n` : `${m.branch}\n`, stderr: '' } }
-  })
-  on('clock.now', async () => ({ value: Date.now() + m.avanco }))
-  on('state.get', async ($: any, e: any, next: any) => {
-    const espera = m.segurarEstado?.(e)
-    if (espera) await espera
-    return next(e)
-  })
-  on('state.set', async ($: any, e: any, next: any) => {
-    if (m.falharEstado?.(e)) throw new Error('state write failed')
-    return next(e)
-  })
-  on('clock.after', ($: any, e: any, next: any) =>
-    new Promise(res => {
-      const t: Timer = { ms: e.ms, fire: () => res({ value: undefined }), disparado: false, abortado: false }
-      next.signal?.addEventListener('abort', () => (t.abortado = true))
-      m.timers.push(t)
-    }))
-  on('ui.toast', async ($: any, e: any) => {
-    m.toasts.push(String(e.text))
-    return { value: undefined }
-  })
-  // Each period is one dispatch, held until the test fires it; an aborted dispatch is a cancelled timer.
-  on('clock.every', ($: any, e: any, next: any) =>
-    new Promise(res => {
-      const t: Timer = { ms: e.ms, fire: () => res({ value: undefined }), disparado: false, abortado: false }
-      next.signal?.addEventListener('abort', () => (t.abortado = true))
-      m.timers.push(t)
-    }))
-  on('ui.log', async ($: any, e: any) => {
-    m.logs.push(String(e.text))
-    return { value: undefined }
-  })
-  on('ui.open', async ($: any, e: any) => {
-    if (m.falhar?.(`ui.open:${e.id}`)) throw new Error('no pane')
-    m.abertos.push(e.id)
-    return { value: { isPlaced: true } }
-  })
-  on('ui.render', async () => ({ type: 'Box', children: ['engine'] })) // the engine's own drawing, under a hook's next(e)
-  on('tool.list', async () => ({ value: comPlano ? [{ name: 'ArtifactData' }] : [] }))
-  on('tool.call', async ($: any, e: any) => {
-    m.tools.push(e)
-    const espera = m.segurarTool?.(e)
-    if (espera) await espera
-    if (m.falharTool?.(e)) return { result: '', text: 'boom', isError: true }
-    if (e.tool === 'ArtifactData' && m.semBanco) return { result: '', text: 'offline', isError: true }
-    if (e.tool === 'ArtifactData' && m.db) return banco(m.db, e)
-    return e.tool === 'Artifact' ? { result: '', text: 'File saved: "C:/tmp/plano.json" (1 bytes)', isError: false } : { result: '', text: 'ok', isError: false }
-  })
-  on('agent.spawn', async () => ({ model: 'm', agentId: 'ag-1' }))
-  on('session.send', async () => ({ isDelivered: true }))
-  on('prompt.submit', async ($: any, e: any) => ({ text: e.text }))
-  on('session.receive', async ($: any, e: any) => ({ text: e.text }))
-  return m
-}
-
-const dormir = (ms: number) => new Promise(r => setTimeout(r, ms))
-/** Every $ call but the clock's own period requests. */
-const chamadas = (m: Mundo) => m.eventos.filter(x => !(Object.keys(x.e ?? {}).length === 1 && 'ms' in x.e))
-/** Waits until the mod made no $ call for 40 ms. */
-async function quieto(m: Mundo) {
-  let n = -1
-  while (n !== m.eventos.length) {
-    n = m.eventos.length
-    await dormir(40)
-  }
-}
-/** Fires the oldest held period of the one-minute look without waiting for the tick. */
-function disparar(m: Mundo, ms = 60_000) {
-  const t = m.timers.find(x => x.ms === ms && !x.disparado && !x.abortado)
-  if (!t) throw new Error(`no armed ${ms} ms timer`)
-  t.disparado = true
-  t.fire()
-}
-/** One look: fires it, waits for it to settle, returns the time from the fire to its last $ call. */
-async function tick(m: Mundo): Promise<number> {
-  const n = m.eventos.length
-  const t0 = performance.now()
-  disparar(m)
-  await quieto(m)
-  const meus = chamadas({ ...m, eventos: m.eventos.slice(n) })
-  return meus.length ? meus[meus.length - 1]!.at - t0 : 0
-}
-/** Timers armed (not period follow-ups): dispatches of that period minus the ones fired. */
-const armados = (m: Mundo, ms = 60_000) => m.timers.filter(t => t.ms === ms).length - m.timers.filter(t => t.ms === ms && t.disparado).length
-/** The last value the mod wrote to its `$.state` key (state.set events carry `value`; a get has none). */
-const escrito = (m: Mundo, key: string) => [...m.eventos].reverse().find(x => x.e?.plugin === 'novarc' && x.e?.key === key && 'value' in x.e)?.e.value
-const cancelados = (m: Mundo, ms: number) => m.timers.filter(t => t.ms === ms && t.abortado).length
-
-const registro = (escritos: Record<string, string>, id = 'sess-1') =>
-  JSON.parse(Object.entries(escritos).find(([k]) => norm(k).endsWith(`/.claude/maestro/sessoes/${id}.json`))![1])
-const iniciar = ($: any) => $.session.start?.({ cwd: 'C:/repo', surface: 'desktop', isInteractive: false })
-const CONJ = `conjunto ${URL} C01`
-const BUILD = 'novarc:novarc-session-build'
 
 test('a run without an artifact is followed from the spawn, the fork message and the ledger', async ($: any, on: any) => {
   const escritos: Record<string, string> = {}
@@ -394,7 +164,7 @@ test('with no home directory the registry falls back to one store key per sessio
   await iniciar($)
   expect((m.store['maestro-sessao-sess-1'] as any)?.papel).toBe('spec')
   const ui = await $.ui.mount({ plugin: 'novarc', surface: 'terminal', component: 'Pane', requestId: 'novarc-maestro', props: { title: 'Maestro', isFocused: false, bodyColumns: 80 } })
-  expect(await ui.find({ text: /^registro: store do plugin/ })).toBeDefined()
+  expect(await ui.find({ text: /^📄 registro: store do plugin/ })).toBeDefined() // C11-S01: the registry line's emoji
 })
 
 test('a half-written registry file is skipped, the others still listed', async ($: any, on: any) => {
@@ -673,7 +443,10 @@ const textoDe = (n: any): string =>
 /** A band as one line: its top-level children's texts joined by two spaces. */
 const linhaDe = (t: any) => (t?.children ?? []).map(textoDe).filter(Boolean).join('  ')
 const nos = (n: any): number => (typeof n === 'string' ? 0 : 1 + (n?.children ?? []).reduce((s: number, c: any) => s + nos(c), 0))
-const MAESTRO = /maestro|orquestrando|NOVARC|Agora/
+const MAESTRO = /maestro|orquestrando|NOVARC|Agora|C\d{2}/ // C11-S01: a set band's title is its set id
+/** C11-S01: the spec ids the desktop lanes tables draw (one name per row, in the Svg source). */
+const idsNasTabelas = async (ui: any): Promise<string[]> =>
+  (await ui.findAll({ type: 'Svg' })).filter((x: any) => String(x.props.alt).startsWith('etapas das specs de ')).flatMap((x: any) => [...String(x.props.source).matchAll(/font-family="ui-monospace, monospace"(?: font-weight="700")?>(C\d{2}-S\d{2})</g)].map(m => m[1]!))
 /** A ledger line `min` minutes before now (ledger.py writes whole seconds). */
 const linhaHa = (tipo: string, texto: string, min: number) =>
   `${tipo} ${texto}  # ${new Date(Date.now() - min * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')}\n`
@@ -740,9 +513,12 @@ test('pane for 3 runs, 9 sets and 21 specs draws under 2,000 nodes and 50,000 ch
       const arvore = await ui.drawn()
       expect(textoDe(arvore)).toMatch(MAESTRO)
       expect(nos(arvore)).toBeLessThan(2000)
-      expect(JSON.stringify(arvore).length).toBeLessThan(50_000)
+      // C11-S01: on the desktop the lanes are Svg tables; their sources are capped on their own (R46)
+      expect(JSON.stringify(arvore, (k, v) => (k === 'source' ? undefined : v)).length).toBeLessThan(50_000)
+      for (const sv of await ui.findAll({ type: 'Svg' })) expect(String(sv.props.source).length).toBeLessThan(131_072)
     }
-    expect((await ui.findAll({ type: 'Text', text: /^C\d{2}-S\d{2}$/ })).length).toBe(21)
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Text', text: /^C\d{2}-S\d{2}$/ })).length).toBe(21)
+    else expect(new Set((await idsNasTabelas(ui))).size).toBe(21)
     expect((await ui.findAll({ type: 'Text', text: /^C\d{2}( · .*)?$/ })).length).toBe(3) // own run's 3 sets only
     expect(await ui.find({ type: 'Text', text: /^mais / })).toBeUndefined()
     await ui.press({ key: 't-agora' })
@@ -761,7 +537,8 @@ test('Execução past 21 lanes draws 21 and says mais 1 under the last block', a
     const ui = await $.ui.mount({ ...PAINEL, surface })
     await ui.press({ key: 't-exec' })
     expect(textoDe(await ui.drawn())).toMatch(MAESTRO)
-    expect((await ui.findAll({ type: 'Text', text: /^C01-S\d{2}$/ })).length).toBe(21)
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Text', text: /^C01-S\d{2}$/ })).length).toBe(21)
+    else expect(new Set(await idsNasTabelas(ui)).size).toBe(21)
     expect(await ui.find({ type: 'Text', text: /^mais 1$/ })).toBeDefined()
     await ui.press({ key: 't-agora' })
     await ui.unmount()
@@ -770,7 +547,7 @@ test('Execução past 21 lanes draws 21 and says mais 1 under the last block', a
 
 // C02-S01 replaces the C01 rule "any open LOCK in a set ledger is a band alert" by the orphan rule read from the set's
 // espelho (interface.md: the band text `<spec> segura lock` becomes `lock órfão em <spec>` past the threshold).
-async function bandaOrq($: any, on: any, min: number, linhaEsperada: string) {
+async function bandaOrq($: any, on: any, min: number, segunda: Record<'desktop' | 'terminal', string[]>, botao: string) {
   {
     const m = montar(on, {}, 'main', true)
     m.db = { 'execucao/C01': { data: { iniciadoEm: 'x', espelho: espelhoCom({ 'migration db': { spec: 'C01-S02', desde: ha(min), estado: 'UNGRANTED' } }) }, version: 1 } }
@@ -782,9 +559,13 @@ async function bandaOrq($: any, on: any, min: number, linhaEsperada: string) {
       const ui = await $.ui.mount({ ...BANDA, surface })
       const arvore = await ui.drawn()
       expect(textoDe(arvore)).toMatch(MAESTRO)
-      expect(linhaDe(arvore)).toBe(linhaEsperada)
+      // C11-S01: the three-column band (R19-R21) instead of one joined line
+      const p = partesDaFaixa(arvore)
+      expect([p.titulo, p.status, p.segunda]).toEqual(['orquestrando', '3 conjuntos vivos', segunda[surface]])
+      expect(p.direita).toEqual([surface === 'desktop' ? 'modo manual' : ' [modo manual] ', botao])
       if (min === 32) {
-        expect((await ui.find({ type: 'Text', text: /^● lock órfão em C01-S02$/ }))?.props.color).toBe('error')
+        if (surface === 'terminal') expect((await ui.find({ type: 'Text', text: /^🔴 lock órfão em C01-S02$/ }))?.props.color).toBe('error')
+        else expect((await ui.find({ type: 'Client' }))?.props.props).toEqual({ label: 'lock órfão em C01-S02' })
         expect((await ui.find({ key: 'ver' }))?.props.variant).toBe('primary')
         await ui.press({ key: 'ver' })
         expect(m.abertos.slice(-1)).toEqual(['novarc-maestro'])
@@ -795,10 +576,10 @@ async function bandaOrq($: any, on: any, min: number, linhaEsperada: string) {
   }
 }
 test('orchestrator band shows an orphan lock from a set espelho in red with ver', async ($: any, on: any) => {
-  await bandaOrq($, on, 32, 'orquestrando  3 conjuntos vivos  ● lock órfão em C01-S02  [1] ver')
+  await bandaOrq($, on, 32, { desktop: ['lock órfão em C01-S02'], terminal: ['🔴 lock órfão em C01-S02'] }, '[1] ver')
 })
 test('orchestrator band: a fresh lock in an espelho alerts nothing', async ($: any, on: any) => {
-  await bandaOrq($, on, 2, 'orquestrando  3 conjuntos vivos  [1] painel')
+  await bandaOrq($, on, 2, { desktop: [], terminal: [] }, '[1] painel')
 })
 
 test('set band reads C01 · Em implementação · 1/2 specs with a green and a red square', async ($: any, on: any) => {
@@ -811,8 +592,10 @@ test('set band reads C01 · Em implementação · 1/2 specs with a green and a r
     const ui = await $.ui.mount({ ...BANDA, surface })
     const arvore = await ui.drawn()
     expect(textoDe(arvore)).toMatch(MAESTRO)
-    expect(linhaDe(arvore)).toBe('NOVARC  C01 · Em implementação · 1/2 specs  ■■  [1] painel')
-    expect((await ui.findAll({ type: 'Text', text: /^■$/ })).map(q => q.props.color)).toEqual(['success', 'error'])
+    const p = partesDaFaixa(arvore)
+    expect([p.titulo, p.status, p.direita]).toEqual(['C01', 'C01 · Em implementação · 1/2 specs', ['[1] painel']])
+    expect(p.segunda).toEqual(surface === 'desktop' ? ['1 de 2 specs em DONE', '1 de 2 specs em DONE'] : ['■■', '1 de 2 specs em DONE'])
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Text', text: /^■$/ })).map(q => q.props.color)).toEqual(['success', 'error'])
     await ui.unmount()
   }
   expect(m.abertos).toEqual([])
@@ -825,14 +608,14 @@ test('idle band presses: ativar opens the pane, nunca stores the cwd and hides t
     let ui = await $.ui.mount({ ...BANDA, surface })
     const arvore = await ui.drawn()
     expect(textoDe(arvore)).toMatch(MAESTRO)
-    expect(linhaDe(arvore)).toBe('maestro  nenhuma execução aqui  [1] ativar  nunca neste projeto')
+    expect(partesDaFaixa(arvore)).toMatchObject({ titulo: 'maestro', status: 'nenhuma execução aqui', direita: ['nunca neste projeto', '[1] ativar'] })
     await ui.press({ key: 'ativar' })
     expect(m.abertos.slice(-1)).toEqual(['novarc-maestro'])
     expect(escrito(m, 'maestroModo')).toBe('on')
     await ui.unmount()
     await $.session.end?.({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } })
     ui = await $.ui.mount({ ...BANDA, surface })
-    expect(linhaDe(await ui.drawn())).toMatch(/^maestro {2}nenhuma execução aqui/)
+    expect(partesDaFaixa(await ui.drawn())).toMatchObject({ titulo: 'maestro', status: 'nenhuma execução aqui' })
     await ui.press({ key: 'nunca' })
     expect(m.store['maestro-nunca']).toEqual(['C:/repo'])
     expect(await ui.find({ key: 'ativar' })).toBeUndefined()
@@ -857,13 +640,21 @@ test('Execução tab has no Acervo button and shows the C01 header with lane C01
     expect(textoDe(await ui.drawn())).toMatch(MAESTRO)
     expect(await ui.find({ key: 't-acervo' })).toBeUndefined()
     expect(await ui.find({ text: /Acervo/ })).toBeUndefined()
-    expect(await ui.find({ text: 'registro: ~/.claude/maestro/sessoes · 2 sessões vivas · branch lida do git' })).toBeDefined()
+    expect(await ui.find({ text: '📄 registro: ~/.claude/maestro/sessoes · 2 sessões vivas · branch lida do git' })).toBeDefined()
     await ui.press({ key: 'abrir' }) // the card of this session's run opens the Execução tab
     expect((await ui.find({ type: 'Text', text: /^C01 · Base$/ }))?.props.bold).toBe(true)
-    expect(await ui.find({ text: 'C01-S01' })).toBeDefined()
-    // F4: the step header is one fixed-width column per step (it was one space-padded string)
-    expect(linhasDeColunas(await ui.drawn())[0]?.children.map(textoDe)).toEqual(['ready', 'plan', 'codex', 'surfaces', 'task', 'lock', 'pushed', 'done'])
-    expect((await ui.find({ type: 'Text', text: /^há 16 min · CODEX$/ }))?.props.color).toBe('error')
+    if (surface === 'terminal') {
+      expect(await ui.find({ text: 'C01-S01' })).toBeDefined()
+      // F4: the step header is one fixed-width column per step (it was one space-padded string)
+      expect(linhasDeColunas(await ui.drawn())[0]?.children.map(textoDe)).toEqual(['ready', 'plan', 'codex', 'surfaces', 'task', 'lock', 'pushed', 'done'])
+      expect((await ui.find({ type: 'Text', text: /^há 16 min · CODEX$/ }))?.props.color).toBe('error')
+    } else {
+      // C11-S01: one interactive lanes table per block (R14); the age column carries the quiet class
+      const t = (await ui.findAll({ type: 'Svg' })).find(x => x.props.alt === 'etapas das specs de C01')
+      expect(t?.props.isInteractive).toBe(true)
+      expect(String(t?.props.source)).toContain('C01-S01')
+      expect(String(t?.props.source)).toMatch(/class="ruimt"[^>]*>16 min</)
+    }
     await ui.press({ key: 't-agora' })
     await ui.unmount()
   }
@@ -1183,7 +974,9 @@ test('exit 2, 0 fork files or a failed process keep the rows and say varredura s
   }
   const ui = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
   await ui.press({ key: 't-locks' })
-  expect((await ui.find({ type: 'Text', text: 'varredura sem leitura' }))?.props.color).toBe('error')
+  // C11-S01: the same line inside the warning partial-failure card (R31), above the last listed locks
+  expect((await ui.find({ type: 'Text', text: 'varredura sem leitura' }))?.props.color).toBe('warning')
+  expect((await ui.find({ key: 'falha' }))?.props.borderColor).toBe('warning')
   expect(await ui.find({ type: 'Text', text: '20261023_auditoria' })).toBeDefined()
   await ui.unmount()
 })
@@ -1423,7 +1216,7 @@ test('a quiet set alerts in the orchestrator, a merged one never (A9 wiring)', a
   const ui = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
   await ui.press({ key: 't-locks' })
   expect(await ui.find({ type: 'Text', text: 'C03  sem sinal há 0 min' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: 'calada' }))?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: ' [calada] ' }))?.props.backgroundColor).toBe('diffRemovedDimmed') // C11-S01: the pill's terminal fallback
   await ui.unmount()
 })
 
@@ -1492,12 +1285,16 @@ test('set session: an orphan lock turns the band red and its row reads 21 min se
   m.sweep = saida(OUT('20261023_auditoria', 21))
   await olhar(m)
   const banda = await $.ui.mount({ ...BANDA, surface: 'terminal' })
-  expect((await banda.find({ type: 'Text', text: '● lock órfão em C03-S01' }))?.props.color).toBe('error')
+  expect((await banda.find({ type: 'Text', text: '🔴 lock órfão em C03-S01' }))?.props.color).toBe('error')
   await banda.unmount()
   const ui = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
   await ui.press({ key: 't-locks' })
   expect((await ui.find({ type: 'Text', text: '21 min sem RELEASE' }))?.props.color).toBe('error')
-  expect(await ui.find({ type: 'Text', text: '1 lock órfão · 1 recursos em uso' })).toBeDefined()
+  // C11-S01: the KPI cards replace the summary line
+  for (const [k, n, t] of [['lk-2', '1', 'lock órfão'], ['lk-1', '1', 'recursos em uso']]) {
+    const kpi = await ui.find({ key: k })
+    expect([kpi?.text.includes(n), kpi?.text.includes(t)]).toEqual([true, true])
+  }
   expect(await ui.find({ type: 'Text', text: 'limiares: calada 15 min · órfão 20 min · medindo o seu ritmo' })).toBeDefined() // A13
   expect(await ui.find({ key: 'usar-medido' })).toBeUndefined() // A16, set pane
   await ui.unmount()
@@ -1533,7 +1330,7 @@ test('a set ready to close with no lock turns the orchestrator band green with t
   const banda = await $.ui.mount({ ...BANDA, surface: 'terminal' })
   expect((await banda.find({ type: 'Text', text: 'pronto para fechar' }))?.props.color).toBe('success')
   expect(await banda.find({ type: 'Text', text: 'C01 com as 1 specs em DONE, sem lock aberto' })).toBeDefined()
-  expect((await banda.find({ type: 'Text', text: 'peça o FECHA na conversa' }))?.props.dimColor).toBe(true)
+  expect((await banda.find({ type: 'Text', text: 'peça o FECHA na conversa' }))?.props.color).toBe('subtle') // C11-S01: theme key, no dimColor
   await banda.unmount()
 })
 
@@ -1733,6 +1530,131 @@ test('finding 6: one lane per spec (a NOTE naming --fork and branch= makes no se
   await tick(m)
   const ui = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
   await ui.press({ key: 't-exec' })
-  expect((await ui.findAll({ type: 'Text', text: 'C02-S01' })).length).toBe(1)
+  // C11-S01: exact text, since the terminal header now reads `foco: spec C02-S01` too
+  expect((await ui.findAll({ type: 'Text', text: /^C02-S01$/ })).length).toBe(1)
   await ui.unmount()
+})
+
+// ---- C11-S01 rework (VALIDACAO m-sino-alertas/86): a released lock leaves the espelho. ArtifactData update merges
+// deep, so the espelho write deletes every lock key the new sweep no longer holds; the test db merges the same way.
+
+const VERIFY = 'feat/c03-s01-x-20261023'
+const GRANT = (since: string) =>
+  `SWEEP OUTSTANDING c03-s01 verify ${VERIFY} [GRANTED-NOT-RELEASED] since=${since} LOCK verify ${VERIFY}\nSWEEP SUMMARY forks=1 grants=1 outstanding=1 ungranted=0\n`
+const LIVRE = 'SWEEP SUMMARY forks=1 grants=2 outstanding=0 ungranted=0\n'
+
+test('two LOCK/RELEASE cycles on the same branch leave 0 locks in the espelho and 0 orphans (C11-S01 rework)', async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, DB_C03())
+  const ciclo = async (tipo: 'LOCK' | 'RELEASE', sweep: string) => {
+    gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa(tipo, `verify ${VERIFY}`, 0))
+    m.sweep = { exitCode: 0, stdout: sweep }
+    await olhar(m)
+  }
+  await ciclo('LOCK', GRANT(ha(25)))
+  expect(Object.keys(m.db!['execucao/C03']!.data.espelho.locks)).toEqual([`verify ${VERIFY}`])
+  await ciclo('RELEASE', LIVRE)
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+  const segundo = ha(1)
+  await ciclo('LOCK', GRANT(segundo))
+  expect(m.db!['execucao/C03']!.data.espelho.locks[`verify ${VERIFY}`].desde).toBe(segundo)
+  await ciclo('RELEASE', LIVRE)
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+  expect(alertasDe(m).vista.locks).toEqual([])
+  expect(alertasDe(m).lista.filter((a: any) => /lock órfão/.test(a.texto))).toEqual([])
+})
+
+test('the real run 20261025-1428 ledger lines of C11-S01 (two verify cycles) end with no lock in the espelho (C11-S01 rework)', async ($: any, on: any) => {
+  // the fork lines and, after each, what `ledger.py sweep` printed for the run dir cut at that moment (measured on the
+  // real files, 2026-10-25): the stub answers those outputs verbatim
+  const B = 'feat/c11-s01-acabamento-visual-20261024'
+  const passos: [string, string][] = [
+    [`LOCK verify ${B}  # 2026-10-25T16:08:43Z`, `SWEEP OUTSTANDING c11-s01-acabamento-visual verify ${B} [GRANTED-NOT-RELEASED] since=2026-10-25T16:08:43Z LOCK verify ${B}\nSWEEP SUMMARY forks=1 grants=1 outstanding=1 ungranted=0\n`],
+    [`RELEASE verify ${B}  # 2026-10-25T16:31:25Z`, 'SWEEP SUMMARY forks=1 grants=1 outstanding=0 ungranted=0\n'],
+    [`LOCK verify ${B}  # 2026-10-25T16:39:19Z`, `SWEEP OUTSTANDING c11-s01-acabamento-visual verify ${B} [GRANTED-NOT-RELEASED] since=2026-10-25T16:39:19Z LOCK verify ${B}\nSWEEP SUMMARY forks=1 grants=2 outstanding=1 ungranted=0\n`],
+    [`RELEASE verify ${B}  # 2026-10-25T16:52:57Z`, 'SWEEP SUMMARY forks=1 grants=2 outstanding=0 ungranted=0\n'],
+  ]
+  const m = await conjuntoC03($, on, DB_C03())
+  const chave = `verify ${B}`
+  const vistos: string[] = []
+  for (const [linhaLedger, sweep] of passos) {
+    gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaLedger + '\n')
+    m.sweep = { exitCode: 0, stdout: sweep }
+    await olhar(m)
+    vistos.push(m.db!['execucao/C03']!.data.espelho.locks[chave]?.desde ?? '-')
+  }
+  expect(vistos).toEqual(['2026-10-25T16:08:43Z', '-', '2026-10-25T16:39:19Z', '-'])
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+})
+
+test('an espelho stored with a released lock (as execucao/C11 v28) is cleaned by the next write', async ($: any, on: any) => {
+  const velho = { locks: { [`verify ${VERIFY}`]: { spec: 'C03-S01', desde: ha(300), estado: 'GRANTED-NOT-RELEASED' } }, specs: { 'C03-S09': { ultimo: 'DONE', texto: 'DONE', at: ha(300) } }, ritmo: { checkpointMin: null, lockMin: null, amostras: 0 }, at: ha(300) }
+  const m = await conjuntoC03($, on, { 'execucao/C03': { data: { sessao: 's', iniciadoEm: 'x', espelho: velho }, version: 1 } })
+  m.sweep = { exitCode: 0, stdout: LIVRE }
+  mexer(m)
+  await olhar(m)
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+  expect(Object.keys(m.db!['execucao/C03']!.data.espelho.specs)).toEqual(['C03-S01'])
+})
+
+test('a lock still held whose queue emptied loses its espera in the espelho (C11-S01 rework)', async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, DB_C03())
+  const linha = (slug: string, since: string) => `SWEEP OUTSTANDING ${slug} verify ${VERIFY} [${slug === 'c03-s01' ? 'GRANTED-NOT-RELEASED' : 'UNGRANTED'}] since=${since} LOCK verify ${VERIFY}`
+  gravar(m, `${KDIR}/fork-c03-s02.md`, linhaHa('READY', 'c03-s02 branch=feat/c03-s02-y-20261023', 20) + linhaHa('LOCK', `verify ${VERIFY}`, 1))
+  m.sweep = { exitCode: 0, stdout: `${linha('c03-s01', ha(5))}\n${linha('c03-s02', ha(1))}\nSWEEP SUMMARY forks=2 grants=1 outstanding=2 ungranted=1\n` }
+  mexer(m)
+  await olhar(m)
+  expect(m.db!['execucao/C03']!.data.espelho.locks[`verify ${VERIFY}`].espera).toEqual(['C03-S02'])
+  m.sweep = { exitCode: 0, stdout: `${linha('c03-s01', ha(5))}\nSWEEP SUMMARY forks=2 grants=1 outstanding=1 ungranted=0\n` }
+  mexer(m)
+  await olhar(m)
+  const l = m.db!['execucao/C03']!.data.espelho.locks[`verify ${VERIFY}`]
+  expect([l.spec, 'espera' in l]).toEqual(['C03-S01', false])
+})
+
+test('a RELEASE seen while the sweep is held back mirrors nothing stale; the next look writes the lock gone (C11-S01 rework)', async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, DB_C03())
+  gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa('LOCK', `verify ${VERIFY}`, 0))
+  m.sweep = { exitCode: 0, stdout: GRANT(ha(3)) }
+  await olhar(m)
+  expect(Object.keys(m.db!['execucao/C03']!.data.espelho.locks)).toEqual([`verify ${VERIFY}`])
+  const versao = m.db!['execucao/C03']!.version
+  // the RELEASE lands and the next look comes within the sweep's 5 s gate: the sweep waits, the espelho too
+  gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa('RELEASE', `verify ${VERIFY}`, 0) + linhaHa('DONE', 'c03-s01', 0))
+  m.sweep = { exitCode: 0, stdout: LIVRE }
+  m.avanco += 1_000
+  await tick(m)
+  expect(m.db!['execucao/C03']!.version).toBe(versao)
+  // past the gate: one sweep, then the espelho without the lock (and the DONE checkpoint)
+  await olhar(m)
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+  expect(m.db!['execucao/C03']!.data.espelho.specs['C03-S01'].ultimo).toBe('DONE')
+})
+
+test('a lock the sweep still reports stays an orphan in the orchestrator even when its holder is DONE (C02-S01 rule)', async ($: any, on: any) => {
+  const desde = ha(300)
+  const esp = espelhoCom({ [`verify ${VERIFY}`]: { spec: 'C03-S01', desde, estado: 'GRANTED-NOT-RELEASED' } }, { specs: { 'C03-S01': { ultimo: 'DONE', texto: 'DONE', at: ha(290) } } })
+  const m = await orquestrador($, on, { 'execucao/C03': { data: { iniciadoEm: 'x', espelho: esp }, version: 1 } })
+  await poll($, m)
+  await olhar(m)
+  expect(alertasDe(m).lista.some((a: any) => /lock órfão em C03-S01/.test(a.texto))).toBe(true)
+})
+
+test('a RELEASE heard while the ledger dir cannot be read mirrors nothing until the dir is read again (C11-S01 rework)', async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, DB_C03())
+  gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa('LOCK', `verify ${VERIFY}`, 0))
+  m.sweep = { exitCode: 0, stdout: GRANT(ha(3)) }
+  await olhar(m)
+  const versao = m.db!['execucao/C03']!.version
+  // the dir fails to list; the spec session's RELEASE and DONE still arrive as peer messages
+  m.segurar = dir => (dir === KDIR ? Promise.reject(new Error('EACCES')) : null)
+  await $.session.receive?.({ origin: { kind: 'peer-send-message' }, text: `RELEASE verify ${VERIFY}` })
+  await $.session.receive?.({ origin: { kind: 'peer-send-message' }, text: 'DONE C03-S01 pronto' })
+  m.sweep = { exitCode: 0, stdout: LIVRE }
+  await olhar(m)
+  expect(m.db!['execucao/C03']!.version).toBe(versao)
+  // the dir reads again: one sweep, then the espelho without the lock
+  m.segurar = null
+  gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa('RELEASE', `verify ${VERIFY}`, 0))
+  await olhar(m)
+  expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
 })

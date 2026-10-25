@@ -186,7 +186,8 @@ test('Bash ls -la makes 0 $ calls and adds under 5 ms', async ($: any, on: any) 
   const n = ev.length
   await $.tool.call({ tool: 'Bash', command: 'ls -la' })
   const dt = performance.now() - o.tBash! // from the innermost stub's return to the hook's return
-  expect(ev.slice(n).filter(e => !(e?.tool === 'Bash' && e?.command === 'ls -la')).length).toBe(0)
+  // the Bash call itself: 2.1.308 carries the command in input.command, older engines at the top
+  expect(ev.slice(n).filter(e => !(e?.tool === 'Bash' && (e?.command === 'ls -la' || e?.input?.command === 'ls -la'))).length).toBe(0)
   expect(dt).toBeLessThan(5)
 })
 
@@ -301,4 +302,180 @@ test('git push && gh pr create whose rev-parse throws still writes pr-aberto', a
   await esperar(() => escritas.length > 0)
   await dormir(30)
   expect(escritas.map(w => w.data.etapa)).toEqual(['pr-aberto'])
+})
+
+// ---- C11-S01: state read discipline, the one pane open, the bell count, the reads per source
+
+import { abrirPainel, contaSino, dadosFaixa, mesclar } from './register'
+import { BUILD, URL as URL_MUNDO, escrito, iniciar as iniciarMundo, montar as montarMundo, tick } from './mundo-teste'
+
+const falso = (store: Record<string, unknown>) => store
+
+test('ler gives the default for null and merges old C01/C02 shapes (A41)', () => {
+  const al = { lista: [], alertasVistos: [], sweep: null, limiares: { calado: 15, lockOrfao: 20 }, olhares: 3 }
+  let $: Record<string, any> = falso({ maestroAlertas: al, linhas: 'x', maestroModo: 5, exec: { papel: 'conjunto' } })
+  const a = mesclar('maestroAlertas', $['maestroAlertas'])
+  expect([a.olhares, a.limiares, a.vista]).toEqual([3, { calado: 15, lockOrfao: 20 }, undefined])
+  expect(mesclar('linhas', $['linhas'])).toEqual([])
+  expect(mesclar('maestroModo', $['maestroModo'])).toBe('auto')
+  const ex = mesclar('exec', $['exec'])
+  expect([ex.papel, ex.forks, ex.ledgerDir]).toEqual(['conjunto', {}, null])
+  expect(mesclar('maestroOutras', $['maestroOutras'])).toBe(null)
+  expect(mesclar('maestroPainelAberto', $['maestroPainelAberto'])).toBe(false)
+  $ = falso({ maestroAlertas: { ...al, limiares: { calado: 18 }, vista: { locks: [] } }, maestroPendencias: { itens: [], falhas: { repo: true } }, maestroOutras: 'x' })
+  const b = mesclar('maestroAlertas', $['maestroAlertas'])
+  expect([b.limiares.lockOrfao, b.limiares.calado, b.vista.unidades, b.vista.slots, b.vista.ritmo.amostras]).toEqual([20, 18, [], null, 0])
+  expect((mesclar('maestroPendencias', $['maestroPendencias'])).falhas).toEqual({ plano: false, repo: true, ledger: false })
+  expect(mesclar('maestroOutras', $['maestroOutras'])).toBe(null)
+  expect(mesclar('maestroPendencias', undefined)).toBe(null)
+})
+
+test('contaSino: 2 alerts + 1 divergence + counter 2 = 5; spec with no list = 0 (A24)', () => {
+  const pend: any = { divergencias: [{}], contador: { n: 2, fase: 'f6' } }
+  expect(contaSino('orquestrador', { lista: [{}, {}] as any }, pend)).toBe(5)
+  expect(contaSino('conjunto', { lista: [{}, {}] as any }, pend)).toBe(2)
+  expect(contaSino('spec', null, null)).toBe(0)
+})
+
+test('abrirPainel opens the one pane and sets the flag', async () => {
+  const abertos: any[] = []
+  const setados: any[] = []
+  await abrirPainel({ ui: { open: async (a: any) => abertos.push(a) }, state: { set: async (k: any, v: any) => setados.push([k.key, v]) } })
+  expect(abertos).toEqual([{ id: 'novarc-maestro', title: 'Maestro' }])
+  expect(setados).toEqual([['maestroPainelAberto', true]])
+})
+
+test('every open goes through abrirPainel: band ativar and /maestro set maestroPainelAberto (A38)', async ($: any, on: any) => {
+  const m = montarMundo(on, {})
+  await iniciarMundo($)
+  const banda = await $.ui.mount({ plugin: 'novarc', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false } })
+  await banda.press({ key: 'ativar' })
+  expect(m.abertos).toEqual(['novarc-maestro'])
+  expect(escrito(m, 'maestroPainelAberto')).toBe(true)
+  await banda.unmount()
+  await $.command.run?.({ command: 'maestro', args: '' })
+  expect(m.abertos).toEqual(['novarc-maestro', 'novarc-maestro'])
+})
+
+test('a failed planning read sets maestroLeitura.falhou; registry fail then success keeps it with fonte planejamento; a good planning read clears it', async ($: any, on: any) => {
+  const m = montarMundo(on, {}, 'main', true)
+  m.db = { 'execucao/C01': { data: { iniciadoEm: 'x' }, version: 1 } }
+  await iniciarMundo($)
+  m.semBanco = true
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: `orquestrar ${URL_MUNDO}` })
+  await $.command.run?.({ command: 'maestro', args: '' })
+  expect(escrito(m, 'maestroLeitura')).toMatchObject({ falhou: true, fonte: 'planejamento', falhas: { planejamento: true } })
+  const home = m.home
+  m.home = null
+  const keys = m.store
+  m.store = new Proxy({}, { ownKeys: () => { throw new Error('store down') } }) as any
+  await tick(m)
+  m.home = home
+  m.store = keys
+  await tick(m)
+  expect(escrito(m, 'maestroLeitura')).toMatchObject({ falhou: true, fonte: 'planejamento', falhas: { planejamento: true, registro: false } })
+  m.semBanco = false
+  await $.command.run?.({ command: 'maestro', args: '' })
+  expect(escrito(m, 'maestroLeitura')).toMatchObject({ falhou: false, fonte: null })
+})
+
+const AGORA = Date.parse('2026-10-25T13:41:00Z')
+const ev = (tipo: string, texto = '', min = 5) => ({ tipo, texto, at: AGORA - min * 60_000 })
+const al = (texto: string) => ({ chave: texto, texto, toast: texto, nivel: 'erro' as const, at: AGORA })
+
+test('dadosFaixa v2: orchestrator title, status with the poll text, two alerts, pend and verde only without alerts (A19-A21)', () => {
+  const orq: any = { papel: 'orquestrador', ledgerDir: null, forks: {} }
+  const pend: any = { divergencias: [], contador: { n: 2, fase: 'f6' }, itens: [], falhas: { plano: false, repo: false, ledger: false } }
+  let f = dadosFaixa(orq, 'C03 em implementação', [], null, AGORA, 'eu')
+  expect([f.titulo, f.status, f.alertas, f.pend, f.abaAlerta]).toEqual(['orquestrando', '0 conjuntos vivos · C03 em implementação', [], null, null])
+  f = dadosFaixa(orq, null, [], null, AGORA, 'eu', [al('lock órfão em C03-S01'), al('C04 calada há 30 min'), al('terceiro')], [{ conjunto: 'C08', n: 2 }], pend)
+  expect([f.alertas, f.pend, f.verde, f.nAlertas, f.abaAlerta]).toEqual([['lock órfão em C03-S01', 'C04 calada há 30 min'], null, null, 5, 'locks'])
+  f = dadosFaixa(orq, null, [], null, AGORA, 'eu', [], [{ conjunto: 'C08', n: 2 }], pend)
+  expect(f.pend).toEqual({ tipo: 'contador', texto: '2 pendências seguram a fase 6' })
+  expect(f.verde).toEqual({ titulo: 'pronto para fechar', texto: 'C08 com as 2 specs em DONE, sem lock aberto', dica: 'peça o FECHA na conversa' })
+  expect(f.abaAlerta).toBe('pendencias')
+})
+
+test('dadosFaixa v2: set segments and feitos; spec status is the structured last checkpoint (A22)', () => {
+  const conj: any = {
+    papel: 'conjunto', conjunto: 'C03', ledgerDir: 'x', forks: {
+      'c03-s01': { slug: 'c03-s01', spec: 'C03-S01', eventos: [ev('READY'), ev('DONE', '', 1)] },
+      'c03-s02': { slug: 'c03-s02', spec: 'C03-S02', eventos: [ev('READY'), ev('TASK', '1/3', 2)] },
+    },
+  }
+  const f = dadosFaixa(conj, null, [], null, AGORA, 'eu')
+  expect([f.titulo, f.segmentos, f.feitos]).toEqual(['C03', ['d', 'w'], { n: 1, total: 2 }])
+  const spec: any = { papel: 'spec', spec: 'C03-S01', ledgerDir: null, forks: { 'c03-s01': { slug: 'c03-s01', spec: 'C03-S01', eventos: [ev('READY'), ev('TASK', '3/7')] } } }
+  let g = dadosFaixa(spec, null, [], null, AGORA, 'eu')
+  expect([g.titulo, g.status]).toEqual(['C03-S01', 'TASK 3/7'])
+  spec.forks['c03-s01'].eventos.push(ev('TASK', '3/7 token ghp_abc123XYZ exposto', 1))
+  g = dadosFaixa(spec, null, [], null, AGORA, 'eu')
+  expect(g.status).toBe('TASK')
+})
+
+// ---- C11-S01: the close flag and the reopen on attach (R42, R43)
+
+import { aoFecharPainel } from './register'
+
+test('ui.close: a plugin close keeps the flag; the person close clears it; unload keeps it (A39)', async ($: any, on: any) => {
+  const m = montarMundo(on, {})
+  await iniciarMundo($)
+  await $.command.run?.({ command: 'maestro', args: '' })
+  expect(escrito(m, 'maestroPainelAberto')).toBe(true)
+  await $.ui.close?.({ id: 'novarc-maestro' })
+  expect(escrito(m, 'maestroPainelAberto')).toBe(true)
+  const sets: any[] = []
+  const falso$ = { state: { set: async (k: any, v: any) => sets.push([k.key, v]) } }
+  await aoFecharPainel(falso$, 'unload')
+  await aoFecharPainel(falso$, 'plugin')
+  expect(sets).toEqual([])
+  await aoFecharPainel(falso$, 'person')
+  expect(sets).toEqual([['maestroPainelAberto', false]])
+})
+
+test('session.attach reopens a pane this session had open and the panes list lacks; not with the flag false; a refused open is swallowed (A40)', async ($: any, on: any) => {
+  const m = montarMundo(on, {})
+  let lista: any[] = []
+  on('ui.panes', async () => ({ value: lista }))
+  on('session.surfaces', async () => ({ value: [] }))
+  on('session.attach', async ($: any, e: any) => ({ clientId: e.clientId }))
+  await iniciarMundo($)
+  await $.command.run?.({ command: 'maestro', args: '' })
+  expect(m.abertos.length).toBe(1)
+  await $.session.attach?.({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(m.abertos.length).toBe(2)
+  lista = [{ id: 'novarc-maestro', title: 'Maestro', isPlaced: true }]
+  await $.session.attach?.({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(m.abertos.length).toBe(2)
+  lista = []
+  m.falhar = p => p === 'ui.open:novarc-maestro'
+  await $.session.attach?.({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(m.logs.filter(l => l.includes('ui.open')).length).toBe(0)
+  m.falhar = null
+  m.servirEstado = { maestroPainelAberto: false }
+  await $.session.attach?.({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(m.abertos.length).toBe(2)
+  m.servirEstado = null
+  // session.start with no surface attached opens nothing (the reload case)
+  await iniciarMundo($)
+  expect(m.abertos.length).toBe(2)
+})
+
+// ---- the tool.call shape: the engine (2.1.308) hands the plugin the caller's shape, top-level or under `input`
+
+test('a push and a Skill call carried under input are followed like the top-level shape', async ($: any, on: any) => {
+  const escritas: any[] = []
+  montar(on, escritas, true, 'implementando')
+  await iniciar($)
+  await $.tool.call({ tool: 'Bash', input: { command: 'git push -u origin feature/c01-s01-sop-base-20261012' } })
+  await esperar(() => escritas.length > 0)
+  const u = escritas.find(w => w.action === 'update')
+  expect(u?.data).toMatchObject({ etapa: 'branch-publicada', branch: 'feature/c01-s01-sop-base-20261012' })
+})
+
+test('a Skill call under input turns the orchestrator view on', async ($: any, on: any) => {
+  const m = montarMundo(on, {})
+  await iniciarMundo($)
+  await $.tool.call({ tool: 'Skill', input: { skill: BUILD, args: `orquestrar ${URL_MUNDO}` } })
+  expect(escrito(m, 'exec')?.papel).toBe('orquestrador')
 })

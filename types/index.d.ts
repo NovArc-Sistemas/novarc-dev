@@ -207,16 +207,19 @@ declare module 'claude-code' {
       maestroFaixaDados: {
         papel: string | null
         txt: string | null
-        rotulo: string
-        texto: string
-        extra: string | null
-        quadrados: string[]
-        alerta: string | null
-        nOutras: number
-        /** Orchestrator only: a set ready to close (green band). */
-        verde: { titulo: string; texto: string; dica: string } | null
+        titulo: string
+        status: string
+        /** The first two alert texts, most urgent first. */
+        alertas: string[]
         /** Orchestrator only (C02-S02): divergences or the pending counter, when no alert is shown. */
         pend: { tipo: 'divergente' | 'contador'; texto: string } | null
+        segmentos: ('d' | 'w' | 'b')[]
+        feitos: { n: number; total: number } | null
+        /** Orchestrator only: a set ready to close (green band). */
+        verde: { titulo: string; texto: string; dica: string } | null
+        nAlertas: number
+        abaAlerta: 'locks' | 'pendencias' | null
+        nOutras: number
       } | null
       /** Alerts of this session (lock órfão, slot, calada), the toast dedupe and the last sweep. */
       maestroAlertas: Alertas | null
@@ -224,6 +227,10 @@ declare module 'claude-code' {
       maestroPendencias: EstadoPendencias | null
       /** The Pendências tab's view: phase filter, doc open, search, filter, open doc item. */
       maestroPendVista: Partial<VistaPendencias> | null
+      /** C11-S01: this session opened the pane and the person did not close it (reopened on session.attach). */
+      maestroPainelAberto: boolean
+      /** C11-S01: the last reads per source, for the trail band and the error card (`falhas`: each source on its own). */
+      maestroLeitura: { at: number | null; falhou: boolean; fonte: 'planejamento' | 'registro' | null; falhas: { planejamento: boolean; registro: boolean } } | null
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

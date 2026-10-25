@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Execucao, Registro } from '../../types'
 import {
   VAZIA, alerta, alertaRaias, anotar, cartoesAgora, chamadaLedger, checkpoint, ehBuild, faixaConjuntoRaias, laneDaMensagem, lerLedger, linhaConjunto,
-  novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, resumoEspelho, ritmo, slugDoSpawn, vivo,
+  espelhoParaGravar, novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, resumoEspelho, ritmo, slugDoSpawn, vivo,
 } from './execucao'
 import { ETAPA_FAIXA, idDaBranch, projetoDoPlano, quadrados } from './logic'
 
@@ -292,4 +292,23 @@ test('finding 6 guards: real flags in every quoting form keep working', () => {
   expect(chamadaLedger('echo ledger.py && python ledger.py append --dir C:/x --type TASK --text 1/2')?.dir).toBe('C:/x')
   const t = L6('--dir C:/x --fork c03-s01 --type NOTE --text "custa $5"')
   expect([t?.fork, t?.texto]).toEqual(['c03-s01', 'custa $5'])
+})
+
+test('raia().inicios gives the first at per step and null for unseen steps (C11-S01)', () => {
+  let ex = VAZIA
+  ex = anotar(ex, 's1', { tipo: 'READY', texto: 's1', at: T0 })
+  ex = anotar(ex, 's1', { tipo: 'TASK', texto: '1/3', at: T0 + 120_000 })
+  ex = anotar(ex, 's1', { tipo: 'TASK', texto: '2/3', at: T0 + 180_000 })
+  expect(raia(ex.forks.s1, T0 + 240_000).inicios).toEqual([T0, null, null, null, T0 + 120_000, null, null, null])
+})
+
+test('espelhoParaGravar deletes the lock and spec keys the new espelho lacks, keeps the rest (C11-S01 rework)', () => {
+  const novo = { locks: { 'verify b': { spec: 'S2' } }, specs: { S1: { ultimo: 'TASK' } }, aCaminho: [] as unknown[] }
+  const g = espelhoParaGravar(novo, { locks: { 'verify a': {}, 'verify b': {} }, specs: { S1: {}, S9: {} } })
+  expect(g.locks).toEqual({ 'verify a': { __delete__: true }, 'verify b': { spec: 'S2' } })
+  expect(g.specs).toEqual({ S9: { __delete__: true }, S1: { ultimo: 'TASK' } })
+  expect(espelhoParaGravar(novo, null)).toEqual(novo)
+  // a kept lock whose queue emptied: its espera is deleted, not left in the document
+  const h = espelhoParaGravar({ locks: { 'verify b': { spec: 'S2', desde: 'x' } }, specs: {} }, { locks: { 'verify b': { spec: 'S2', desde: 'x', espera: ['S3'] } }, specs: {} })
+  expect(h.locks).toEqual({ 'verify b': { espera: { __delete__: true }, spec: 'S2', desde: 'x' } })
 })
