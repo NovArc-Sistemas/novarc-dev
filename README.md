@@ -31,7 +31,7 @@ flowchart LR
 ```
 
 1. A NOVARC publica o planejamento como um artefato no claude.ai e escreve os specs no seu repositório, em
-   `ai/specs/<codigo>/`.
+   `.novarc/specs/<codigo>/`.
 2. Para cada conjunto você recebe um prompt pronto. Cole numa sessão nova do Claude Code aberta no repositório.
 3. Ao terminar, rode `/novarc-session-end`. Se o prompt trouxer a linha `Fechamento:` e uma sessão orquestradora da
    NOVARC estiver coordenando, o fechamento começa sozinho quando ela liberar.

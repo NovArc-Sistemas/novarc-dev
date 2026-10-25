@@ -6,7 +6,7 @@
 
 ## When this lane runs
 
-Step 0 routed here because the session is on the default branch **and** `.superpowers/session-build/<RUN_ID>/handoff.md` names two or more branches. Without that handoff there is no branch list, no merge order and no project profile, and improvising those is what the handoff exists to prevent — take the sequential lane instead.
+Step 0 routed here because the session is on the default branch **and** `.novarc/ledger/session-build/<RUN_ID>/handoff.md` (else legacy `.superpowers/session-build/<RUN_ID>/handoff.md`) names two or more branches. Without that handoff there is no branch list, no merge order and no project profile, and improvising those is what the handoff exists to prevent — take the sequential lane instead.
 
 **Why not simply run the inline lane N times in one session:** it works, and it dies on context. One orchestrator closed five branches that way, correctly; doing so means carrying five inventories, five suite logs and five diffs at once. The two context sinks are reading a failing suite log and grepping the pendings file per identifier, and both are per-branch. This lane moves them into the forks.
 
@@ -43,13 +43,13 @@ The full gate suite through `gate.sh`, red-gate triage into the six lanes, migra
 
 1. **The orchestrator never enters a worktree.** It merges from the main checkout — `git checkout <default>`, `git pull`, `git merge --no-ff <branch>` — and runs `git worktree remove` from there. Two real runs chose exactly this and named the reason: worktree removal happens from the main checkout anyway, and staying out avoids the compound-bash restriction that applies inside one.
 2. **No fork-side deploy.** Deploy runs once, at Step 8, after the last merge — already this skill's own rule, and it removes the shared-deploy-target hazard for free.
-3. **The pendings file is written once**, by the orchestrator, from the N forks' rulings, and **committed on the last branch in merge order** before that branch merges. No extra branch, and nothing committed straight to the default branch. One run deviated toward this on its own, writing pendings on the single branch that owned the file because doing it per-branch *"would have created three conflicts in one file for no gain"* — and another paid that bill, conflicting on `PENDINGS.md` three times in one close-out.
+3. **The pendings file (the one step-04 finds, `.novarc/PENDINGS.md` first) is written once**, by the orchestrator, from the N forks' rulings, and **committed on the last branch in merge order** before that branch merges. No extra branch, and nothing committed straight to the default branch. One run deviated toward this on its own, writing pendings on the single branch that owned the file because doing it per-branch *"would have created three conflicts in one file for no gain"* — and another paid that bill, conflicting on `PENDINGS.md` three times in one close-out.
 4. **`handoff.md` carries `spec slug → agentId`.** Without it a fork cannot be addressed at all.
 
 ### Degradation, because the failure is on record
 
 - **agentIds alive** → `SendMessage` revives each fork with its context intact.
-- **agentIds dead, or this session restarted** → spawn a fresh fork whose dispatch points at disk: `handoff.md` plus `.superpowers/session-build/<RUN>/fork-<slug>.md`. It reads from disk and **never assumes a fork remembers anything.**
+- **agentIds dead, or this session restarted** → spawn a fresh fork whose dispatch points at disk: `handoff.md` plus `.novarc/ledger/session-build/<RUN>/fork-<slug>.md` (else legacy `.superpowers/session-build/<RUN>/fork-<slug>.md`). It reads from disk and **never assumes a fork remembers anything.**
 - **Forks unavailable entirely** → fall back to the sequential lane and say so in one line. `session-build` hit exactly this and ran `N = 1` twice, serially.
 
 ### A limitation, named rather than left to be discovered

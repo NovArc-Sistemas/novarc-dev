@@ -89,8 +89,9 @@ step-08. Its forks never call `ArtifactData`.
 
 ## Finding the artifact, the set and the specs
 
-- **Artifact url:** `.superpowers/session-build/<RUN_ID>/handoff.md` (novarc-session-build writes it there), else
-  `ai/specs/<codigo>/artefato.txt` in the repo, else ask once.
+- **Artifact url:** `.novarc/ledger/session-build/<RUN_ID>/handoff.md` (novarc-session-build writes it there), else legacy
+  `.superpowers/session-build/<RUN_ID>/handoff.md`, else `.novarc/specs/<codigo>/artefato.txt` in the repo, else legacy
+  `ai/specs/<codigo>/artefato.txt`, else ask once.
 - **Spec of a branch:** the exact match of `c\d{2}-s\d{2}` in the branch name, uppercased, against plano.json
   `specs[].id` (`Artifact` read `plano.json`). Never slug containment. No match: stop and say this branch has no
   NOVARC spec and needs a plain session-end flow, not this skill.

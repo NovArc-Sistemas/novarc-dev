@@ -68,7 +68,7 @@ IDENTITY
 CHANNEL
   Report to the orchestrator with SendMessage to: "main". Its directives arrive as
   <cross-session-message>. Also append every checkpoint to
-  <ABS_MAIN_CHECKOUT>/.superpowers/session-build/<RUN_ID>/fork-<spec-slug>.md — ABSOLUTE, and in
+  <ABS_MAIN_CHECKOUT>/.novarc/ledger/session-build/<RUN_ID>/fork-<spec-slug>.md — ABSOLUTE, and in
   the MAIN checkout, not your worktree. The orchestrator sweeps that directory for ungranted
   LOCK lines; a file written inside your worktree is invisible to it and the sweep then reports
   "no pending locks" while yours sits there.
@@ -122,7 +122,7 @@ FIRST ACTION — AND THE RULE THAT REPLACES IT
 
 PHASE 1 — PLAN
   Invoke `superpowers:writing-plans` and follow it exactly.
-  Write to: docs/superpowers/plans/<YYYY-MM-DD>-<spec-slug>.md — never a repo-root PLAN.md.
+  Write to: .novarc/plans/<YYYY-MM-DD>-<spec-slug>.md — never a repo-root PLAN.md.
   The plan MUST carry, as explicit tasks with their own verification:
     - every migration, applied file-first via the migration CLI and confirmed against the
       remote ledger;
@@ -147,7 +147,7 @@ PHASE 2 — CODEX REVIEW
   unchanged), send CODEX STALL ROUND <n> <objection> as INFORMATION and KEEP GOING: write your
   rebuttal into the plan text itself rather than repeating it in chat, and loop again.
   MANDATORY LAST STEP: copy the converged $PLAN_FILE back over
-  docs/superpowers/plans/<YYYY-MM-DD>-<spec-slug>.md. Implementation reads only that path; a
+  .novarc/plans/<YYYY-MM-DD>-<spec-slug>.md. Implementation reads only that path; a
   hardened plan left in the run dir is worthless. Then send:
     CODEX APPROVED ROUNDS <n> RUNDIR <dir> PLAN <path> SHA <sha256>
                                               # NEVER hand-written. Emit it with
@@ -296,7 +296,7 @@ all it knows, so nothing may be left to inference.
 spec slug:            <spec-slug>
 skill dir:            <ABSOLUTE path of the session-build skill: where references/ and scripts/ live>
 spec file:            <ABSOLUTE path in the main checkout>
-decisions file:       <ABSOLUTE path>/.superpowers/session-build/<RUN_ID>/DECISIONS.md
+decisions file:       <ABSOLUTE path>/.novarc/ledger/session-build/<RUN_ID>/DECISIONS.md
 branch:               <type>/<spec-slug>-<YYYYMMDD>     <- you create it; the app's claude/... branch is not it
 default branch:       <default-branch>
 ledger dir:           <ABSOLUTE path in the MAIN checkout>; your file fork-<spec-slug>.md already exists
@@ -338,7 +338,7 @@ FIRST ACTION
 
 PHASE 1 — PLAN
   Invoke `superpowers:writing-plans` and follow it exactly. Write to
-  docs/superpowers/plans/<YYYY-MM-DD>-<spec-slug>.md, never a repo-root PLAN.md. The plan MUST carry
+  .novarc/plans/<YYYY-MM-DD>-<spec-slug>.md, never a repo-root PLAN.md. The plan MUST carry
   every migration (applied file-first via the migration CLI, confirmed against the remote ledger)
   and every function deploy (through the wrapper, verified by re-downloading and grepping) as
   explicit tasks with their own verification. ON AN ORDERED DEPENDENCY: every task that does not need

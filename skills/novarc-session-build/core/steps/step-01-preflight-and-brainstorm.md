@@ -53,8 +53,8 @@ Two mechanics cost a turn each when missed:
   `run_in_background: true`, then read `$STATE_DIR/server-info` next turn for the URL and port —
   stdout you never captured is not recoverable.
 - **`--project-dir <repo root>`** persists mockups, into `.superpowers/brainstorm/`. **Where
-  `.superpowers/` is tracked — this skill's own run ledger lives there and is committed — those
-  mockups are in version control.** Gitignore that subpath first, or keep it out of every commit on
+  `.superpowers/` is tracked, those mockups are in version control** (this skill's own run ledger
+  lives in `.novarc/ledger/`, not there). Gitignore that subpath first, or keep it out of every commit on
   purpose. Do not discover it at close-out.
 
 **On "no" or on silence, continue text-only and do not offer again.** That skill's own just-in-time
@@ -78,7 +78,7 @@ Three more overrides on that skill — §1.3 carried the first:
 
 ## 1.5 Land the specs
 
-Specs go to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` (or the project's spec location) and are committed per the project's docs policy. If the project routes docs straight to the default branch, commit them there — not on a feature branch.
+Specs go to `.novarc/design/YYYY-MM-DD-<topic>-design.md` (or the project's spec location) and are committed per the project's docs policy. If the project routes docs straight to the default branch, commit them there — not on a feature branch.
 
 **Push the spec commit before step-03** if the project's worktrees branch from the remote default branch — otherwise a fresh worktree will not contain the spec its fork is supposed to read.
 

@@ -36,7 +36,7 @@ That request produced **13 items transcribed almost directly** in a five-branch 
 
 Do not create an empty pendings file and do not invent filler items to justify one.
 
-Otherwise, find the pendings file (`PENDINGS.md` at the repo root, else `docs/PENDINGS.md`, else the project's named equivalent). **If none exists, create `PENDINGS.md` at the repo root by copying [pendings-template.md](pendings-template.md) verbatim** — header plus the `---`, nothing else. That header is load-bearing: never edit it, never drop it, never write items above it.
+Otherwise, find the pendings file (`.novarc/PENDINGS.md`, else legacy `PENDINGS.md` at the repo root, else `docs/PENDINGS.md`, else the project's named equivalent). **If none exists, create `.novarc/PENDINGS.md` (never a legacy path) by copying [pendings-template.md](pendings-template.md) verbatim** — header plus the `---`, nothing else. That header is load-bearing: never edit it, never drop it, never write items above it.
 
 **The file's own header outranks this skill, and that header is the spec.** `pendings-template.md` states the section shape, the entry shape, the three statuses, the 3–6 line target and the exactness rule — **read it there; it is not repeated here.** A pendings file created from an older template carries a different shape: do not convert it, do not mix formats, read its header and write what it prescribes. Language and voice always follow the file.
 

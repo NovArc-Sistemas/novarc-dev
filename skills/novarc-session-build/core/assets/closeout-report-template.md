@@ -62,7 +62,7 @@ The branches are pushed and verified, awaiting review. Then `/session-end`.
 
 Say **which** session runs it and how: the orchestrator can enter each worktree in sequence and close each branch, which is the cheapest path since it already holds the whole picture; a fresh session launched from the worktree directory is equally valid. Warn that `/session-end`'s step 0 stops on the default branch — inside this run that means *enter each worktree*, not *abort* — and that a session inside a worktree has compound bash refused.
 
-Name the handoff file: `.superpowers/session-build/<RUN_ID>/handoff.md`.
+Name the handoff file: `.novarc/ledger/session-build/<RUN_ID>/handoff.md`.
 
 ## Pendências desta sessão
 

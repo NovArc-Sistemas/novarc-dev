@@ -205,21 +205,26 @@ async function chamar($: any, input: Record<string, unknown>): Promise<string> {
   return String(r.text ?? '')
 }
 
-/** Reads the artifact url from ai/specs/<codigo>/artefato.txt under the session cwd, if the repo has one. */
+/**
+ * Reads the artifact url from <base>/<codigo>/artefato.txt under the session cwd, .novarc/specs first and the legacy
+ * ai/specs second; the first claude.ai url wins.
+ */
 async function acharArtefato($: any, cwd: string): Promise<string | null> {
-  try {
-    const raiz = `${cwd}/ai/specs`
-    for (const d of await $.fs.list(raiz)) {
-      if (d.kind !== 'dir') continue
-      try {
-        const t = String(await $.fs.read(`${raiz}/${d.name}/artefato.txt`)).trim()
-        if (t.startsWith('https://claude.ai/')) return t
-      } catch {
-        // no artefato.txt in this folder
+  for (const base of ['.novarc/specs', 'ai/specs']) {
+    try {
+      const raiz = `${cwd}/${base}`
+      for (const d of await $.fs.list(raiz)) {
+        if (d.kind !== 'dir') continue
+        try {
+          const t = String(await $.fs.read(`${raiz}/${d.name}/artefato.txt`)).trim()
+          if (t.startsWith('https://claude.ai/')) return t
+        } catch {
+          // no artefato.txt in this folder
+        }
       }
+    } catch {
+      // no such folder: try the next base
     }
-  } catch {
-    // no ai/specs folder: not a NOVARC client repo
   }
   return null
 }
@@ -878,13 +883,23 @@ const lista = async ($: any, dir: string) => {
 }
 
 /**
- * The repository pendings: ai/pendings/<ID>.md files when that folder exists (plus the legacy file, the file wins), else
- * PENDINGS.md at the root, else docs/PENDINGS.md; null when there is none. Re-read only when the marker moved.
+ * The repository pendings: the <ID>.md files of the first of .novarc/pendings, ai/pendings that holds any (plus the
+ * legacy file, the file wins on the same id), and the first legacy PENDINGS.md of .novarc, the root, docs; null when
+ * there is none. Re-read only when the marker moved.
  */
 async function lerRepo($: any, cwd: string): Promise<EntradaRepo[] | null> {
-  const arquivos = (await lista($, `${cwd}/ai/pendings`))?.filter(f => f.kind !== 'dir' && /\.md$/i.test(f.name)) ?? null
+  let pasta = ''
+  let arquivos: { name: string; kind: string; size: number; mtimeMs: number }[] | null = null
+  for (const dir of [`${cwd}/.novarc/pendings`, `${cwd}/ai/pendings`]) {
+    const md = (await lista($, dir))?.filter(f => f.kind !== 'dir' && /\.md$/i.test(f.name))
+    if (md?.length) {
+      pasta = dir
+      arquivos = md
+      break
+    }
+  }
   let legado: { path: string; size: number; mtimeMs: number } | null = null
-  for (const dir of [cwd, `${cwd}/docs`]) {
+  for (const dir of [`${cwd}/.novarc`, cwd, `${cwd}/docs`]) {
     const f = (await lista($, dir))?.find(x => x.name === 'PENDINGS.md' && x.kind !== 'dir')
     if (f) {
       legado = { path: `${dir}/PENDINGS.md`, size: f.size, mtimeMs: f.mtimeMs }
@@ -896,10 +911,10 @@ async function lerRepo($: any, cwd: string): Promise<EntradaRepo[] | null> {
     repoCache = null
     return null
   }
-  const marcador = JSON.stringify([(arquivos ?? []).map(f => [f.name, f.size, f.mtimeMs]), legado && [legado.path, legado.size, legado.mtimeMs]])
+  const marcador = JSON.stringify([pasta, (arquivos ?? []).map(f => [f.name, f.size, f.mtimeMs]), legado && [legado.path, legado.size, legado.mtimeMs]])
   if (marcador === repoMarcador && repoCache) return repoCache
   const doArquivo = arquivos
-    ? lerArquivos(await Promise.all(arquivos.map(async f => ({ nome: f.name, texto: String(await $.fs.read(`${cwd}/ai/pendings/${f.name}`)) }))))
+    ? lerArquivos(await Promise.all(arquivos.map(async f => ({ nome: f.name, texto: String(await $.fs.read(`${pasta}/${f.name}`)) }))))
     : []
   const doLegado = legado ? lerLegado(String(await $.fs.read(legado.path))) : []
   repoCache = unirRepo(doArquivo, doLegado)

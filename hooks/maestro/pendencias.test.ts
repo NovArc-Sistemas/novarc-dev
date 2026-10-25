@@ -309,12 +309,13 @@ function respostaDb(m: Mundo, e: any) {
 
 const LEGADO_A1 = '## P\n\n### Retry do webhook — `OPEN`\n- O que: reenviar\n- Por que: timeout\n- Destrava: fila\n\n### Dois — `OPEN`\n\n### Três — `OPEN`\n'
 
-function mundo(on: any, o: { db?: Db | null; legado?: string | null; plano?: any } = {}): Mundo {
+function mundo(on: any, o: { db?: Db | null; legado?: string | null; legadoEm?: string; arquivosExtra?: Record<string, string>; plano?: any } = {}): Mundo {
   const m: Mundo = {
     db: o.db === undefined ? dbInteg() : o.db, arquivos: {}, tools: [], toasts: [], copias: [], enviados: [], submetidos: [], lidos: [], timers: [], eventos: [],
     falharLista: null, falharEscrita: false, plano: o.plano ?? planoInteg(),
   }
-  if (o.legado !== null) m.arquivos['C:/repo/PENDINGS.md'] = { text: o.legado ?? LEGADO_A1, mtimeMs: 1 }
+  if (o.legado !== null) m.arquivos[o.legadoEm ?? 'C:/repo/PENDINGS.md'] = { text: o.legado ?? LEGADO_A1, mtimeMs: 1 }
+  for (const [k, text] of Object.entries(o.arquivosExtra ?? {})) m.arquivos[k] = { text, mtimeMs: 1 }
   on('*', async ($: any, e: any, next: any) => {
     m.eventos.push(e)
     return next(e)
@@ -436,6 +437,58 @@ test('tab, counter and one pendencias list per poll; PENDINGS.md read once while
   m.db!['pendencias/p-exemplo-parcial'] = { data: { resposta: 'ok', situacao: 'respondida' }, version: 5 }
   await poll(m)
   expect(await linhaBanda(banda)).not.toContain('pendências seguram')
+})
+
+test('R8: .novarc/PENDINGS.md read once while its marker holds', async ($: any, on: any) => {
+  const m = mundo(on, { legadoEm: 'C:/repo/.novarc/PENDINGS.md' })
+  await orquestrador($, m)
+  await poll(m)
+  expect(m.lidos.filter(p => p.endsWith('PENDINGS.md')).length).toBe(1)
+})
+
+// ---- C11-S02: pendings read from .novarc first, the legacy places second (A7)
+
+const fm = (id: string, titulo: string) => `---\nid: ${id}\ntitulo: ${titulo}\nstatus: OPEN\n---\n`
+
+test('A7: .novarc/pendings files plus root PENDINGS.md', async ($: any, on: any) => {
+  const m = mundo(on, { legado: '## P\n\n### Um — `OPEN`\n', arquivosExtra: { 'C:/repo/.novarc/pendings/P-01.md': fm('P-01', 'Do arquivo P-01') } })
+  await orquestrador($, m)
+  const t = texto(await (await abrirAba($, m)).drawn())
+  expect(t).toContain('Do arquivo P-01')
+  expect(t).toContain('Um')
+  expect(m.lidos).toContain('C:/repo/.novarc/pendings/P-01.md')
+})
+
+test('A7: the file wins on the same id', async ($: any, on: any) => {
+  const m = mundo(on, { legado: '## P\n\n### PND-01 Versao do legado — `OPEN`\n', arquivosExtra: { 'C:/repo/.novarc/pendings/PND-01.md': fm('PND-01', 'Versao do arquivo') } })
+  await orquestrador($, m)
+  const t = texto(await (await abrirAba($, m)).drawn())
+  expect(t).toContain('Versao do arquivo')
+  expect(t).not.toContain('Versao do legado')
+})
+
+test('A7: empty .novarc/pendings falls back to ai/pendings', async ($: any, on: any) => {
+  const m = mundo(on, { arquivosExtra: { 'C:/repo/.novarc/pendings/leia.txt': 'x', 'C:/repo/ai/pendings/P-02.md': fm('P-02', 'Antigo P-02') } })
+  await orquestrador($, m)
+  const t = texto(await (await abrirAba($, m)).drawn())
+  expect(t).toContain('Antigo P-02')
+  expect(m.lidos).toContain('C:/repo/ai/pendings/P-02.md')
+})
+
+test('A7: only docs/PENDINGS.md', async ($: any, on: any) => {
+  const m = mundo(on, { legado: null, arquivosExtra: { 'C:/repo/docs/PENDINGS.md': LEGADO_A1 } })
+  await orquestrador($, m)
+  expect(texto(await (await abrirAba($, m)).drawn())).toContain('Retry do webhook')
+})
+
+test('A7: .novarc/PENDINGS.md wins over root', async ($: any, on: any) => {
+  const m = mundo(on, { legado: '## P\n\n### Raiz antiga — `OPEN`\n', arquivosExtra: { 'C:/repo/.novarc/PENDINGS.md': '## P\n\n### Pasta nova — `OPEN`\n' } })
+  await orquestrador($, m)
+  const t = texto(await (await abrirAba($, m)).drawn())
+  expect(m.lidos).toContain('C:/repo/.novarc/PENDINGS.md')
+  expect(m.lidos).not.toContain('C:/repo/PENDINGS.md')
+  expect(t).toContain('Pasta nova')
+  expect(t).not.toContain('Raiz antiga')
 })
 
 test('no tool call carries repository pending text', async ($: any, on: any) => {

@@ -8,7 +8,7 @@ The plan is the unit of work. Whoever writes it — inline or in a fork — obey
 
 ## 4.1 The plan
 
-- Written with `superpowers:writing-plans`, saved to `docs/superpowers/plans/YYYY-MM-DD-<spec-slug>.md`. **Never** a repo-root `PLAN.md` — concurrent sessions collide there.
+- Written with `superpowers:writing-plans`, saved to `.novarc/plans/YYYY-MM-DD-<spec-slug>.md`. **Never** a repo-root `PLAN.md` — concurrent sessions collide there.
 - **Migrations and deploys are explicit tasks in the plan**, each with its own verification: apply the migration and confirm it against the remote ledger; deploy through the project's wrapper and verify by re-downloading and grepping for the change. A version bump proves nothing. A shared module changing means every consumer redeploys.
 - **Order them as late as the plan allows.** Git is disposable; the database is not. A branch can be abandoned after a failure — the migration it already applied cannot, and there is one shared database with no staging behind it. So a migration task sits after the code that depends on it is written and verified, never as an opening move, and a migration that would break the currently-deployed code if its branch never merges is a design the plan must avoid, not a risk it may take. Any migration applied on a branch later abandoned is reported to the user by name at step-06.
 - **Every Definition of Done must be checkable in this repo.** Check what actually triggers the project's CI before writing a CI-shaped DoD. Observed: an orchestrator ruled "CI validate job green on the pushed branch" for a workflow that triggers only on push-to-main and PR-to-main — and this skill opens no PRs. Its own verdict: a DoD no fork could ever satisfy. It had to invent a calibrated local instrument mid-run.
@@ -20,7 +20,7 @@ Hardened through the `novarc-codex-review` adversarial loop, invoked with **`rou
 
 **Runner hygiene** (the details live in `novarc-codex-review`; these are the ones that cost this skill whole rounds): run it in the background, close stdin, and **confirm the event stream is non-empty before waiting on it**. Then sanity-check that Codex actually read the plan before counting the round — a verdict returned by a runner whose first command died on shell quoting is a round wasted, not a round.
 
-**The critical wiring:** novarc-codex-review works inside its own `$RUN_DIR/PLAN.md`. When the loop converges the hardened plan **must be copied back over** `docs/superpowers/plans/<...>.md`, because implementation reads only that path. Verify the file's content actually changed before implementing.
+**The critical wiring:** novarc-codex-review works inside its own `$RUN_DIR/PLAN.md`. When the loop converges the hardened plan **must be copied back over** `.novarc/plans/<...>.md`, because implementation reads only that path. Verify the file's content actually changed before implementing.
 
 > **NO GATE HERE.** Codex returned APPROVED and the plan is copied back. Dispatch implementation in this same turn. Do not ask the user whether to proceed — this transition has stalled runs before, with the rule forbidding it in context verbatim.
 

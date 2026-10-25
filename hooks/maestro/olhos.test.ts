@@ -826,6 +826,34 @@ function comArtefato(m: Mundo) {
   gravar(m, 'C:/repo/ai/specs/EXM/artefato.txt', `${URL}\n`)
 }
 
+// ---- C11-S02: artefato.txt read from .novarc/specs first, ai/specs second (A6)
+
+const planoLido = (m: Mundo) => m.tools.some((t: any) => t.tool === 'Artifact' && t.action === 'read' && t.url === URL && t.path === 'plano.json')
+
+test('A6: session start finds the artifact in .novarc/specs and loads its plan', async ($: any, on: any) => {
+  const m = montar(on, {}, SPEC, true)
+  gravar(m, 'C:/repo/.novarc/specs/EXM/artefato.txt', `${URL}\n`)
+  await iniciar($)
+  expect((escrito(m, 'ctx') as any)?.artefato).toBe(URL)
+  expect(planoLido(m)).toBe(true)
+})
+
+test('A6: legacy ai/specs artefato loads the same plan', async ($: any, on: any) => {
+  const m = montar(on, {}, SPEC, true)
+  comArtefato(m)
+  await iniciar($)
+  expect((escrito(m, 'ctx') as any)?.artefato).toBe(URL)
+  expect(planoLido(m)).toBe(true)
+})
+
+test('A6: .novarc wins over ai/specs', async ($: any, on: any) => {
+  const m = montar(on, {}, SPEC, true)
+  gravar(m, 'C:/repo/.novarc/specs/EXM/artefato.txt', `${URL}\n`)
+  gravar(m, 'C:/repo/ai/specs/EXM/artefato.txt', 'https://claude.ai/artifact/OUTRO\n')
+  await iniciar($)
+  expect((escrito(m, 'ctx') as any)?.artefato).toBe(URL)
+})
+
 test('the first prompt after a clear returns under 50 ms while the Artifact read resolves after 2 s', async ($: any, on: any) => {
   const m = montar(on, {}, SPEC, true)
   comArtefato(m)

@@ -24,7 +24,7 @@ The asymmetry is the argument: the relative arrangement is not merely different,
 
 **The corollary is counter-intuitive and belongs in the dispatch prompt.** With the absolute path, the fork ledger lives on the default branch — where forks are barred from committing. So **`"the fork commits its ledger at most twice"` cannot be asked of a fork at all; the orchestrator commits those files**, and it has to know that before it promises otherwise.
 
-**Check that the artefacts you promise to collect are committable at all.** A run promised to gather every `novarc-codex-review` run dir onto the default branch and had to revoke it in front of five forks: `docs/codex-review/` was listed in `.git/info/exclude`, so collecting it would have needed a forced add the project forbids. This skill treats plans and review transcripts as committable by default; confirm that against the repo's ignore and exclude rules **before** promising, not after.
+**Check that the artefacts you promise to collect are committable at all.** A run promised to gather every `novarc-codex-review` run dir onto the default branch and had to revoke it in front of five forks: `.novarc/codex-review/` was listed in `.git/info/exclude`, so collecting it would have needed a forced add the project forbids. This skill treats plans and review transcripts as committable by default; confirm that against the repo's ignore and exclude rules **before** promising, not after.
 
 Context does not survive compaction; the ledger does. On resume, trust the ledger, `git log` and `git worktree list` over recollection, and restart at the first phase with no completion line.
 

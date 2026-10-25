@@ -50,13 +50,17 @@ DEFAULT=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'
 git cat-file -e <arquivos.commit>^{commit}
 ```
 
-For each spec and each item `nome` (path `P = <arquivos.repo><nome>`; compare the first field of the `sha256sum`
-output):
+For each spec and each item `nome`, two paths: `P_stored = <arquivos.repo><nome>`, and `P_mapped` = `P_stored` mapped
+through the legacy path map (the first row whose `legado/` prefixes it swaps that prefix for its `novo/`; rows as in
+`../core/scripts/migrar_novarc.py` `MAPA`, e.g. `ai/specs/` becomes `.novarc/specs/`; no match leaves it unchanged).
+"else" below means: when the first path does not exist at that ref, read the second. Compare the first field of the
+`sha256sum` output:
 
-- recorded content: `git show <commit>:<P> | sha256sum` equals `itens[].sha256`;
+- recorded content: git show <commit>:<P_stored>, else <P_mapped> (piped to `sha256sum`) equals `itens[].sha256`. The
+  stored path goes first because the recorded commit predates the move to `.novarc/`: it holds the old path;
 - reserved revision: for `spec.md`, that hash equals the `revisao` claimed in step 2;
-- drift: `git show origin/$DEFAULT:<P> | sha256sum` equals `itens[].sha256`. The default-branch content is what gets
-  built.
+- drift: git show origin/$DEFAULT:<P_mapped>, else <P_stored> (piped to `sha256sum`) equals `itens[].sha256`. The
+  default-branch content is what gets built.
 
 Any mismatch or missing commit/file: stop. Drift message, verbatim: "o spec mudou no repositório depois do
 planejamento: peça à NOVARC para atualizar o planejamento". Missing commit: "O commit <sha7> dos specs não está no
@@ -83,7 +87,8 @@ non-empty AND `situacao !== "parcial"` (no `situacao` counts as resolved). A par
 
 Read and keep, for the specs still in scope:
 
-- each spec's files from `origin/$DEFAULT` (`spec.md` first; the others are its references);
+- each spec's files from `origin/$DEFAULT` at `P_mapped`, else `P_stored` (§3) (`spec.md` first; the others are its
+  references);
 - decisions plano.json links to the set's changes, answered `pendencias` (including `falta` for partials), `notas`
   that mention the set's changes;
 - the simulator ids for the set's screens (reference only; visual validation is the orchestrator's);

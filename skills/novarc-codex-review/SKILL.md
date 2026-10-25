@@ -23,7 +23,7 @@ This is a **deliberate, high-stakes tool** — reach for it on auth, data models
 | `MAX_ROUNDS` | `5` | Cap on review rounds. The loop terminates here **unless** `rounds=until-approved`. |
 | `SLUG` | derived from the task (2–5 kebab-case words) | Names the run. Keep it descriptive, e.g. `wave5-cleanup`, `anon-rpc-hardening`. |
 | `STAMP` | `$(date +%Y%m%d-%H%M)` | Run timestamp. Makes the run dir unique so parallel sessions never collide. |
-| `RUN_DIR` | `docs/codex-review/<SLUG>-<STAMP>/` | **Per-run, session-owned folder.** All of this run's artifacts live here — nothing at repo root. Mirrors how `docs/superpowers/` scopes its artifacts. Created at kickoff. |
+| `RUN_DIR` | `.novarc/codex-review/<SLUG>-<STAMP>/` | **Per-run, session-owned folder.** All of this run's artifacts live here — nothing at repo root. Mirrors how `.novarc/` scopes the flow's other artifacts. Created at kickoff. |
 | `PLAN_FILE` | `$RUN_DIR/PLAN.md` | Where the evolving plan lives (inside the run dir, never repo root). |
 | `LOG_FILE` | `$RUN_DIR/PLAN-REVIEW-LOG.md` | Append-only transcript of the argument (every round's critique + what changed). The artifact. |
 | `VERDICT_FILE` | `$RUN_DIR/codex-verdict.txt` | Codex's last-message capture. **Per-run, NOT `/tmp`** — a shared `/tmp/codex-verdict.txt` clobbers across concurrent runs. |
@@ -54,7 +54,7 @@ Two things follow, and the second matters more than the first. The tail is not t
 
 **Revise the artifact Codex re-reads. Never regenerate it from a source that lacks your rebuttals.**
 
-`$RUN_DIR/PLAN.md` is what Codex re-reads each round, so it is what must accumulate the argument. A caller that keeps a canonical plan elsewhere — `session-build`'s forks keep theirs under `docs/superpowers/plans/` — is tempted to re-copy that file into `PLAN.md` at the top of every round. That copy **destroys everything written into `PLAN.md` since the last one**, and the first casualty is the "considered and rejected because …" section, which is precisely the part meant to answer Codex.
+`$RUN_DIR/PLAN.md` is what Codex re-reads each round, so it is what must accumulate the argument. A caller that keeps a canonical plan elsewhere — `session-build`'s forks keep theirs under `.novarc/plans/` — is tempted to re-copy that file into `PLAN.md` at the top of every round. That copy **destroys everything written into `PLAN.md` since the last one**, and the first casualty is the "considered and rejected because …" section, which is precisely the part meant to answer Codex.
 
 The failure is invisible from the inside: Claude answers the objection every round, Codex never sees the answer because it re-reads a document the copy just reverted, and the same objection returns forever. Confirmed from inside a live run — it was the direct cause of a plan that bounced from round 3 to round 6.
 
@@ -91,7 +91,7 @@ Derive `SLUG` from that one-line scope (2–5 kebab-case words) and create this 
 ```bash
 SLUG="<derived-or-user-provided>"            # e.g. wave5-cleanup
 STAMP="$(date +%Y%m%d-%H%M)"
-RUN_DIR="docs/codex-review/${SLUG}-${STAMP}"
+RUN_DIR=".novarc/codex-review/${SLUG}-${STAMP}"
 mkdir -p "$RUN_DIR"
 echo "codex-review run dir: $RUN_DIR"          # PLAN_FILE=$RUN_DIR/PLAN.md, LOG_FILE=$RUN_DIR/PLAN-REVIEW-LOG.md, VERDICT_FILE=$RUN_DIR/codex-verdict.txt
 ```
@@ -136,7 +136,7 @@ Maintain `ROUND` (start 1) and `THREAD_ID` (empty until round 1 returns).
 
 **The review prompt** sent to Codex each round (adjust the task line):
 
-> You are an adversarial reviewer for an implementation plan. Be skeptical and specific — your job is to find what breaks, not to be agreeable. Read the plan at `<$PLAN_FILE — substitute the real path, e.g. docs/codex-review/wave5-cleanup-20260720-1530/PLAN.md>` (and any repo files you need; you are read-only). Identify concrete flaws: security holes, race conditions, missing edge cases, schema conflicts, wrong assumptions, observability gaps, simpler alternatives. For each, give a one-line fix. Any claim about the real system (a column's nullability, a constraint, an API contract, a function signature) must be checked in the source — migrations, code, catalogue — not taken from the plan or spec that cites it; say which file you checked. Do NOT modify any files. End your reply with EXACTLY one line: `VERDICT: APPROVED` if the plan is sound enough to implement, or `VERDICT: REVISE` if it still has material problems.
+> You are an adversarial reviewer for an implementation plan. Be skeptical and specific — your job is to find what breaks, not to be agreeable. Read the plan at `<$PLAN_FILE — substitute the real path, e.g. .novarc/codex-review/wave5-cleanup-20260720-1530/PLAN.md>` (and any repo files you need; you are read-only). Identify concrete flaws: security holes, race conditions, missing edge cases, schema conflicts, wrong assumptions, observability gaps, simpler alternatives. For each, give a one-line fix. Any claim about the real system (a column's nullability, a constraint, an API contract, a function signature) must be checked in the source — migrations, code, catalogue — not taken from the plan or spec that cites it; say which file you checked. Do NOT modify any files. End your reply with EXACTLY one line: `VERDICT: APPROVED` if the plan is sound enough to implement, or `VERDICT: REVISE` if it still has material problems.
 
 Substitute the real `$PLAN_FILE` path into the prompt before sending — Codex must be pointed at this run's plan inside `$RUN_DIR`, not a bare `PLAN.md`.
 

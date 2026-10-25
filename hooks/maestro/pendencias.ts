@@ -1,4 +1,4 @@
-// Pure helpers of the Pendências tab: the repository pendings (legacy PENDINGS.md or ai/pendings/<ID>.md frontmatter),
+// Pure helpers of the Pendências tab: the repository pendings (legacy PENDINGS.md or .novarc/pendings/<ID>.md frontmatter),
 // the planning questions and their answers, the items on the way from running specs, the cross-check and the doc view.
 // No engine calls here, so tests exercise them directly. The open rule and the phase helpers are ported from the
 // planning page, never imported: this folder ships in the public build.
@@ -89,7 +89,7 @@ export function lerLegado(texto: string): EntradaRepo[] {
   return out
 }
 
-/** Entries of ai/pendings/<ID>.md files, from their frontmatter (format owned by the per-file pendings spec). */
+/** Entries of .novarc/pendings/<ID>.md files (legacy ai/pendings), from their frontmatter (format owned by the per-file pendings spec). */
 export function lerArquivos(arquivos: { nome: string; texto: string }[]): EntradaRepo[] {
   return arquivos.map(({ nome, texto }) => {
     const ls = texto.split(/\r?\n/)

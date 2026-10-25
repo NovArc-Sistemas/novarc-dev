@@ -10,7 +10,7 @@ This is the orchestration design. Do it before any branch exists.
 
 In one message. If the user named files, use exactly those.
 
-Open the ledger now: `RUN_ID` = `<YYYYMMDD-HHMM>`, directory `.superpowers/session-build/<RUN_ID>/` in the **main checkout**, and write the project profile from step-01 into it as the first entry. Use `../scripts/ledger.py`.
+Open the ledger now: `RUN_ID` = `<YYYYMMDD-HHMM>`, directory `.novarc/ledger/session-build/<RUN_ID>/` in the **main checkout**, and write the project profile from step-01 into it as the first entry. Use `../scripts/ledger.py`.
 
 **If any spec in scope came out of the project's pendings file, record which entries — verbatim — before you go further.** One `PENDINGS-SOURCE` ledger line per spec, quoting each entry's heading exactly as it appears in the file:
 

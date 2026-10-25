@@ -136,7 +136,7 @@ This skill runs inside real projects that carry their own rules. Read the projec
 
 ## Ledger
 
-`.superpowers/session-build/<RUN_ID>/`, where `<RUN_ID>` is `<YYYYMMDD-HHMM>` set at step-02. Pass it to every builder **as an absolute path into the main checkout**.
+`.novarc/ledger/session-build/<RUN_ID>/`, where `<RUN_ID>` is `<YYYYMMDD-HHMM>` set at step-02. Pass it to every builder **as an absolute path into the main checkout**.
 
 - `ledger.md` — orchestrator-owned: spec list, dependency graph, collision rulings, the orchestrator's own session id, builder addresses (session `local_...` ids, or fork agentIds), every lock grant and release, every escalation.
 - `DECISIONS.md` — written at step-02 when N ≥ 2: the brainstorm decisions the specs do not state, the collision rulings and the branch names. Builders read it by absolute path.

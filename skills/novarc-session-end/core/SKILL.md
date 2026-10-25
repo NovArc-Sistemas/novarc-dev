@@ -83,7 +83,7 @@ Route at the table above, then read fully and follow **`steps/step-00-inventory.
 <!-- moved -->
 ## Ledger
 
-`.superpowers/session-end/<YYYYMMDD-HHMM>/ledger.md`, first line `# session-end — branch: <name>`. Append after every step: inventory → verification output → migration state → deploy + verification method → pendings written → PR number → merge state → cleanup. Context does not survive compaction; the ledger does. On resume, trust the ledger, `git log` and the forge over recollection, and restart at the first step with no completion line.
+`.novarc/ledger/session-end/<YYYYMMDD-HHMM>/ledger.md`, first line `# session-end — branch: <name>`. Append after every step: inventory → verification output → migration state → deploy + verification method → pendings written → PR number → merge state → cleanup. Context does not survive compaction; the ledger does. On resume, trust the ledger, `git log` and the forge over recollection, and restart at the first step with no completion line.
 
 <!-- moved -->
 ## Common mistakes

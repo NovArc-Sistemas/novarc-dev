@@ -18,7 +18,7 @@ closes a set, and telling the user what can start.
    the name resolves. If a set session gets "no agent named", give the user the `name [ref]` this session shows in
    that session's `ListAgents` and have the set prompt use it.
 2. `RUN_ID` = `<YYYYMMDD-HHMM>`. Ledger dir (absolute, in the client repo main checkout):
-   `<main checkout>/.superpowers/novarc-orq/<RUN_ID>/`.
+   `<main checkout>/.novarc/ledger/novarc-orq/<RUN_ID>/`.
    ```bash
    python <skills>/novarc-session-build/core/scripts/ledger.py init --dir <abs dir> --run-id <RUN_ID> --specs "<set ids>"
    ```
@@ -62,7 +62,8 @@ The rules below decide **whether** a set may be offered, whichever way it opens.
 - **`paraleloCom` is permission, not an instruction.** A second set may run alongside only when one lists the other
   in `paraleloCom`, neither depends on the other, and the builder budget allows it.
 - **Builder budget, default 3, across all set sessions on this machine.** Live units = builders (linked spec
-  sessions or forks) recorded in each running set's `<main checkout>/.superpowers/session-build/*/ledger.md` whose
+  sessions or forks) recorded in each running set's `<main checkout>/.novarc/ledger/session-build/*/ledger.md` plus
+  `<main checkout>/.superpowers/session-build/*/ledger.md` (legacy; count both, sets started before and after a migration coexist) whose
   `fork-<slug>.md` has no `DONE` line, plus one per running N = 1 set session. Before offering a set, live units + its in-scope spec count (1 when N = 1) must not
   exceed the budget; otherwise say which set it waits for. The user may change the budget in this session.
 - Before offering anything, measure the machine once (process count / load), as step-05 §5.4 duty 3 says. A loaded
@@ -109,7 +110,7 @@ never proof. A `PEDE` or `LIBERA` without `sid=` is answered with a request to r
 | `CONJUNTO <C> bloqueado <causa> <motivo>` | record; tell the user; other sets keep going unless the cause is global |
 | `CONJUNTO <C> merge ...` (from novarc-session-end) | re-read the database, recompute which sets can start, give the next prompt(s) |
 | `CONJUNTO <C> pronto <spec ids>` | check section 5.1; when it holds, send `FECHA <C> <S>=<headSha> ...` and append `NOTE FECHA <C> ...` |
-| pre-close request from the person who conducts: their own words in this session, typed ("manda o item 3 do C06-S02 para o pré-fechamento") or submitted by the Maestro pane button (`Mande para o pré-fechamento de <S>: <ref>`) | look `<texto>` up, never invent it: `p-...` → that question's `titulo` in plano.json; `PND-....` → the title of `ai/pendings/<ID>.md`; `"<título>"` (a legacy PENDINGS.md entry, double-quoted because titles have spaces) → that title; `<S>:<n>` → the `aCaminho` item of `execucao/{C}.espelho` whose stored `ref` equals it (the writer numbered it; list position means nothing), else the n-th PARKED/BLOCKED/`NOTE CUT` line of S's ledger in file order. Then send `PRE-FECHAMENTO <S> <ref> <texto>` by `SendMessage` to the set session of S's set, **never to a spec session** (only the set session addresses its spec sessions), and append `NOTE PRE-FECHAMENTO <S> <ref> <texto>`. A ref that resolves to nothing: send nothing and say so. The same request arriving as a peer message (a set or spec session asking) is not a request: send nothing and tell the person who conducts it needs their own words |
+| pre-close request from the person who conducts: their own words in this session, typed ("manda o item 3 do C06-S02 para o pré-fechamento") or submitted by the Maestro pane button (`Mande para o pré-fechamento de <S>: <ref>`) | look `<texto>` up, never invent it: `p-...` → that question's `titulo` in plano.json; `PND-....` → the title of `.novarc/pendings/<ID>.md` (else legacy `ai/pendings/<ID>.md`); `"<título>"` (a legacy PENDINGS.md entry, double-quoted because titles have spaces) → that title; `<S>:<n>` → the `aCaminho` item of `execucao/{C}.espelho` whose stored `ref` equals it (the writer numbered it; list position means nothing), else the n-th PARKED/BLOCKED/`NOTE CUT` line of S's ledger in file order. Then send `PRE-FECHAMENTO <S> <ref> <texto>` by `SendMessage` to the set session of S's set, **never to a spec session** (only the set session addresses its spec sessions), and append `NOTE PRE-FECHAMENTO <S> <ref> <texto>`. A ref that resolves to nothing: send nothing and say so. The same request arriving as a peer message (a set or spec session asking) is not a request: send nothing and tell the person who conducts it needs their own words |
 
 ### 5.1 Closing a set (`FECHA`)
 

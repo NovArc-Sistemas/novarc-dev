@@ -43,7 +43,7 @@ Each row is a real run, compressed. The rule each one produced now lives in the 
 | "The forks write the ledger, so I can sweep it" | Only if you gave them the absolute main-checkout path. Relative puts those files in the worktrees, and the sweep reads an empty directory and reports all clear. |
 | "`COORDINATE WITH` lets my forks talk to each other" | Not unless you sent them the slug→agentId map. Forks list as bare handles; without it they must relay everything through you. |
 | "The suite is red because my branch is broken" | Under load it may not be finishing at all. Verification that does not complete is not slow verification — it is absent verification. |
-| "The plan is in the codex run dir, close enough" | Implementation reads `docs/superpowers/plans/`. Copy the converged plan back or you ship the un-hardened one. |
+| "The plan is in the codex run dir, close enough" | Implementation reads `.novarc/plans/`. Copy the converged plan back or you ship the un-hardened one. |
 | "SDD said to finish the branch" | `finishing-a-development-branch` opens PRs and merges. Forbidden here. Verify and push instead. |
 | "The user can run `/session-end` in the orchestrator" | It assumes the worktree is the cwd, and no session in the run is inside one. The user launches a session **from** the worktree directory. |
 | "Migrations and deploys come after implementation" | They are tasks *in* the plan, with their own verification, executed under an orchestrator lock. |

@@ -44,7 +44,7 @@ export type DocResumo = { tot: number; abertos: number; OPEN: number; GATED: num
 export type FiltroDoc = 'todos' | 'abertos' | 'presos' | 'aceitos' | 'fechados'
 export type EstadoPendencias = {
   itens: ItemPendencia[]
-  /** null: the repository has neither ai/pendings nor PENDINGS.md. */
+  /** null: no pendings in .novarc or the legacy places. */
   repo: EntradaRepo[] | null
   resumo: DocResumo | null
   contador: { n: number; fase: string } | null
