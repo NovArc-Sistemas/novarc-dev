@@ -207,11 +207,13 @@ test('after git switch seen by the Bash hook the next tick writes the new branch
 test('three ticks run no process; only session.start and a git switch run git', async ($: any, on: any) => {
   const m = montar(on, {}, SPEC)
   await iniciar($)
-  expect(m.runs).toEqual(['git rev-parse --git-dir'])
+  // C03-S01: the guard's worktree root and default branch are read beside the gitdir, at start and after a switch
+  const GIT = ['git rev-parse --git-dir', 'git rev-parse --show-toplevel', 'git symbolic-ref --short refs/remotes/origin/HEAD']
+  expect([...m.runs].sort()).toEqual([...GIT].sort())
   for (let i = 0; i < 3; i++) await tick(m)
-  expect(m.runs.length).toBe(1)
+  expect(m.runs.length).toBe(3)
   await $.tool.call({ tool: 'Bash', command: `git switch ${NOVA}` })
-  expect(m.runs).toEqual(['git rev-parse --git-dir', 'git rev-parse --git-dir'])
+  expect([...m.runs].sort()).toEqual([...GIT, ...GIT].sort())
 })
 
 test('desativar cancels both loops; session.end closes the entry, deletes the store key, makes no tool call, under 200 ms', async ($: any, on: any) => {
@@ -744,17 +746,17 @@ async function esperar(m: Mundo, cond: () => boolean, ms = 1000) {
 }
 const fim = ($: any) => $.session.end?.({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } })
 
-test('a planning read whose config list fails keeps the previous lines and band; the next complete read writes them', async ($: any, on: any) => {
+test('a planning read whose execucao list fails keeps the previous lines and band; the next complete read writes them', async ($: any, on: any) => {
   const m = montar(on, {}, 'main', true)
   await iniciar($)
   await $.tool.call({ tool: 'Skill', skill: BUILD, args: CONJ })
   await quieto(m)
   expect(escrito(m, 'linhas')).toEqual(['C01 · não iniciado · 0/1 specs'])
-  m.falharTool = e => e.tool === 'ArtifactData' && e.action === 'list' && e.collection === 'config'
+  m.falharTool = e => e.tool === 'ArtifactData' && e.action === 'list' && e.collection === 'execucao'
   let n = m.eventos.length
   await $.command.run?.({ command: 'maestro', args: '' })
   await quieto(m)
-  expect(m.tools.slice(-3).map((t: any) => t.collection)).toEqual(['specs', 'execucao', 'config'])
+  expect(m.tools.slice(-2).map((t: any) => t.collection)).toEqual(['specs', 'execucao'])
   expect(escritasDesde(m, n).filter(k => k === 'linhas' || k === 'faixa')).toEqual([])
   m.falharTool = null
   n = m.eventos.length
@@ -936,9 +938,10 @@ function dispararAdiada(m: Mundo) {
 }
 
 /** A set session of C03 whose ledger dir is the Kidsy run's, with one fork file; `db` makes it a planned run. */
-async function conjuntoC03($: any, on: any, db: Record<string, { data: any; version: number }> | null = null) {
+async function conjuntoC03($: any, on: any, db: Record<string, { data: any; version: number }> | null = null, antes: (m: Mundo) => void = () => {}) {
   const m = montar(on, {}, 'main', !!db)
   m.db = db
+  antes(m)
   gravar(m, FORK, linhaHa('READY', 'c03-s01 branch=feat/c03-s01-x-20261023', 30))
   await iniciar($)
   await $.tool.call({ tool: 'Skill', skill: BUILD, args: `conjunto ${URL} C03` })
@@ -1133,32 +1136,59 @@ test('no espelho write while the sweep has no reading', async ($: any, on: any) 
   expect(escritas(m).length).toBe(2)
 })
 
+const LENTO_8 = { timeoutMs: 20_000 }
 const LIM_18 = () => ({ 'config/orquestracao': { data: { limiares: { calado: 18, lockOrfao: 24, fonte: 'medido', at: 'x' } }, version: 1 } })
 const getsConfig = (m: Mundo) => chamadasDoc(m, 'config/orquestracao').filter(a => a === 'get').length
 
-test('the set session reads config/orquestracao on looks 1 and 6 of 10 and uses its thresholds (A17)', async ($: any, on: any) => {
+test('the set session takes its thresholds from the config list of the refresh, with no get of config/orquestracao (A17, R3-5)', LENTO_8, async ($: any, on: any) => {
   const m = await conjuntoC03($, on, { ...DB_C03(), ...LIM_18() })
   for (let i = 0; i < 10; i++) await olhar(m)
-  expect(getsConfig(m)).toBe(2)
+  expect(getsConfig(m)).toBe(0)
   expect(alertasDe(m).limiares).toEqual({ calado: 18, lockOrfao: 24 })
 })
 
-test('a failed limiares read gives 15 and 20 (A17)', async ($: any, on: any) => {
-  const m = await conjuntoC03($, on, { ...DB_C03(), ...LIM_18() })
-  m.falharTool = e => e.tool === 'ArtifactData' && e.action === 'get' && e.collection === 'config'
+test('a failed config list gives 15 and 20 (A17)', LENTO_8, async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, { ...DB_C03(), ...LIM_18() }, w => {
+    w.falharTool = e => e.tool === 'ArtifactData' && e.action === 'list' && e.collection === 'config'
+  })
   await olhar(m)
   expect(alertasDe(m).limiares).toEqual({ calado: 15, lockOrfao: 20 })
 })
 
-test('a hot reload right after a read does not read again before the 5th look after it (R17)', async ($: any, on: any) => {
+const datas = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'ArtifactData')
+const listasDesde = (m: Mundo, n: number) => datas(m).slice(n).filter((t: any) => t.action === 'list').map((t: any) => t.collection)
+
+test('A43: a set session idle for 10 looks with the poll firing twice makes at most 4 ArtifactData calls, no get of config (R44)', LENTO_8, async ($: any, on: any) => {
   const m = await conjuntoC03($, on, { ...DB_C03(), ...LIM_18() })
-  await olhar(m)
-  expect(getsConfig(m)).toBe(1)
-  await iniciar($)
-  for (let i = 0; i < 4; i++) await olhar(m)
-  expect(getsConfig(m)).toBe(1)
-  await olhar(m)
-  expect(getsConfig(m)).toBe(2)
+  await olhar(m) // the first look writes the espelho once; idle from here
+  const n = datas(m).length
+  for (let i = 0; i < 10; i++) await olhar(m)
+  for (let i = 0; i < 2; i++) {
+    disparar(m, 300_000)
+    await quieto(m)
+  }
+  expect(datas(m).length - n).toBeLessThanOrEqual(4)
+  expect(listasDesde(m, n)).toEqual(['specs', 'execucao', 'specs', 'execucao'])
+  expect(getsConfig(m)).toBe(0)
+})
+
+test('a received HOLD in a set session refreshes execucao and config at once; the limiares follow the new config (R37, R3-5)', LENTO_8, async ($: any, on: any) => {
+  const m = await conjuntoC03($, on, { ...DB_C03(), ...LIM_18() })
+  expect(alertasDe(m).limiares).toEqual({ calado: 18, lockOrfao: 24 })
+  m.db!['config/orquestracao'] = { data: { limiares: { calado: 21, lockOrfao: 30, fonte: 'medido', at: 'y' } }, version: 2 }
+  const n = datas(m).length
+  await $.session.receive?.({ origin: { kind: 'peer-send-message' }, text: 'HOLD C03 colisão' })
+  await quieto(m)
+  expect(listasDesde(m, n)).toEqual(['execucao', 'config'])
+  expect(alertasDe(m).limiares).toEqual({ calado: 21, lockOrfao: 30 })
+})
+
+test('the orchestrator poll still lists specs, execucao and config (R44)', LENTO_8, async ($: any, on: any) => {
+  const m = await orquestrador($, on, {})
+  const n = datas(m).length
+  disparar(m, 300_000)
+  await quieto(m)
+  expect(listasDesde(m, n).filter(c => c !== 'pendencias')).toEqual(['specs', 'execucao', 'config'])
 })
 
 test('direct looks neither read limiares nor write the espelho; the next timer look writes once (R17, R19)', async ($: any, on: any) => {
@@ -1292,6 +1322,8 @@ test('a poll racing "usar o medido" keeps medido: pinned to the list version fir
 
 test('an orphan lock, a quiet set and a ready set over 10 looks and 2 polls send nothing (A12)', async ($: any, on: any) => {
   const m = await orquestrador($, on, {
+    // C03-S01: the orchestrator's own directives (directive-nudge) are paused, so only C02-S01 detection runs here
+    'config/continuo': { data: { modo: 'pausado' }, version: 1 },
     'config/orquestracao': { data: { limiares: { calado: 0, lockOrfao: 20, fonte: 'medido', at: 'x' } }, version: 1 },
     'specs/C01-S01': { data: { etapa: 'branch-publicada', headSha: 'h', validacao: { resultado: 'aprovado', sha: 'h' } }, version: 1 },
     'execucao/C01': { data: { iniciadoEm: 'x', espelho: espelhoCom({}) }, version: 1 },

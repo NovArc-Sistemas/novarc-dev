@@ -59,6 +59,8 @@ NOVARC additions, binding in both modes:
    the set's ledger; a spec session never writes it. A spec session
    never writes another spec's document or `execucao/*`. The NOVARC orchestrator writes ONLY `specs/{id}.validacao`
    and, through its mod, the singleton `config/orquestracao` (slots, thresholds); never `execucao/*`.
+   Every session (orchestrator, set session, spec session) also writes its own `horas/<sessao8>-*` documents, and
+   only its own, by `references/horas.md`.
 2. **Derived, never stored.** `execucao/{C}` stores only `{sessao, iniciadoEm, bloqueios, espelho}`; `espelho`
    mirrors the ledger on disk (outstanding locks, each spec's last checkpoint, the rhythm), so it is not derived from
    other documents. A set's etapa, branches,
@@ -83,6 +85,12 @@ NOVARC additions, binding in both modes:
 | orq -> set | `LIBERA <C>` | hold lifted; set session verifies and clears `bloqueios.hold` |
 | orq -> set | `VALIDACAO <C-Sxx> <aprovado\|reprovado> <falhas>` | courtesy copy of the durable `specs/{id}.validacao` |
 | orq -> set | `MARCO <C-Sxx> <etapa> <proof>` | reconciliation: a milestone the orchestrator observed in git or the ledger that the database lacks; the set session forwards it to the spec session while that session owns the document (until its `DONE` is accepted), otherwise re-verifies the proof and writes it |
+| set -> orq | `CONJUNTO <C> manifestos ...` | the set's manifests for the disjointness check; sent by the `novarc` mod |
+| set -> orq | `CONJUNTO <C> release ...` | a lock release the set reports; sent by the `novarc` mod |
+| orq -> set | `status <C>?` | status request to a quiet set or a lock holder; sent by the orchestrator mod |
+| orq -> set | `GO <slug> ...` | a directive for one spec of the set; the set routes it to that spec session |
+
+The `CONJUNTO <C> manifestos ...` and `CONJUNTO <C> release ...` report lines, the `status <C>?` request and the routing of `GO <slug> ...` to the spec session are sent by the `novarc` mod; the agents read them and do not answer them. The set session agent does not relay a `GO <slug> ...` or `status <slug>?` itself when the mod already routed it to the spec session (the mod logs a `RELAY ... to <slug>` line in the set ledger when it did), so the spec session never gets the same line twice. The agent relays by hand only when the set ledger shows `NOTE <DIRETIVA>-SEM-PROVA` or `NOTE <DIRETIVA>-SEM-ENDERECO`, or `RELAY-NAO-ENTREGUE`, for that line.
 
 Reply to an incoming message by copying its `from` attribute as `to`.
 
@@ -91,7 +99,9 @@ Reply to an incoming message by copying its `from` attribute as `to`.
 Identical to session-build's (invariant 1 of the original), for the specs of this set only, plus: writes to the
 artifact database collections `execucao` and `specs`, own documents only, with the field ownership above. A spec
 session is authorized for its own `specs/{id}` document only. Never a PR,
-never a delivery merge, never a hook bypass. The orchestrator mode builds nothing and writes no code.
+never a delivery merge, never a hook bypass. The orchestrator mode builds nothing and writes no code; its one write to
+the client's system is moving the plan's own tickets to resolved once all their changes are merged, through the
+project's documented status path (`steps/orquestrar.md` §5.2).
 
 ## Red flags - stop
 

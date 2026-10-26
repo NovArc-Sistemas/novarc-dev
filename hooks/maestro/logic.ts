@@ -63,6 +63,8 @@ export type Limiares = { calado: number; lockOrfao: number; fonte: 'padrao' | 'm
 export type Proposta = { calado: number; lockOrfao: number; amostras: number; at: string }
 /** `config/orquestracao`: the orchestrator mod's singleton (run, slots, thresholds). */
 export type OrquestracaoDoc = { runId: string; sessao: string; iniciadaEm: string; slots: Slots; limiares: Limiares; proposta: Proposta | null; at: string }
+/** One `auditoria/{id}` document (C03-S01 dados.md); declared in types/index.d.ts, which must stay self-contained. */
+export type { AuditoriaDoc } from '../../types'
 
 /** Rank of an etapa; -1 for none. */
 export function rank(etapa: string | null | undefined): number {

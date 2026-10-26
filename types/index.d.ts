@@ -73,6 +73,30 @@ export type Execucao = {
   nome?: string | null
   conjuntos?: Record<string, { etapa: string; texto: string; at: number }>
 }
+/** One `auditoria/{id}` document (C03-S01 dados.md), exported again by hooks/maestro/logic.ts: append only, only `estado` is ever updated. */
+export type AuditoriaDoc = {
+  acao: string
+  alvo: string
+  motivo: string
+  regra: string
+  linha: string | null
+  antes: string | null
+  depois: string | null
+  estado: 'enviando' | 'enviado' | 'falhou' | null
+  runId: string | null
+  sessao: string
+  papel: 'orquestrador' | 'conjunto' | 'spec'
+  by: string
+  at: string
+  origem: 'maestro' | 'agente'
+}
+/** C03-S01: the address map (session only, rebuilt from the ledgers); session ids and agentIds never leave this state. */
+export type MapaSessoes = {
+  conjuntos: Record<string, { nome: string; sessao: string | null }>
+  specs: Record<string, { conjunto: string; nome: string; sessao: string | null; slug: string; agentId: string | null }>
+  orquestrador: string | null
+  at: number
+}
 /** One session's entry in the machine-wide registry the Agora tab reads. */
 export type Registro = {
   sessao: string
@@ -231,6 +255,16 @@ declare module 'claude-code' {
       maestroPainelAberto: boolean
       /** C11-S01: the last reads per source, for the trail band and the error card (`falhas`: each source on its own). */
       maestroLeitura: { at: number | null; falhou: boolean; fonte: 'planejamento' | 'registro' | null; falhas: { planejamento: boolean; registro: boolean } } | null
+      /** C03-S01: observed audit records waiting for audit-flush (id assigned at queue time), at most 200. */
+      auditoriaPendente: { id: string; doc: AuditoriaDoc }[]
+      /** C03-S01: set and spec name -> session id, the orchestrator row (session only). */
+      maestroMapa: MapaSessoes
+      /** C03-S01: set session, received GO/status lines waiting for their proof (retried on two looks). */
+      maestroRotas: { texto: string; tentativas: number }[]
+      /** C03-S01: orchestrator, the keys of its own directives already handled (at most once, R19), seeded at start. */
+      diretivasFeitas: string[]
+      /** C03-S01: orchestrator, the send lifecycle per directive key (at most 200, newest kept). */
+      maestroEnvios: Record<string, { acao: string; alvo: string; at: number; estado: 'enviando' | 'enviado' | 'falhou' }>
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

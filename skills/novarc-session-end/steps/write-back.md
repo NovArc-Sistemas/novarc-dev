@@ -62,12 +62,21 @@ sources" in the milestones reference: `CODEX APPROVED` lines, `git ls-remote ori
 `bloqueios` keys found on the set or its specs are cleared only after re-checking their specific cause (procedure,
 "Blocks"); otherwise they are listed in the report.
 
-## 7. Tell the orchestrator
+## 7. Hours
+
+Record this session's hours by `<skills>/novarc-session-build/references/horas.md`: `fase` = the set's `fase` in
+plano.json, `branch: null`, resumo "Fechamento <C> (novarc-session-end)" when this session was opened only for the
+close-out, or the set session's "Build <C> (novarc-session-build)" when the set session runs it (same session, same
+documents: the rerun replaces the day's number). Then list the set's spec sessions (`ledger.md` builder addresses) and
+check each has its `horas/<sessao8>-*` documents; a spec session without them is reported, and is not archived in
+step-09 until it records them.
+
+## 8. Tell the orchestrator
 
 `SendMessage` to `execucao.orquestrador`: `CONJUNTO <C> merge <spec ids in novos> <merge sha7>`. If it is not
 reachable, say so in the report; the orchestrator recomputes from the database on its next read.
 
-## 8. Summary for the step-10 report (pt-BR)
+## 9. Summary for the step-10 report (pt-BR)
 
 ```
 ## Artefato NOVARC
@@ -79,6 +88,7 @@ Não entregues neste merge: <ids e etapa atual>
 Validação no simulador: <aprovado | reprovado com falhas | desatualizada> por spec
 Bloqueios em aberto: <causa: motivo>
 Marcos que falharam: <MARCO-FALHOU lines>
+Horas registradas hoje: execução <h> h, ativas <h> h (esta sessão); sessões de spec sem registro: <ids>
 ```
 
 Delete any line with nothing in it, as the original report rule says.

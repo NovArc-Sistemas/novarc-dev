@@ -48,6 +48,14 @@ export type Mundo = {
   falharEstado: ((e: any) => boolean) | null
   /** C11-S01: answers plugin state reads by key with a prepared value (the drawing tests); undefined passes the read on. */
   servirEstado: Record<string, unknown> | null
+  /** C03-S01: what `git rev-parse --show-toplevel` and `git symbolic-ref ... origin/HEAD` answer; null keeps the old answer (the branch). */
+  git: { toplevel: string; origemHead: string } | null
+  /** C03-S01 Task 7: answers a `$.session.send` (the delivery result) in place of the default `{ isDelivered: true }`. */
+  entrega: ((e: any) => any) | null
+  /** C03-S01 Task 7: makes one `$.process.run` exit 1 (a `ledger.py append` that failed). */
+  falharRun: ((argv: string[]) => boolean) | null
+  /** C03-S01 final fix 4: extra environment variables `$.env.get` answers (TEMP, TMPDIR...). */
+  env: Record<string, string>
 }
 export const norm = (p: unknown) => String(p).replace(/\\/g, '/')
 export let seq = 0
@@ -71,10 +79,27 @@ export function banco(db: Record<string, { data: any; version: number }>, e: any
   const linha = (k: string) => JSON.stringify({ id: k.split('/').pop(), data: db[k]!.data, version: db[k]!.version, updatedAt: 'x' })
   const k = `${e.collection}/${e.doc_id}`
   const ok = (t: string) => ({ result: '', text: t, isError: false })
+  // the platform's batch: one unpinned `set` on an existing document refuses the whole batch, naming that entry
+  if (e.action === 'batch') {
+    const ws: any[] = e.writes ?? []
+    const ruim = ws.find(w => w.op === 'set' && w.if_version === undefined && db[`${w.collection}/${w.doc_id}`])
+    if (ruim) return { result: '', text: `Batch refused: ${ruim.collection}/${ruim.doc_id} already exists and the entry carries no if_version. Nothing was written.`, isError: true }
+    for (const w of ws) {
+      const r = banco(db, { ...w, action: w.op })
+      if (r.isError) return r
+    }
+    return ok(`Batch committed: ${ws.length} writes.`)
+  }
   if (e.action === 'get') return ok(`=== BEGIN ARTIFACT DB x ===\n${db[k] ? linha(k) : ''}\n=== END ARTIFACT DB x ===`)
   if (e.action === 'list') return ok(`=== BEGIN ARTIFACT DB x ===\n${Object.keys(db).filter(x => x.startsWith(`${e.collection}/`)).map(linha).join('\n')}\n=== END ARTIFACT DB x ===`)
+  // C03-S01: `query` with equality `where` clauses only ([field, 'eq' | '==', value])
+  if (e.action === 'query') {
+    const ws: any[][] = e.query?.where ?? []
+    const casa = (k: string) => ws.every(([f, op, v]) => (op === 'eq' || op === '==') && db[k]!.data?.[f] === v)
+    return ok(`=== BEGIN ARTIFACT DB x ===\n${Object.keys(db).filter(x => x.startsWith(`${e.collection}/`) && casa(x)).map(linha).join('\n')}\n=== END ARTIFACT DB x ===`)
+  }
   if (e.action === 'set') {
-    if (db[k] && e.if_version === undefined) return { result: '', text: 'exists', isError: true }
+    if (db[k] && e.if_version === undefined) return { result: '', text: `Document ${k} already exists.`, isError: true }
     db[k] = { data: e.data, version: (db[k]?.version ?? 0) + 1 }
     return ok(`Database update committed. The document is now at version ${db[k]!.version}.`)
   }
@@ -92,7 +117,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   const m: Mundo = {
     branch, head: null, gitDir: '.git', id: 'sess-1', home: 'C:/Users/t', arquivos: {}, store: {},
     runs: [], lidos: [], listados: [], logs: [], tools: [], timers: [], eventos: [], segurar: null, falhar: null, abertos: [], semBanco: false,
-    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, avanco: 0, segurarEstado: null, falharEstado: null, servirEstado: null,
+    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, avanco: 0, segurarEstado: null, falharEstado: null, servirEstado: null, git: null, entrega: null, falharRun: null, env: {},
   }
   gravar(m, 'C:/repo/ai/ledger/fork-c02-s01.md', 'READY c02-s01  # 2026-10-15T12:00:00Z\nPLAN p.md TASKS 3  # 2026-10-15T12:05:00Z\n', 1)
   on('*', async ($: any, e: any, next: any) => {
@@ -104,7 +129,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   on('command.register', async () => ({ value: undefined }))
   on('session.id', async () => ({ value: m.id }))
   on('session.cwd', async () => ({ value: 'C:/repo' }))
-  on('env.get', async ($: any, e: any) => ({ value: e.name === 'USERPROFILE' && m.home ? m.home : undefined }))
+  on('env.get', async ($: any, e: any) => ({ value: e.name === 'USERPROFILE' && m.home ? m.home : m.env[e.name] }))
   on('fs.list', async ($: any, e: any) => {
     const dir = norm(e.path)
     m.listados.push(dir)
@@ -148,12 +173,15 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   on('store.keys', async () => ({ value: Object.keys(m.store) }))
   on('process.run', async ($: any, e: any) => {
     m.runs.push(e.argv.join(' '))
+    if (m.falharRun?.(e.argv)) return { value: { exitCode: 1, stdout: '', stderr: 'falhou' } }
     if (e.argv.includes('sweep')) {
       if (m.sweepAtraso) await dormir(m.sweepAtraso)
       if (m.sweepFalha) throw new Error('no python')
       const s = typeof m.sweep === 'function' ? m.sweep() : m.sweep
       return { value: { ...(s ?? { exitCode: 0, stdout: 'SWEEP SUMMARY forks=1 grants=0 outstanding=0 ungranted=0\n' }), stderr: '' } }
     }
+    if (m.git && e.argv.includes('--show-toplevel')) return { value: { exitCode: 0, stdout: `${m.git.toplevel}\n`, stderr: '' } }
+    if (m.git && e.argv.includes('symbolic-ref')) return { value: { exitCode: 0, stdout: `${m.git.origemHead}\n`, stderr: '' } }
     return { value: { exitCode: 0, stdout: e.argv.includes('--git-dir') ? `${m.gitDir}\n` : `${m.branch}\n`, stderr: '' } }
   })
   on('clock.now', async () => ({ value: Date.now() + m.avanco }))
@@ -205,7 +233,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     return e.tool === 'Artifact' ? { result: '', text: 'File saved: "C:/tmp/plano.json" (1 bytes)', isError: false } : { result: '', text: 'ok', isError: false }
   })
   on('agent.spawn', async () => ({ model: 'm', agentId: 'ag-1' }))
-  on('session.send', async () => ({ isDelivered: true }))
+  on('session.send', async ($: any, e: any) => m.entrega?.(e) ?? { isDelivered: true })
   on('prompt.submit', async ($: any, e: any) => ({ text: e.text }))
   on('session.receive', async ($: any, e: any) => ({ text: e.text }))
   return m
@@ -229,6 +257,18 @@ export function disparar(m: Mundo, ms = 60_000) {
   t.disparado = true
   t.fire()
 }
+/**
+ * Fires the one `ms` timer armed at or after index `desde` of `m.timers` (taken right before the action that should arm
+ * it), so a test fires the audit flush's own 5 s timer and never a sweep's; throws unless exactly one is pending.
+ */
+export function dispararDesde(m: Mundo, desde: number, ms = 5000) {
+  const ts = m.timers.slice(desde).filter(t => t.ms === ms && !t.disparado && !t.abortado)
+  if (ts.length !== 1) throw new Error(`${ts.length} pending ${ms} ms timers since ${desde}`)
+  ts[0]!.disparado = true
+  ts[0]!.fire()
+}
+/** Pending `ms` timers armed at or after index `desde`. */
+export const pendentesDesde = (m: Mundo, desde: number, ms = 5000) => m.timers.slice(desde).filter(t => t.ms === ms && !t.disparado && !t.abortado).length
 /** One look: fires it, waits for it to settle, returns the time from the fire to its last $ call. */
 export async function tick(m: Mundo): Promise<number> {
   const n = m.eventos.length

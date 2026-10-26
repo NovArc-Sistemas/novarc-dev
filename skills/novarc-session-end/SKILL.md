@@ -113,7 +113,8 @@ step-08. Its forks never call `ArtifactData`.
 
 Session-end's own (the invocation is the ask, for the work on this branch), plus writes to the artifact database
 collections `execucao` and `specs`, own set and own specs only, with the field ownership and pinned-write procedure of
-`<skills>/novarc-session-build/references/milestones.md`. Never `validacao` (the orchestrator's field), never a
+`<skills>/novarc-session-build/references/milestones.md`, and to `horas`, this session's own documents only, by
+`<skills>/novarc-session-build/references/horas.md`. Never `validacao` (the orchestrator's field), never a
 `set` over an existing document, never a stored aggregate on `execucao/{C}`.
 
 ## Red flags - stop

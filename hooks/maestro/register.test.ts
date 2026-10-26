@@ -244,7 +244,7 @@ test('git push with a tool.call mock resolving after 2 s returns under 50 ms and
   o.atraso = 0 // the harness waits for the background work before it ends the test: let the rest run fast
 })
 
-test('atualizar twice over the same data makes 3 list calls each and 0 writes', async ($: any, on: any) => {
+test('atualizar twice over the same data in a set session makes 2 list calls each (R44) and 0 writes', async ($: any, on: any) => {
   const escritas: any[] = []
   const todas: any[] = []
   on('ui.open', async () => ({ value: { isPlaced: true } }))
@@ -257,7 +257,7 @@ test('atualizar twice over the same data makes 3 list calls each and 0 writes', 
     await $.command.run?.({ command: 'maestro', args: '' })
     await dormir(40)
     const l = todas.filter(c => c.action === 'list').map(c => c.collection)
-    expect(l).toEqual(['specs', 'execucao', 'config'])
+    expect(l).toEqual(['specs', 'execucao'])
     todas.length = 0
   }
   expect(escritas.length).toBe(0)
@@ -478,4 +478,339 @@ test('a Skill call under input turns the orchestrator view on', async ($: any, o
   await iniciarMundo($)
   await $.tool.call({ tool: 'Skill', input: { skill: BUILD, args: `orquestrar ${URL_MUNDO}` } })
   expect(escrito(m, 'exec')?.papel).toBe('orquestrador')
+})
+
+// ---- C03-S01 Task 4: audit-flush and the session.send audit, on the shared in-memory world
+
+import { dispararDesde, gravar, pendentesDesde, quieto, type Mundo } from './mundo-teste'
+
+const LENTO_A = { timeoutMs: 20_000 }
+const SPEC_A = 'feat/c01-s01-olhos-20261026'
+const FORCE = 'git push --force origin x'
+const negou = (r: any) => (r?.deny ?? (r?.isError ? r.text : undefined)) !== undefined
+
+async function mundoPlanejado($: any, on: any, branch = SPEC_A): Promise<Mundo> {
+  const m = montarMundo(on, {}, branch, true)
+  gravar(m, 'C:/repo/ai/specs/EXM/artefato.txt', `${URL_MUNDO}\n`)
+  m.db = {}
+  await iniciarMundo($)
+  await quieto(m)
+  return m
+}
+const docsAuditoria = (m: Mundo) => Object.keys(m.db ?? {}).filter(k => k.startsWith('auditoria/'))
+const lotes = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'ArtifactData' && t.action === 'batch')
+const fila = (m: Mundo): { id: string }[] => escrito(m, 'auditoriaPendente') ?? []
+/** Fires the audit flush's own 5 s timer, armed at or after index `n` of the world's timers. */
+const flush5s = async (m: Mundo, n: number) => {
+  dispararDesde(m, n)
+  await quieto(m)
+}
+
+test('A42: a failed batch keeps both entries; the next tick writes them under the ids given at queue time; one entry is written by the 5 s timer', LENTO_A, async ($: any, on: any) => {
+  const m = await mundoPlanejado($, on)
+  let falhas = 1
+  m.falharTool = (e: any) => e.action === 'batch' && falhas-- > 0
+  const n = m.timers.length
+  expect(negou(await $.tool.call({ tool: 'Bash', command: FORCE }))).toBe(true)
+  expect(negou(await $.tool.call({ tool: 'Bash', command: FORCE }))).toBe(true)
+  await quieto(m)
+  const ids = fila(m).map(x => x.id)
+  expect(ids.length).toBe(2)
+  expect(pendentesDesde(m, n)).toBe(1)
+  await flush5s(m, n)
+  expect(docsAuditoria(m).length).toBe(0)
+  expect(fila(m).map(x => x.id)).toEqual(ids)
+  await tick(m)
+  expect(docsAuditoria(m).sort()).toEqual(ids.map(i => `auditoria/${i}`).sort())
+  expect(fila(m)).toEqual([])
+  const n2 = m.timers.length
+  await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  await flush5s(m, n2)
+  expect(docsAuditoria(m).length).toBe(3)
+})
+
+test('A45, A48: 12 queued entries take exactly one batch call, and every ArtifactData write targets auditoria', LENTO_A, async ($: any, on: any) => {
+  const m = await mundoPlanejado($, on)
+  const n = m.timers.length
+  for (let i = 0; i < 12; i++) await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  await flush5s(m, n)
+  expect(lotes(m).length).toBe(1)
+  expect(docsAuditoria(m).length).toBe(12)
+  const escritas = m.tools.filter((t: any) => t.tool === 'ArtifactData' && ['set', 'update', 'delete', 'batch', 'str_replace'].includes(t.action))
+  expect(escritas.length > 0).toBe(true)
+  for (const w of escritas) {
+    const alvos = w.action === 'batch' ? w.writes.map((x: any) => x.collection) : [w.collection]
+    expect(alvos.every((c: string) => c === 'auditoria')).toBe(true)
+    if (w.action === 'batch') expect(w.writes.every((x: any) => x.op === 'set' && x.if_version === undefined)).toBe(true)
+  }
+})
+
+test('Review Focus 4: a batch refused because one id exists drops that id and writes the rest in the same tick', LENTO_A, async ($: any, on: any) => {
+  const m = await mundoPlanejado($, on)
+  const n = m.timers.length
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  const ids = fila(m).map(x => x.id)
+  m.db![`auditoria/${ids[1]}`] = { data: { velho: true }, version: 1 }
+  await flush5s(m, n)
+  expect(lotes(m).length).toBe(2)
+  expect(docsAuditoria(m).sort()).toEqual(ids.map(i => `auditoria/${i}`).sort())
+  expect(m.db![`auditoria/${ids[1]}`]!.data).toEqual({ velho: true })
+  expect(fila(m)).toEqual([])
+})
+
+test('A36: a delivered model HOLD queues one agente entry; a plugin send queues none', LENTO_A, async ($: any, on: any) => {
+  const m = await mundoPlanejado($, on, 'main')
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: `orquestrar ${URL_MUNDO}` })
+  await quieto(m)
+  const n = m.timers.length
+  await $.session.send?.({ to: 'novarc-X-C02', text: 'GO c02-s01-x phase 4', origin: { kind: 'plugin', name: 'novarc' } })
+  await $.session.send?.({ to: 'novarc-X-C02', text: 'TASK 2/3', origin: { kind: 'model' } })
+  await quieto(m)
+  expect(pendentesDesde(m, n)).toBe(0)
+  await $.session.send?.({ to: 'local_ab12cd34-0000-4000-8000-000000000001', text: 'HOLD C02 colisão com C03', origin: { kind: 'model' } })
+  await $.session.send?.({ to: 'novarc-X-C03', text: 'status local_ab12cd34-0000-4000-8000-000000000001?', origin: { kind: 'model' } })
+  await quieto(m)
+  await flush5s(m, n)
+  const docs = docsAuditoria(m).map(k => m.db![k]!.data)
+  expect(docs.length).toBe(2)
+  const hold = docs.find(d => d.acao === 'HOLD')!
+  expect([hold.acao, hold.alvo, hold.linha, hold.origem, hold.regra]).toEqual(['HOLD', 'C02', 'HOLD C02 colisão com C03', 'agente', 'orquestrar.md'])
+  const st = docs.find(d => d.acao === 'STATUS-PEDIDO')!
+  expect([st.alvo, st.linha]).toEqual(['', 'status local_\u2026?'])
+  for (const d of docs) expect(/local_[0-9a-f]/.test(JSON.stringify(d))).toBe(false)
+})
+
+// ---- Task 4 fix round 1: refusal parsing, single-set fallback, retry bound
+
+/** A world whose first batch refusal is answered with `texto` (no per-entry naming), the rest by the world itself. */
+async function mundoRecusa($: any, on: any, texto: (writes: any[]) => string | null) {
+  let m: Mundo | null = null
+  on('tool.call', { tool: 'ArtifactData' }, async (_$: any, e: any, next: any) => {
+    if (e.action === 'batch' && m) {
+      const t = texto(e.writes)
+      if (t !== null) {
+        m.tools.push(e)
+        return { result: '', text: t, isError: true }
+      }
+    }
+    return next(e)
+  })
+  m = await mundoPlanejado($, on)
+  return m
+}
+const sets = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'ArtifactData' && t.action === 'set')
+
+test('fix 2: an id named only as the prefix of another is not dropped; an exists refusal naming no queued id falls back to one set per entry', LENTO_A, async ($: any, on: any) => {
+  let vez = 0
+  const m = await mundoRecusa($, on, ws => (vez++ === 0 ? `Batch refused: auditoria/${ws[0].doc_id}0 already exists; nothing was written.` : null))
+  const n = m.timers.length
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  const ids = fila(m).map(x => x.id)
+  m.db![`auditoria/${ids[2]}`] = { data: { velho: true }, version: 1 }
+  await flush5s(m, n)
+  expect(lotes(m).length).toBe(1)
+  expect(sets(m).length).toBe(3)
+  expect(docsAuditoria(m).sort()).toEqual(ids.map(i => `auditoria/${i}`).sort())
+  expect(m.db![`auditoria/${ids[2]}`]!.data).toEqual({ velho: true })
+  expect(fila(m)).toEqual([])
+})
+
+test('fix 2: a refusal naming an id without an exists word keeps the queue; the single-set fallback keeps entries on another failure', LENTO_A, async ($: any, on: any) => {
+  let vez = 0
+  const m = await mundoRecusa($, on, ws => (vez++ === 0 ? `Batch refused: auditoria/${ws[0].doc_id} version conflict.` : null))
+  const n = m.timers.length
+  for (let i = 0; i < 2; i++) await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  const ids = fila(m).map(x => x.id)
+  await flush5s(m, n)
+  expect(lotes(m).length).toBe(1)
+  expect(sets(m).length).toBe(0)
+  expect(fila(m).map(x => x.id)).toEqual(ids)
+})
+
+test('fix 6: more than 3 existing ids in one tick: 4 batch calls, the rest waits for the next look', LENTO_A, async ($: any, on: any) => {
+  const m = await mundoPlanejado($, on)
+  const n = m.timers.length
+  for (let i = 0; i < 6; i++) await $.tool.call({ tool: 'Bash', command: FORCE })
+  await quieto(m)
+  const ids = fila(m).map(x => x.id)
+  for (const i of ids.slice(0, 5)) m.db![`auditoria/${i}`] = { data: { velho: true }, version: 1 }
+  await flush5s(m, n)
+  expect(lotes(m).length).toBe(4)
+  expect(fila(m).map(x => x.id)).toEqual(ids.slice(4))
+  await tick(m)
+  expect(lotes(m).length).toBe(6)
+  expect(m.db![`auditoria/${ids[5]}`]!.data.acao).toBe('BLOQUEIO')
+  expect(fila(m)).toEqual([])
+})
+
+// ---- C03-S01 Task 7: orchestrator seed, undelivered sends, enviando entries, A46, hot reload; EXISTE wording
+
+const ORQ_DIR7 = 'C:/repo/.novarc/ledger/novarc-orq/20261023-0930'
+const COD7 = 'NOVARC-PLUGIN-MAESTRO'
+const C02_NOME = `novarc-${COD7}-C02`
+const T7 = (hhmm: string) => Date.parse(`2026-10-23T${hhmm}:00Z`)
+const enviados7 = (m: Mundo) => m.eventos.map(x => x.e).filter(e => e && typeof e === 'object' && 'to' in e && e.to !== 'transcript' && typeof e.text === 'string')
+const doc7 = (estado: string, acao = 'STATUS-PEDIDO', alvo = 'C02') => ({
+  data: { acao, alvo, motivo: 'x', regra: 'dispatch-prompts.md:442', linha: `status ${alvo}?`, antes: null, depois: null, estado, runId: '20261023-0930', sessao: `novarc-orq-${COD7}`, papel: 'orquestrador', by: '', at: '2026-10-23T10:31:00.000Z', origem: 'maestro' },
+  version: 1,
+})
+
+/** An orchestrator served from state on ORQ_DIR7, quiet sets at `conjuntos`, the clock held at `agora`; db with the artifact. */
+async function orqMundo($: any, on: any, o: { conjuntos: Record<string, number>; agora: number; db?: Record<string, any> | null; estado?: Record<string, unknown> }) {
+  const comPlano = o.db !== null
+  const m = montarMundo(on, {}, 'main', comPlano)
+  if (comPlano) m.db = { 'config/orquestracao': { data: { runId: '20261023-0930' }, version: 1 }, ...o.db }
+  gravar(m, `${ORQ_DIR7}/ledger.md`, '# novarc-orq\n')
+  const conjuntos = Object.fromEntries(Object.entries(o.conjuntos).map(([c, at]) => [c, { etapa: 'implementacao', texto: '', at }]))
+  m.servirEstado = {
+    exec: { papel: 'orquestrador', ledgerDir: ORQ_DIR7, forks: {}, codigo: COD7, conjuntos },
+    ...(comPlano ? { ctx: { artefato: URL_MUNDO, plano: { conjuntos: [], specs: [], projeto: { codigo: COD7 } }, conjunto: null, spec: null, papel: 'orquestrador' } } : {}),
+    ...o.estado,
+  }
+  m.avanco = o.agora - Date.now()
+  await iniciarMundo($)
+  await quieto(m)
+  return m
+}
+const consultas = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'ArtifactData' && t.action === 'query')
+
+test('A24: after a restart one auditoria query by runId seeds the sent key and nothing is resent', LENTO_A, async ($: any, on: any) => {
+  const m = await orqMundo($, on, { conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: { 'auditoria/status-c02-20261023t101500z-1': doc7('enviado') } })
+  await tick(m)
+  await tick(m)
+  expect(enviados7(m)).toEqual([])
+  const q = consultas(m)
+  expect(q.length).toBe(1)
+  expect([q[0].collection, q[0].query.limit, JSON.stringify(q[0].query.where)]).toEqual(['auditoria', 1000, JSON.stringify([['runId', 'eq', '20261023-0930'], ['papel', 'eq', 'orquestrador']])])
+  expect(escrito(m, 'diretivasFeitas')).toContain('status-c02-20261023t101500z-1')
+})
+
+test('A25: an undelivered send sets falhou, toasts the reason and is not resent on the next tick', LENTO_A, async ($: any, on: any) => {
+  const m = await orqMundo($, on, { conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: {} })
+  m.entrega = (e: any) => (e.text === 'status C02?' ? { isDelivered: false, reason: 'session not found' } : null)
+  await tick(m)
+  expect(m.db!['auditoria/status-c02-20261023t101500z-1']!.data.estado).toBe('falhou')
+  expect(m.toasts).toContain(`Maestro não conseguiu enviar status a ${C02_NOME}: session not found`)
+  expect(escrito(m, 'maestroEnvios')['status-c02-20261023t101500z-1'].estado).toBe('falhou')
+  const n = m.eventos.filter(x => x.e?.text === 'status C02?' && 'to' in x.e).length
+  await tick(m)
+  expect(m.eventos.filter(x => x.e?.text === 'status C02?' && 'to' in x.e).length).toBe(n)
+})
+
+test('A26: an entry left enviando by a crash is never resent', LENTO_A, async ($: any, on: any) => {
+  const m = await orqMundo($, on, { conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: { 'auditoria/status-c02-20261023t101500z-1': doc7('enviando') } })
+  await tick(m)
+  await tick(m)
+  expect(enviados7(m)).toEqual([])
+  expect(escrito(m, 'maestroEnvios')['status-c02-20261023t101500z-1'].estado).toBe('enviando')
+})
+
+test('A46: directive-nudge over 5 handled alerts makes 0 ArtifactData calls', LENTO_A, async ($: any, on: any) => {
+  const sets = ['C02', 'C03', 'C04', 'C05', 'C06']
+  const db = Object.fromEntries(sets.map(c => [`auditoria/status-${c.toLowerCase()}-20261023t101500z-1`, doc7('enviado', 'STATUS-PEDIDO', c)]))
+  const m = await orqMundo($, on, { conjuntos: Object.fromEntries(sets.map(c => [c, T7('10:15')])), agora: T7('10:31'), db })
+  await tick(m)
+  const antes = m.tools.filter((t: any) => t.tool === 'ArtifactData').length
+  await tick(m)
+  expect(m.tools.filter((t: any) => t.tool === 'ArtifactData').length - antes).toBe(0)
+  expect(enviados7(m)).toEqual([])
+})
+
+test('Review Focus 5: after a hot reload the stored diretivasFeitas and maestroEnvios keep a sent key from going again', LENTO_A, async ($: any, on: any) => {
+  const k = 'status-c02-20261023t101500z-1'
+  const m = await orqMundo($, on, {
+    conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: null,
+    estado: { diretivasFeitas: [k], maestroEnvios: { [k]: { acao: 'STATUS-PEDIDO', alvo: 'C02', at: T7('10:31'), estado: 'enviado' } } },
+  })
+  await tick(m)
+  await tick(m)
+  expect(enviados7(m)).toEqual([])
+  expect(m.runs.filter(r => r.includes('--type RELAY'))).toEqual([])
+})
+
+// Each negation alone: a single-set refusal with it is another failure, never "already written".
+for (const recusa of ['Database error: auditoria/x does not exist.', "Database error: auditoria/x doesn't exist.", 'Erro: o documento auditoria/x não existe.']) {
+  test(`Task 4 carried fix: a single-set refusal "${recusa}" keeps the entry queued`, LENTO_A, async ($: any, on: any) => {
+    let mm: Mundo | null = null
+    on('tool.call', { tool: 'ArtifactData' }, async (_$: any, e: any, next: any) => {
+      if (mm && e.action === 'batch') {
+        mm.tools.push(e)
+        return { result: '', text: 'Batch refused: a document already exists; nothing was written.', isError: true }
+      }
+      if (mm && e.action === 'set' && e.collection === 'auditoria') {
+        mm.tools.push(e)
+        return { result: '', text: recusa, isError: true }
+      }
+      return next(e)
+    })
+    const m = (mm = await mundoPlanejado($, on))
+    const n = m.timers.length
+    await $.tool.call({ tool: 'Bash', command: FORCE })
+    await quieto(m)
+    const ids = fila(m).map(x => x.id)
+    await flush5s(m, n)
+    expect(fila(m).map(x => x.id)).toEqual(ids)
+  })
+}
+
+// ---- C03-S01 final review fixes: enviar refusals, the hung tool call
+
+for (const recusa of ['a conflicting entry exists', 'permission denied']) {
+  test(`final fix 6: a send whose set is refused with "${recusa}" releases the key and toasts the failure`, LENTO_A, async ($: any, on: any) => {
+    let ativo = false
+    on('tool.call', { tool: 'ArtifactData' }, async (_$: any, e: any, next: any) =>
+      ativo && e.action === 'set' && e.collection === 'auditoria' ? { result: '', text: recusa, isError: true } : next(e))
+    const m = await orqMundo($, on, { conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: {} })
+    ativo = true
+    await tick(m)
+    expect(enviados7(m)).toEqual([])
+    expect(m.toasts).toContain(`Maestro não conseguiu enviar status a ${C02_NOME}: ${recusa}`)
+    expect(escrito(m, 'diretivasFeitas') ?? []).not.toContain('status-c02-20261023t101500z-1')
+  })
+}
+
+test('final fix 6: an already-exists refusal keeps the key reserved and toasts nothing', LENTO_A, async ($: any, on: any) => {
+  let ativo = false
+  on('tool.call', { tool: 'ArtifactData' }, async (_$: any, e: any, next: any) =>
+    ativo && e.action === 'set' && e.collection === 'auditoria' ? { result: '', text: 'Document auditoria/x already exists.', isError: true } : next(e))
+  const m = await orqMundo($, on, { conjuntos: { C02: T7('10:15') }, agora: T7('10:31'), db: {} })
+  ativo = true
+  await tick(m)
+  expect(enviados7(m)).toEqual([])
+  expect(m.toasts.filter(t => t.startsWith('Maestro não conseguiu'))).toEqual([])
+  expect(escrito(m, 'diretivasFeitas')).toContain('status-c02-20261023t101500z-1')
+})
+
+test('final fix 7: carregar does not wait on the refresh; a hung list times out at 20 s and the next directive refreshes again', LENTO_A, async ($: any, on: any) => {
+  const m = montarMundo(on, {}, 'main', true)
+  m.db = {}
+  await iniciarMundo($)
+  await quieto(m)
+  let soltar: () => void = () => {}
+  const preso = new Promise<void>(r => (soltar = r))
+  // `config` is read only by the db refresh in a set session (R44): holding it holds only refrescarBanco
+  m.segurarTool = (e: any) => (e.tool === 'ArtifactData' && e.action === 'list' && e.collection === 'config' ? preso : null)
+  const r = await Promise.race([
+    $.tool.call({ tool: 'Skill', skill: BUILD, args: `conjunto ${URL_MUNDO} C01` }).then(() => 'voltou'),
+    dormir(5000).then(() => 'esperou'),
+  ])
+  expect(r).toBe('voltou')
+  await quieto(m)
+  const execs = () => m.tools.filter((t: any) => t.tool === 'ArtifactData' && t.action === 'list' && t.collection === 'config').length
+  const n = execs()
+  expect(n).toBe(1)
+  for (const t of m.timers.filter(t => t.ms === 20_000 && !t.disparado && !t.abortado)) {
+    t.disparado = true
+    t.fire()
+  }
+  await quieto(m)
+  await $.session.receive?.({ origin: { kind: 'peer-send-message' }, text: 'HOLD C01 colisão' })
+  await quieto(m)
+  expect(execs()).toBe(n + 1)
+  soltar()
 })

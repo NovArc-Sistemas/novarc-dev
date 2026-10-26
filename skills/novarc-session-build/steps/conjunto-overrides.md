@@ -91,6 +91,11 @@ diff-before-accept duty still applies.
 The `novarc` mod may already have written a milestone for a call it saw in this session; the procedure reads first
 and skips a reached etapa. Fork events come only from the ledger lines; never assume the mod saw a fork's push.
 
+**Hours.** With each `CONJUNTO <C> <etapa>` it sends, the set session records its own hours by
+`../references/horas.md` (`fase` = the set's `fase`, `branch: null`). A linked spec session records its own at each
+`branch-publicada` and right before its `DONE` (`branch` = its spec branch). Forks record nothing: their time is
+inside the set session's execution hours.
+
 ## step-05: dispatch payload
 
 Linked spec session (core dispatch-prompts.md § Session implementer): add to the launch payload
@@ -100,11 +105,14 @@ artifact url:         <url>
 spec id:              <C0x-Syy>  (your spec folder: <arquivos.repo>)
 session name:         novarc-<codigo>-<C>-<S>   (the `sessao` you write)
 milestones procedure: <ABSOLUTE path of novarc-session-build/references/milestones.md>
+hours procedure:      <ABSOLUTE path of novarc-session-build/references/horas.md>
+phase:                <the set's fase in plano.json>
 ```
 
 and these directives: "You write your own `specs/<S>` document only (every field except `validacao`), pinned, by the
-milestones procedure; never `execucao/*`, never another spec. Report every milestone to the set session. Do not
-message the NOVARC orchestrator." The claim (`reserva`) stays the set session's, made at load; the spec session's
+milestones procedure; never `execucao/*`, never another spec. Record your own hours by the hours procedure at each
+`branch-publicada` and right before your `DONE`. Report every milestone to the set session. Do not message the NOVARC
+orchestrator." The claim (`reserva`) stays the set session's, made at load; the spec session's
 first write replaces `sessao` with its own name.
 
 Fork fallback (core dispatch-prompts.md § Fork implementer): add
@@ -195,6 +203,8 @@ line>, at}` on `execucao/{C}` when it stops the set, or on `specs/{S}` when loca
 
 Unchanged, plus `handoff.md` carries: the artifact url, the set id, and the map spec id -> branch -> headSha ->
 builder (spec session id or fork agentId). The set session runs `/novarc-session-end` for every branch of the set on
-`FECHA` (above); the spec sessions do not. Archive the spec sessions only after that close-out finished. The
-close-out report (pt-BR) lists the milestones written, any `MARCO-FALHOU` lines, held specs with their questions, and
-validation results. `pr-aberto` and `merge` are not written here: they belong to `/novarc-session-end`.
+`FECHA` (above); the spec sessions do not. Archive the spec sessions only after that close-out finished, and only once
+each spec session's hours documents exist (`horas/<its sessao8>-*`; if one is missing, ask that session to record
+before archiving it). The close-out report (pt-BR) lists the milestones written, any `MARCO-FALHOU` lines, held specs
+with their questions, validation results, and the hours recorded (this session's, by `../references/horas.md`, plus
+each spec session's). `pr-aberto` and `merge` are not written here: they belong to `/novarc-session-end`.

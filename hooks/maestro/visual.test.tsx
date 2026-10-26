@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { escrito, iniciar, montar, partesDaFaixa, todos } from './mundo-teste'
-import { haQuanto } from './register'
+import { escrito, iniciar, montar, partesDaFaixa, quieto, todos } from './mundo-teste'
+import { dadosFaixa, haQuanto, semConfirmacao } from './register'
 
 // C11-S01: the drawing of the pane and the band over both surfaces. Data paths are proved by their own tests
 // (register.test dadosFaixa, olhos, alertas, pendencias); here a state read beneath the plugin can hand the drawing a
@@ -313,6 +313,19 @@ test('failed first poll with no snapshot: the error card; tentar re-reads the pl
   await ui.press({ key: 't-exec' })
   expect(await ui.find({ type: 'Text', text: 'Não consegui ler o banco do planejamento' })).toBeUndefined()
   expect((await svgs(ui)).some((s: any) => String(s.source).includes('⚠️ registro não lido'))).toBe(true)
+  await ui.unmount()
+})
+
+test('a set session whose refresh read worked but whose first specs read failed still draws the error card (Task 8 fix)', async ($: any, on: any) => {
+  const m = montar(on, {}, 'main', true)
+  m.db = { 'execucao/C01': { data: { iniciadoEm: 'x' }, version: 1 } }
+  m.falharTool = e => e.tool === 'ArtifactData' && e.action === 'list' && e.collection === 'specs'
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: 'novarc:novarc-session-build', args: 'conjunto https://claude.ai/artifact/TESTE C01' })
+  await quieto(m)
+  const ui: any = await painel($, 'desktop')
+  await ui.press({ key: 't-exec' })
+  expect(await ui.find({ type: 'Text', text: 'Não consegui ler o banco do planejamento' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -635,4 +648,150 @@ test('no Svg alt or source carries a credential, checkpoint free text, question 
     }
     await ui.unmount()
   }
+})
+
+// ---- C03-S01 Task 10: directive state on the pane and the band (R52, R53; A33, A41, A54, A55)
+
+const sel = (x: number | string) => new Date(x).toISOString().replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '').toLowerCase()
+const MAPA_T = (specs: Record<string, any> = {}) => ({ conjuntos: {}, specs, orquestrador: null, at: 0 })
+const SPEC_T = (id: string) => ({ conjunto: id.slice(0, 3), nome: `novarc-NOVARC-PLUGIN-MAESTRO-${id}`, sessao: `s-${id}`, slug: `${id.toLowerCase()}-x`, agentId: null })
+
+/** An orchestrator with an orphan lock (A18 shape) and a quiet set (A17 shape), the lock reminded at 13:40 and the status asked at 10:31. */
+function cobrado(com: { lock?: boolean; status?: boolean } = { lock: true, status: true }): Record<string, unknown> {
+  const agora = Date.now()
+  const desde = new Date(agora - 32 * 60_000).toISOString()
+  const calado = agora - 20 * 60_000
+  const lock = LOCK({ spec: 'C03-S01', estado: 'GRANTED-NOT-RELEASED', desde, minutos: 32 })
+  const lista = [
+    { chave: `lock:C03-S01:migration:20261023_auditoria:${desde}`, texto: 'lock órfão em C03-S01', toast: '', nivel: 'erro', at: 0 },
+    { chave: `calado:c02:${calado}`, texto: 'C02 calada', toast: '', nivel: 'erro', at: 0 },
+  ]
+  const envios: Record<string, unknown> = {}
+  if (com.lock) envios[`lock-c03-s01-migration-20261023_auditoria-${sel(desde)}`] = { acao: 'LOCK-COBRADO', alvo: 'C03-S01', at: new Date(2026, 9, 25, 13, 40).getTime(), estado: 'enviado' }
+  if (com.status) envios[`status-c02-${sel(calado)}-1`] = { acao: 'STATUS-PEDIDO', alvo: 'C02', at: new Date(2026, 9, 25, 10, 31).getTime(), estado: 'enviado' }
+  return {
+    ctx: ctx('orquestrador'), exec: ORQ, maestroLeitura: LEIT(), maestroOutras: [],
+    maestroAlertas: ALS(0, { lista, vista: VISTA({ locks: [lock], unidades: [{ unidade: 'C02', minutos: 20, calada: true }] }) }),
+    maestroMapa: MAPA_T({ 'C03-S01': SPEC_T('C03-S01') }),
+    maestroEnvios: envios,
+  }
+}
+
+test('Locks: the orphan card and the quiet card carry the time the orchestrator acted (A54)', async ($: any, on: any) => {
+  const m = montar(on, {})
+  m.servirEstado = { ...cobrado(), maestroAba: 'locks' }
+  await iniciar($)
+  const ui = await painel($, 'terminal')
+  expect((await ui.find({ type: 'Text', text: '32 min sem RELEASE · o orquestrador cobrou às 13:40' }))?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: 'o orquestrador pediu status às 10:31' }))?.props.color).toBe('subtle')
+  await ui.unmount()
+  m.servirEstado = { ...cobrado({}), maestroAba: 'locks' }
+  const sem = await painel($, 'terminal')
+  expect(await sem.find({ type: 'Text', text: '32 min sem RELEASE' })).toBeDefined()
+  expect(await sem.find({ type: 'Text', text: /orquestrador/ })).toBeUndefined()
+  await sem.unmount()
+})
+
+test('Execução: the third KPI reads já cobrados only when every open alert has a send (A54)', async ($: any, on: any) => {
+  const m = montar(on, {})
+  m.servirEstado = { ...cobrado(), maestroAba: 'execucao' }
+  await iniciar($)
+  let ui = await painel($, 'terminal')
+  const k = await ui.find({ key: 'exk-3' })
+  for (const t of ['🚨', '2', '1 lock órfão e 1 bloqueio · já cobrados']) expect(k?.text).toContain(t)
+  expect(k?.text).not.toContain('pede atenção')
+  await ui.unmount()
+  m.servirEstado = { ...cobrado({ lock: true }), maestroAba: 'execucao' }
+  ui = await painel($, 'terminal')
+  expect((await ui.find({ key: 'exk-3' }))?.text).toContain('pede atenção')
+  await ui.unmount()
+})
+
+test('a failed directive: the bell counts it, band line 2 leads with it in error (A55, R53)', async ($: any, on: any) => {
+  const falhou = { 'status-c02-20261025t103100z-1': { acao: 'STATUS-PEDIDO', alvo: 'C02', at: Date.now() - 5000, estado: 'falhou' } }
+  const velho = { 'status-c05-x-1': { acao: 'STATUS-PEDIDO', alvo: 'C05', at: Date.now() - 120_000, estado: 'enviando' }, 'go-x': { acao: 'GO', alvo: 'C01-S01', at: Date.now() - 1000, estado: 'enviando' } }
+  const orq = { papel: 'orquestrador', ledgerDir: null, forks: {} } as any
+  expect(semConfirmacao(falhou as any, Date.now()).map(e => e.alvo)).toEqual(['C02'])
+  expect(semConfirmacao(velho as any, Date.now()).map(e => e.alvo)).toEqual(['C05']) // a send still running is not stale
+  const f = dadosFaixa(orq, null, [], null, Date.now(), 'eu', [], [], null, semConfirmacao(falhou as any, Date.now()))
+  expect(f.alertas).toEqual(['diretiva sem confirmação: STATUS-PEDIDO C02'])
+  expect(f.nAlertas).toBe(1)
+  expect(dadosFaixa({ ...orq, papel: 'conjunto' }, null, [], null, Date.now(), 'eu', [], [], null, semConfirmacao(falhou as any, Date.now())).nAlertas).toBe(0)
+  const m = montar(on, {})
+  m.servirEstado = { ctx: ctx('orquestrador'), exec: ORQ, maestroLeitura: LEIT(), maestroOutras: [], maestroEnvios: falhou, maestroAba: 'agora', maestroFaixaDados: f }
+  await iniciar($)
+  const ui = await painel($, 'terminal')
+  expect((await ui.find({ key: 'sino' }))?.text).toContain('🔔 1 alerta')
+  await ui.unmount()
+  const b = await banda($, 'terminal')
+  const t = await b.find({ type: 'Text', text: '🔴 diretiva sem confirmação: STATUS-PEDIDO C02' })
+  expect([t?.props.color, t?.props.wrap]).toEqual(['error', 'truncate-end'])
+  await b.unmount()
+})
+
+test('Locks: each unconfirmed directive is one error card, so the bell lands on its reason (final fix 10)', async ($: any, on: any) => {
+  const falhou = {
+    'status-c02-x-1': { acao: 'STATUS-PEDIDO', alvo: 'C02', at: Date.now() - 5000, estado: 'falhou' },
+    'go-c03-s01-x': { acao: 'GO', alvo: 'C03-S01', at: Date.now() - 120_000, estado: 'enviando' },
+    'go-ok': { acao: 'GO', alvo: 'C04-S01', at: Date.now() - 1000, estado: 'enviado' },
+  }
+  const m = montar(on, {})
+  m.servirEstado = { ...cobrado({}), maestroEnvios: falhou, maestroAba: 'locks' }
+  await iniciar($)
+  for (const s of SUP) {
+    const ui = await painel($, s)
+    for (const t of ['🔴 diretiva sem confirmação: STATUS-PEDIDO C02', '🔴 diretiva sem confirmação: GO C03-S01']) {
+      expect((await ui.find({ type: 'Text', text: t }))?.props.color).toBe('error')
+    }
+    expect(await ui.find({ type: 'Text', text: /C04-S01/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('Execução: each set card ends with its sessões block and the restored-addresses line (A33)', async ($: any, on: any) => {
+  const m = montar(on, {})
+  m.servirEstado = {
+    ...grande(), maestroAba: 'execucao',
+    maestroMapa: MAPA_T({ 'C02-S01': SPEC_T('C02-S01'), 'C02-S02': SPEC_T('C02-S02') }),
+  }
+  await iniciar($)
+  const ui = await painel($, 'terminal')
+  const c2 = await ui.find({ key: 'b-1' })
+  expect(c2?.text.endsWith('endereços restaurados após compactação')).toBe(true)
+  expect(c2?.text).toContain('SESSÕES')
+  const linhas = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.mono && String(t.text).startsWith('🔹')).map((t: any) => t.text)
+  expect(linhas).toEqual(['🔹 novarc-NOVARC-PLUGIN-MAESTRO-C02-S01', '🔹 novarc-NOVARC-PLUGIN-MAESTRO-C02-S02'])
+  expect((await ui.find({ key: 'b-0' }))?.text).not.toContain('SESSÕES')
+  expect((await ui.find({ type: 'Text', text: 'endereços restaurados após compactação' }))?.props.color).toBe('subtle')
+  await ui.unmount()
+})
+
+test('the orchestrator pane has no element that sends a directive (A41, R35)', async ($: any, on: any) => {
+  const m = montar(on, {})
+  const enviadas: any[] = []
+  m.entrega = e => (enviadas.push(e), { isDelivered: true })
+  const itens = [{ ref: 'r1', fonte: 'plano', quem: 'pre-fechamento', titulo: 'p', status: 'OPEN', fase: null, at: null, spec: 'C03-S01', texto: 'x' }]
+  const g: any = grande()
+  m.servirEstado = { ...cobrado(), maestroOutras: g.maestroOutras, maestroPorDir: g.maestroPorDir, maestroPendencias: PEND_V({ itens }), maestroMapa: MAPA_T({ 'C02-S01': SPEC_T('C02-S01') }) }
+  await iniciar($)
+  await quieto(m)
+  const antes = m.eventos.length
+  let botoes = 0
+  for (const surface of SUP) {
+    for (const aba of ['agora', 'execucao', 'locks', 'pendencias']) {
+      m.servirEstado.maestroAba = aba
+      const ui = await painel($, surface)
+      for (const b of await ui.findAll({ type: 'Button' })) {
+        botoes++
+        try { await b.props.onPress?.() } catch { /* a press may fail on a prepared state; only what it sends matters */ }
+      }
+      await ui.unmount()
+    }
+  }
+  await quieto(m)
+  expect(botoes).toBeGreaterThan(10)
+  const novos = m.eventos.slice(antes).map(x => x.e)
+  const linhas = novos.filter(e => typeof e?.text === 'string' && /^\s*(GO|HOLD|FECHA|LIBERA|RELEASE|LOCK|status)\b/i.test(e.text))
+  expect({ enviadas: enviadas.length, linhas }).toEqual({ enviadas: 0, linhas: [] })
+  expect(novos.filter(e => e && 'to' in e && typeof e.text === 'string')).toEqual([])
 })

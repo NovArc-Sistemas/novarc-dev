@@ -1,8 +1,9 @@
 // Pure helpers of Maestro v2 "olhos": recognise a session-build run without a planning artifact and follow each
 // fork through the ledger.py checkpoints. No engine calls here, so tests exercise them directly.
-import type { Alerta, Evento, Execucao, Fork, LinhaSweep, Registro, Slots } from '../../types'
+import type { Alerta, Evento, Execucao, Fork, LinhaSweep, MapaSessoes, Registro, Slots } from '../../types'
 import { idDaBranch, urlOrquestrar, type EspelhoConjunto, type Proposta, type Ritmo } from './logic'
 import { itensACaminho } from './pendencias'
+import { lerSurfaces, manifestosDisjuntos } from './guardas'
 
 /** The checkpoint track drawn per fork, in protocol order (ledger.py CHECKPOINTS, the ones that advance a fork). */
 export const TRILHA = ['READY', 'PLAN', 'CODEX', 'SURFACES', 'TASK', 'LOCK', 'PUSHED', 'DONE'] as const
@@ -708,4 +709,281 @@ export function locksDoEspelho(esp: Pick<EspelhoConjunto, 'locks'> | undefined |
     const i = k.indexOf(' ')
     return { spec: v.spec, kind: k.slice(0, i), resource: k.slice(i + 1), desde: v.desde, estado: v.estado, ...(v.espera ? { espera: v.espera } : {}) }
   })
+}
+
+// ---- C03-S01 address map: start_session results and the ledger lines that rebuild it
+
+export const MAPA_VAZIO = (): MapaSessoes => ({ conjuntos: {}, specs: {}, orquestrador: null, at: 0 })
+
+/** The map entry of one start_session: null for an `own_initiative` card or a result with no `local_...` id. */
+export function entradaMapa(input: { name?: string; initiation?: string }, resultText: string): { nome: string; sessao: string } | null {
+  if (input.initiation === 'own_initiative') return null
+  const sessao = String(resultText).match(/local_[0-9A-Za-z-]+/)?.[0]
+  const nome = String(input.name ?? '').trim()
+  return sessao && nome ? { nome, sessao } : null
+}
+
+/** Puts a session named `...-C02` (set) or `...-C02-S01` (spec) into the map; another name leaves it as it was. */
+export function noMapa(mapa: MapaSessoes, e: { nome: string; sessao: string }, at = Date.now()): MapaSessoes {
+  const m = e.nome.match(/-(C\d+)(?:-(S\d+))?$/i)
+  if (!m) return mapa
+  const conjunto = m[1]!.toUpperCase()
+  if (!m[2]) return { ...mapa, conjuntos: { ...mapa.conjuntos, [conjunto]: { nome: e.nome, sessao: e.sessao } }, at }
+  const id = `${conjunto}-${m[2].toUpperCase()}`
+  const v = mapa.specs[id]
+  return { ...mapa, specs: { ...mapa.specs, [id]: { conjunto, nome: e.nome, sessao: e.sessao, slug: v?.slug ?? '', agentId: v?.agentId ?? null } }, at }
+}
+
+const PAR = /([a-z0-9][a-z0-9.-]*)=(local_[0-9a-f-]{36})/g
+const SESSAO_DO_CONJUNTO = /ORCHESTRATOR-SESSION (local_[0-9a-f-]{36}) \(([^)\s]+)\)/
+const ORQUESTRADOR = /^NOTE ORQUESTRADOR (.+?)(?:\s+#\s\d{4}-\d\d-\d\dT\S*)?\s*$/
+
+/**
+ * Folds the complete `ledger.md` lines after `consumido` into the map (R1-2): every `<slug>=local_<uuid>` pair, the set's
+ * own `ORCHESTRATOR-SESSION local_<uuid> (<name>)`, and the `NOTE ORQUESTRADOR` row (its `local_` id, else the row).
+ */
+export function dobrarMapa(mapa: MapaSessoes, texto: string, consumido: number, at = Date.now()): { mapa: MapaSessoes; consumido: number } {
+  const de = consumido > texto.length ? 0 : consumido
+  const fim = texto.lastIndexOf('\n')
+  if (fim < de) return { mapa, consumido: de }
+  let out = mapa
+  for (const linha of texto.slice(de, fim + 1).split(/\r?\n/)) {
+    for (const [, slug, sessao] of linha.matchAll(PAR)) {
+      const id = idDaBranch(slug!)
+      if (!id) continue
+      const v = out.specs[id]
+      out = { ...out, specs: { ...out.specs, [id]: { conjunto: id.split('-')[0]!, nome: v?.nome ?? slug!, sessao: sessao!, slug: slug!, agentId: v?.agentId ?? null } }, at }
+    }
+    const c = linha.match(SESSAO_DO_CONJUNTO)
+    if (c) out = noMapa(out, { nome: c[2]!, sessao: c[1]! }, at)
+    const o = linha.match(ORQUESTRADOR)
+    if (o) out = { ...out, orquestrador: o[1]!.match(/local_[0-9a-f-]{36}/)?.[0] ?? o[1]!, at }
+  }
+  return { mapa: out, consumido: fim + 1 }
+}
+
+// ---- C03-S01 directives (Task 5): set reports, routing, the orchestrator's due directives, prompt map, turn line
+
+/** The rule a directive line cites (audit `regra`). */
+export function regraDaDiretiva(linha: string): string {
+  const t = linha.trim().split(/\s+/)
+  if (t[0] === 'GO') return t[2] === 'phase' ? 'dispatch-prompts.md:458' : 'step-05 §5.3'
+  if (t[0] === 'status') return 'dispatch-prompts.md:442'
+  if (t[0] === 'FECHA') return 'orquestrar.md §5.1'
+  if (t[0] === 'HOLD' || t[0] === 'LIBERA') return 'orquestrar.md'
+  return 'd-diretivas-diretas'
+}
+
+/**
+ * The set's manifest report (R10, R4-1) once every expected slug has a manifest text, else null: `disjuntos` with the
+ * slugs sorted, or `colisao <slug>:<surface> ...`; an illegible manifest is `<slug>:ilegivel` (on doubt, colisao).
+ */
+export function relatoDoConjunto(C: string, manifestos: Record<string, string>, esperados: string[]): string | null {
+  const slugs = [...new Set(esperados)].sort()
+  if (!slugs.length || slugs.some(s => manifestos[s] === undefined)) return null
+  const lidos = slugs.map(s => ({ s, ...lerSurfaces(manifestos[s]!) }))
+  const ilegiveis = lidos.filter(x => !x.legivel).map(x => `${x.s}:ilegivel`)
+  const r = manifestosDisjuntos(Object.fromEntries(lidos.filter(x => x.legivel).map(x => [x.s, x.superficies])))
+  const colisoes = [...ilegiveis, ...(r.disjuntos ? [] : r.colisoes.map(c => `${c.slug}:${c.superficie}`))].sort()
+  return colisoes.length ? `CONJUNTO ${C} manifestos colisao ${colisoes.join(' ')}` : `CONJUNTO ${C} manifestos disjuntos ${slugs.join(' ')}`
+}
+
+/** A freed resource (R12): the oldest ungranted LOCK on it from another lane, as `CONJUNTO <C> release ...`. An empty kind (APPLIED) matches any. */
+export function relatoRelease(
+  C: string,
+  locks: { slug: string; kind: string; resource: string; desde: string; concedido: boolean }[],
+  liberado: { slug: string; kind: string; resource: string },
+): string | null {
+  const w = locks
+    .filter(l => !l.concedido && l.slug !== liberado.slug && l.resource === liberado.resource && (!liberado.kind || l.kind === liberado.kind))
+    .sort((a, b) => a.desde.localeCompare(b.desde))[0]
+  return w ? `CONJUNTO ${C} release ${w.kind} ${w.resource} ${w.slug}` : null
+}
+
+const DIRETIVA_SPEC = /^(GO) (\S+)(?: .*)?$|^(status) (\S+)\?$/
+
+/**
+ * Where a set session routes a received line (R15, R16): `{ para, slug }` for a `GO <slug> ...` / `status <slug>?` from
+ * the recorded orchestrator naming one of this set's specs (`para` = its session id, else its name, '' when unknown);
+ * `{ recusa }` for another sender or another set's spec; null for anything else (prose, `status <C>?`, HOLD, ...).
+ */
+export function rotaDaDiretiva(
+  mapa: MapaSessoes,
+  conjunto: string,
+  from: string,
+  orquestrador: string | null,
+  texto: string,
+): { para: string; slug: string } | { recusa: string } | null {
+  const m = texto.trim().match(DIRETIVA_SPEC)
+  if (!m) return null
+  const recusa = m[1] ? 'GO' : 'STATUS'
+  const alvo = (m[2] ?? m[4])!
+  const id = idDaBranch(alvo)
+  if (!id) return null // `status C02?` and the like: for the set session itself
+  if (!orquestrador || from !== orquestrador || id.split('-')[0] !== conjunto.toUpperCase()) return { recusa }
+  const e = mapa.specs[id]
+  if (e?.slug && e.slug !== alvo) return { recusa } // a slug the map does not know for that spec
+  return { para: e?.sessao || e?.nome || '', slug: alvo }
+}
+
+/** A set report as the orchestrator queues it (R6): the slugs with their manifest revisions, or the release detail. */
+export type Relato = {
+  conjunto: string
+  tipo: 'disjuntos' | 'release'
+  slugs: string[]
+  revs: Record<string, string>
+  linha: string
+  release?: { kind: string; resource: string; waiter: string; releaseAt: string }
+}
+
+/** One directive due now (jobs.md directive-nudge): `to` the set session, `chave` the at-most-once key. */
+export type Prevista = { to: string; text: string; chave: string; acao: string; alvo: string; motivo: string; regra: string }
+
+/** An ISO time or epoch ms as `yyyymmddthhmmssz`, the stamp keys carry. */
+const carimbo = (x: string | number) => {
+  const d = new Date(x)
+  return Number.isNaN(d.getTime()) ? String(x) : d.toISOString().replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '')
+}
+/** Keys are lowercased and safe as a db id: anything outside `[a-z0-9._-]` becomes `-`. */
+const chaveDe = (...partes: (string | number)[]) => partes.join('-').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
+
+/**
+ * The directives due now, minus the keys in `feitas` (R13, R19, jobs.md): `status <C|slug>?` for a quiet unit (the second
+ * once `2 x limiarCalado` passed, never a third), one `status <slug>?` per orphan lock key in `GRANTED-NOT-RELEASED`
+ * (from `locks`; absent = none), `status <C>?` for a held slot (second past `2 x limiarLock`), `GO <slug> phase 4` per
+ * slug of a disjoint report (key suffix `-<n>` from the manifest revision n >= 2, R7) and the grant of a release report.
+ */
+export function diretivasPrevistas(i: {
+  alertas: Alerta[]
+  relatos: Relato[]
+  feitas: Set<string>
+  runId: string
+  mapa: MapaSessoes
+  codigo: string
+  agora: number
+  limiarCalado: number
+  limiarLock?: number
+  /** Open locks with their state (`vista.locks`): only `GRANTED-NOT-RELEASED` is chased. */
+  locks: { spec: string; kind: string; resource: string; desde: string; estado: string }[]
+  /** The orchestrator's slots: a slot alert's held minutes come from its owner's `desde`. */
+  slots: Slots | null
+}): Prevista[] {
+  const sessaoDo = (C: string) => i.mapa.conjuntos[C]?.sessao ?? i.mapa.conjuntos[C]?.nome ?? `novarc-${i.codigo}-${C}`
+  const slugDe = (id: string) => i.mapa.specs[id]?.slug || null
+  const min = (desde: number) => Math.floor((i.agora - desde) / 60_000)
+  const out: Prevista[] = []
+  const por = (p: Omit<Prevista, 'regra'>) => {
+    if (i.feitas.has(p.chave) || out.some(x => x.chave === p.chave)) return
+    out.push({ ...p, regra: regraDaDiretiva(p.text) })
+  }
+  for (const a of i.alertas) {
+    const [tipo, ...resto] = a.chave.split(':')
+    if (tipo === 'calado') {
+      const at = Number(resto[resto.length - 1])
+      const unidade = resto.slice(0, -1).join(':').toUpperCase()
+      const ehSpec = /^C\d+-S\d+$/.test(unidade)
+      if (!Number.isFinite(at) || (!ehSpec && !/^C\d+$/.test(unidade))) continue
+      const alvo = ehSpec ? slugDe(unidade) : unidade
+      if (!alvo) continue // a spec with no known slug: `status <slug>?` cannot be written
+      const n = i.agora - at >= 2 * i.limiarCalado * 60_000 ? 2 : 1
+      por({ to: sessaoDo(unidade.split('-')[0]!), text: `status ${alvo}?`, chave: chaveDe('status', alvo, carimbo(at), n), acao: 'STATUS-PEDIDO', alvo: unidade, motivo: `calado há ${min(at)} min` })
+    } else if (tipo === 'lock') {
+      // lock:<spec>:<kind>:<resource>:<since>, since an ISO time holding colons
+      const m = a.chave.match(/^lock:([^:]+):([^:]+):(.*):(\d{4}-\d\d-\d\dT[\d:.]+Z?)$/)
+      if (!m) continue
+      const [, spec, kind, resource, desde] = m as unknown as [string, string, string, string, string]
+      const l = i.locks.find(x => x.spec === spec && x.kind === kind && x.resource === resource && x.desde === desde)
+      const slug = slugDe(spec.toUpperCase())
+      if (l?.estado !== 'GRANTED-NOT-RELEASED' || !slug) continue
+      por({
+        to: sessaoDo(spec.split('-')[0]!.toUpperCase()), text: `status ${slug}?`, chave: chaveDe('lock', spec, kind, resource, carimbo(desde)),
+        acao: 'LOCK-COBRADO', alvo: spec.toUpperCase(), motivo: `segura ${resource} há ${min(Date.parse(desde))} min`,
+      })
+    } else if (tipo === 'slot') {
+      const [C, kind, ...b] = resto
+      const dono = kind === 'verify' || kind === 'producao' ? i.slots?.[kind].dono : null
+      if (!C || !dono || dono.branch !== b.join(':')) continue // released since the alert
+      const held = min(Date.parse(dono.desde))
+      const n = held >= 2 * (i.limiarLock ?? LIMIARES_PADRAO.lockOrfao) ? 2 : 1
+      por({ to: sessaoDo(C), text: `status ${C}?`, chave: chaveDe('slot', C, kind, b.join(':'), n), acao: 'STATUS-PEDIDO', alvo: C, motivo: `segura o slot ${kind} há ${held} min` })
+    }
+  }
+  for (const r of i.relatos) {
+    if (r.tipo === 'disjuntos') {
+      for (const slug of r.slugs) {
+        const n = Number(String(r.revs[slug] ?? '1').split('.')[0]) || 1
+        const chave = n === 1 ? chaveDe('go', slug, 'fase4', i.runId) : chaveDe('go', slug, 'fase4', i.runId, n)
+        por({ to: sessaoDo(r.conjunto), text: `GO ${slug} phase 4`, chave, acao: 'GO', alvo: idDaBranch(slug) ?? slug, motivo: 'manifestos disjuntos' })
+      }
+    } else if (r.release) {
+      const { kind, resource, waiter, releaseAt } = r.release
+      por({
+        to: sessaoDo(r.conjunto), text: `GO ${waiter} ${kind} ${resource}`, chave: chaveDe('release', kind, resource, waiter, carimbo(releaseAt)),
+        acao: 'RELEASE-REPASSADO', alvo: idDaBranch(waiter) ?? waiter, motivo: 'esperava o lock',
+      })
+    }
+  }
+  return out
+}
+
+const STAMP_LEDGER = /\s+#\s\d{4}-\d\d-\d\dT\S*\s*$/
+
+/** The set mod's proof line for a report (R6): `RELATO <report> rev <slug>=<rev> ...`, slugs sorted. */
+export function linhaProvaRelato(relato: string, revs: Record<string, string>): string {
+  const rs = Object.keys(revs).sort().map(s => `${s}=${revs[s]}`)
+  return rs.length ? `RELATO ${relato} rev ${rs.join(' ')}` : `RELATO ${relato}`
+}
+
+/** Parses a proof line as written (`NOTE ` prefix and the ledger stamp allowed). */
+export function lerProvaRelato(linha: string): { relato: string; revs: Record<string, string> } | null {
+  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^(?:NOTE )?RELATO (CONJUNTO .+)$/)
+  if (!m) return null
+  const t = m[1]!
+  const i = t.lastIndexOf(' rev ')
+  const pares = i < 0 ? [] : t.slice(i + 5).split(' ')
+  if (i < 0 || !pares.every(p => /^[^=\s]+=\S+$/.test(p))) return { relato: t, revs: {} }
+  return { relato: t.slice(0, i), revs: Object.fromEntries(pares.map(p => [p.slice(0, p.indexOf('=')), p.slice(p.indexOf('=') + 1)])) }
+}
+
+/** The artifact-less proof line the orchestrator writes before a send (R4-3): `RELAY <acao> <alvo> <chave> <linha exata>`. */
+export function linhaRelay(p: Prevista): string {
+  return `RELAY ${p.acao} ${p.alvo} ${p.chave} ${p.text}`
+}
+
+/** Parses `linhaRelay` back; a RELAY whose third field is not a directive key (the set ledger's own RELAY) is null. */
+export function lerRelay(linha: string): { acao: string; alvo: string; chave: string; linha: string } | null {
+  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^RELAY (\S+) (\S+) ((?:go|release|status|lock|slot)-\S+) (.+)$/)
+  return m ? { acao: m[1]!, alvo: m[2]!, chave: m[3]!, linha: m[4]! } : null
+}
+
+/** The main checkout of a set ledger dir (R4-4), forward slashes; null when the dir is not a session-build run dir. */
+export function checkoutPrincipal(ledgerDir: string): string | null {
+  const m = String(ledgerDir).replace(/\\/g, '/').match(/^(.*)\/(?:\.novarc\/ledger|\.superpowers)\/session-build\/\d{8}-\d{4}\/?$/)
+  return m ? m[1]! : null
+}
+
+const MAX_SECAO = 2800 // characters (R42); the section is cut below it
+
+/** The `novarc:maestro-mapa` prompt section (R25, R42): one address per spec, reserve agents, the hop rule; no time. */
+export function secaoMapa(mapa: MapaSessoes): string {
+  const linhas: string[] = []
+  for (const id of Object.keys(mapa.specs).sort()) {
+    const e = mapa.specs[id]!
+    if (e.sessao || e.nome) linhas.push(`${id} → ${e.nome || id}${e.sessao ? ` (${e.sessao})` : ''}`)
+    if (e.agentId) linhas.push(`${e.slug || id} → ${e.agentId}`)
+  }
+  const titulo = 'maestro · endereços desta execução'
+  const regra = 'só a sessão do conjunto fala com o orquestrador; a sessão de spec fala só com a sessão do seu conjunto'
+  // room for the title, the rule, the `e mais <n>` line and their newlines
+  let resta = MAX_SECAO - 1 - titulo.length - regra.length - `\ne mais ${linhas.length}\n`.length - 1
+  let k = 0
+  while (k < linhas.length && linhas[k]!.length + 1 <= resta) resta -= linhas[k++]!.length + 1
+  return [titulo, ...linhas.slice(0, k), ...(k < linhas.length ? [`e mais ${linhas.length - k}`] : []), regra].join('\n')
+}
+
+/** The turn duration line (R27): `38s · C02 3/5 · 1 lock`, no lock part at 0. */
+export function resumoTurno(conjunto: string, feitos: number, total: number, locks: number, durationMs: number): string {
+  const s = Math.round(durationMs / 1000)
+  const dur = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${dur} · ${conjunto} ${feitos}/${total}${locks > 0 ? ` · ${locks} lock` : ''}`
 }
