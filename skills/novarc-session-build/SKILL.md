@@ -37,6 +37,10 @@ Any `MISSING`: stop and tell the user (pt-BR): "O plugin novarc está incompleto
 
 No mode, or a mode without an artifact url: ask once for the set prompt or the url.
 
+Override of human gate 2 (core invariant 2): in mode `conjunto`, a set session opened by the orchestrator with the
+plan's own set prompt skips the routine step-02 scope confirmation; anything the plan did not decide still fires it
+(`steps/conjunto-overrides.md`, step-02).
+
 ## Invariants
 
 Everything in the original session-build invariants applies unchanged. Read it once at start:

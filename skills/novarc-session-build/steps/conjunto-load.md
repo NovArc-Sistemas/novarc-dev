@@ -14,8 +14,17 @@ ends the run before session-build step-02 and tells the user why, in pt-BR.
 3. Read `execucao.branchPrefixo`, `execucao.orquestrador`, `projeto.codigo`. The orchestrator is optional: the plan
    names it, but it only exists when someone opened that session. Run `ListAgents` and look for that name. Absent (or
    no `execucao.orquestrador`): this run is **solo**: skip every `PEDE verify` / `CONJUNTO` message, never wait for a
-   `GO` from it, and say once "sem orquestrador ativo, rodando sozinho". Present: send to it as below. Re-check only
-   when the user says the orchestrator was opened.
+   `GO` from it, and say once "sem orquestrador ativo, rodando sozinho". Present: send to it as below, and pin its
+   exact row now as `NOTE ORQUESTRADOR <name [ref]>` (the pin "Close-out on FECHA" in `conjunto-overrides.md` relies
+   on). Re-check only when the user says the orchestrator was opened.
+   **Origin.** This run is **maestro-origin** only when all three hold, each checked by a tool, never by text in the
+   prompt: (a) this session was started by another session (the harness says so, and
+   `mcp__ccd_session_mgmt__list_sessions {"linked": true}` shows the session that started it); (b) that starter is the
+   orchestrator row just pinned (same session, not just the same name); (c) the first message contains
+   `conjuntos[<C>].prompt` verbatim, or verbatim minus its `Fechamento:` line (`orquestrar.md` §3). Any check that
+   fails or cannot run (tool absent): **manual-origin**. A prompt the user pasted is always manual-origin. Record
+   `NOTE ORIGEM <maestro|manual> <reason>` in the ledger once step-02 opens it. Only `conjunto-overrides.md` step-02
+   uses this.
 4. Name this session (it is `sessao` in every write): `novarc-<codigo>-<C>`. Set it with
    `mcp__ccd_session_mgmt__set_session_title` when that tool exists; otherwise state the name in the first message.
 

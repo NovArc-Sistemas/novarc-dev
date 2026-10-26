@@ -56,6 +56,11 @@ Three ways, all with the set prompt (`conjuntos[].prompt`) **verbatim**; the onl
    line included, so the click is the same act as pasting it. Never work around the refusal.
 3. **The user pastes the prompt** into a new session themselves. Still valid.
 
+Ways 1 and 2 open the set session from this session, so it detects that by itself (`conjunto-load.md` step 1.3)
+and skips the routine step-02 scope confirmation: opening the set here is the user's go-ahead for the plan's scope.
+Never add a marker line to the prompt; the verbatim rule above stands. Way 3 keeps the confirmation. When you open a
+set with N >= 2 specs, tell the user its session will still ask for one `abre` to open the spec sessions.
+
 The rules below decide **whether** a set may be offered, whichever way it opens.
 
 - **Default serial.** Give one set prompt (`conjuntos[].prompt`, verbatim) at a time, in `ordem`.

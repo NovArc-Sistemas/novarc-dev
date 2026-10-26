@@ -31,7 +31,32 @@ exempt and the §1.2 premise re-validation is mandatory.
   artifact, plus the artifact url, the spec id and the branch name of step-03 below.
 - SDD marks: when the set prompt has an `SDD:` line, it names the specs marked `sdd: on` and it wins; without the
   line, core step-02 §2.6 decides.
-- **After the HALT is answered** with option A: for each spec write milestone `iniciado` (procedure in
+- **Scope gate (core §2.7) for a maestro-origin run** (`conjunto-load.md` step 1.3). Scope, order and dependencies
+  were decided in the plan (plano.json and the committed specs), and the user authorized the set when they had the
+  orchestrator open it, so the routine A/B/C confirmation is dispensed when **every** item below holds, each read in
+  this run:
+  1. the in-scope spec list equals the plan's specs of C (none dropped by `conjunto-load.md` §5 for an open
+     pendência);
+  2. every §1.2 premise holds in the live tree (a falsified one is already an escalation);
+  3. the §2.2 graph is acyclic, no pair is `Entangled`, and nothing asks to fold, split or reorder specs against the
+     plan;
+  4. §2.3 found no shared bundled module, or the plan already settles its order;
+  5. §2.5's project collision gate is green, or the project has none;
+  6. no `specs/S.validacao` with `resultado == "reprovado"` for the current `headSha` (a resumed run fixes those
+     first and keeps the gate).
+  Hash drift needs no item: `conjunto-load.md` §3 stops before step-02. Any item false: present the original HALT
+  unchanged, naming the item that fired it. A manual-origin run always gets the original HALT.
+  Dispensed: append `ledger.py append --type NOTE --text "PORTAO-02-DISPENSADO origem=orquestrador <name [ref]>
+  conjunto=<C> N=<n> checklist=1-6 ok"`, still send the user the §2.7 presentation (as information, no question),
+  and say "Escopo e ordem vêm do planejamento; sigo sem confirmação." The dispensation counts as the HALT answered
+  [A] for every later rule, including core step-02's red flag on opening a branch before the HALT.
+  - **N = 1:** go straight on to step-03 in the same turn.
+  - **N >= 2:** linked sessions open only in a turn carrying the user's own words (core §2.7, step-05 §5.1), and
+    this run's first turn came from the orchestrator. So end the turn after the presentation with one line,
+    "Para abrir as <n> sessões dos specs, responda `abre`." That is the app's authorization to open sessions, not
+    a scope question: any reply that says to go ahead counts as [A], and step-03 and step-05 §5.1 then run in that
+    turn as the original says. Never switch to the fork fallback to avoid the round trip.
+- **After the HALT is answered** with option A, or dispensed as above: for each spec write milestone `iniciado` (procedure in
   `../references/milestones.md`); create or update `execucao/{C}` with `{sessao, iniciadoEm}` (create with `set` when
   missing, else pinned `update`); send `CONJUNTO <C> iniciado <spec ids>` to the orchestrator.
 
