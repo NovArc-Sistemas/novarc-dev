@@ -568,9 +568,9 @@ export function idObservado(at: Date, sessaoId: string, n: number): string {
 
 const umaLinha = (s: string) => s.split(/\r?\n/)[0]!.trim().slice(0, 300)
 
-/** One observed `AuditoriaDoc`: text fields one line each, never `antes`/`depois`/`estado` (those are for state changes). */
+/** One observed `AuditoriaDoc`: text fields one line each; `antes`/`depois` only when the caller gives them, never `estado`. */
 export function entradaAuditoria(
-  e: Pick<AuditoriaDoc, 'acao' | 'alvo' | 'motivo' | 'regra' | 'linha' | 'origem'>,
+  e: Pick<AuditoriaDoc, 'acao' | 'alvo' | 'motivo' | 'regra' | 'linha' | 'origem'> & { antes?: string | null; depois?: string | null },
   m: { at: Date; runId: string | null; sessao: string; papel: AuditoriaDoc['papel']; by: string },
 ): AuditoriaDoc {
   return {
@@ -579,8 +579,8 @@ export function entradaAuditoria(
     motivo: umaLinha(e.motivo),
     regra: umaLinha(e.regra),
     linha: e.linha === null ? null : umaLinha(e.linha),
-    antes: null,
-    depois: null,
+    antes: e.antes ?? null,
+    depois: e.depois ?? null,
     estado: null,
     runId: m.runId,
     sessao: m.sessao,

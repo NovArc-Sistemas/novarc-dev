@@ -5,7 +5,7 @@
 // entry so the Agora tab of any session sees all runs on the machine.
 import type { Register } from 'claude-code'
 
-import type { Alerta, Alertas, Contexto, Evento, Execucao, LinhaSweep, MapaSessoes, Registro, Slots } from '../../types'
+import type { AcervoSync, Alerta, Alertas, Contexto, Evento, Execucao, LinhaSweep, MapaSessoes, Registro, Slots } from '../../types'
 import {
   LIMIARES_PADRAO, MAPA_VAZIO, VAZIA, TRILHA, alerta, anotar, calados, marcos, cartoesAgora, chamadaLedger, checkpoint, cortar, daMinhaExecucao, dobrarMapa, ehBuild, entradaMapa, espelhoParaGravar,
   faixaConjuntoRaias, laneDaMensagem, lerSweep, linhaConjunto, locksDoEspelho, marcadorDir, montarAlertas, noMapa, novasLinhas, novosToasts, orfaos, regraDaDiretiva,
@@ -27,6 +27,8 @@ import {
   porId,
   prCreate,
   liberados,
+  pastaDoCliente,
+  slugPasta,
   projetoDoPlano,
   quadrados,
   rank,
@@ -62,6 +64,7 @@ import {
   type Resposta,
 } from './pendencias'
 import { VISTA_PADRAO, abaPendencias, rotuloAba, type VistaPendencias } from './pendencias-aba'
+import { abaInteligencia } from './inteligencia-aba'
 import { COR as COR_CONJ, LOGO_FAIXA, alturaTabela, type Tom, barraSegmentosM, barraTempoDicaM, marca, tabelaTrilhasM, type LinhaTrilha } from './desenho'
 import { kit, type Kit } from './kit'
 import { REGRA, avaliarArquivo, avaliarBash, entradaAuditoria, idObservado, manifestosDoLedger, type ContextoGuarda, type Decisao } from './guardas'
@@ -237,7 +240,7 @@ async function marcarLeitura($: any, fonte: 'planejamento' | 'registro', ok: boo
 const LIMITE_CHAMADA_MS = 20_000
 
 /** One planning tool call; a call with no answer in 20 s throws, so a hung call never wedges `refrescando` or the nudge. */
-async function chamar($: any, input: Record<string, unknown>): Promise<string> {
+export async function chamar($: any, input: Record<string, unknown>): Promise<string> {
   let timer: { cancel: () => void } | null = null
   const limite = new Promise<never>((_, falha) => {
     try {
@@ -298,7 +301,8 @@ async function lerColecao($: any, url: string, collection: string): Promise<Reco
  */
 let banco: { specs: Record<string, DbDoc>; execucao: Record<string, DbDoc>; config: Record<string, DbDoc>; at: number; parcial?: true } | null = null
 
-type Gravacao = { r: 'criado' | 'gravado' | 'ja-estava' | 'falhou'; versao: number | null }
+/** `erro`: the last caught error message, on `'falhou'`. */
+export type Gravacao = { r: 'criado' | 'gravado' | 'ja-estava' | 'falhou'; versao: number | null; erro?: string }
 type Campos = Record<string, unknown> | ((doc: DbDoc | null) => Record<string, unknown>)
 
 /**
@@ -307,7 +311,7 @@ type Campos = Record<string, unknown> | ((doc: DbDoc | null) => Record<string, u
  * refused pin re-reads and retries, 3 attempts. A function `campos` is recomposed from each attempt's document, so a
  * retry never re-sends stale fields. `o.aceita` false: the stored document already holds it (`ja-estava`).
  */
-async function gravarFixado(
+export async function gravarFixado(
   $: any,
   url: string,
   colecao: string,
@@ -320,6 +324,7 @@ async function gravarFixado(
     return m ? Number(m[1]) : null
   }
   const dados = (doc: DbDoc | null) => (typeof campos === 'function' ? campos(doc) : campos)
+  let erro: string | undefined
   for (let i = 0; i < 3; i++) {
     let doc: DbDoc | null
     let versao: number
@@ -332,7 +337,8 @@ async function gravarFixado(
         try {
           const t = await chamar($, { tool: 'ArtifactData', action: 'set', url, collection: colecao, doc_id: id, data: o.criar ?? dados(null) })
           return { r: 'criado', versao: versaoDe(t) }
-        } catch {
+        } catch (err) {
+          erro = (err as Error)?.message ?? String(err)
           continue
         }
       }
@@ -342,11 +348,12 @@ async function gravarFixado(
     try {
       const t = await chamar($, { tool: 'ArtifactData', action: 'update', url, collection: colecao, doc_id: id, if_version: versao, data: dados(doc) })
       return { r: 'gravado', versao: versaoDe(t) }
-    } catch {
+    } catch (err) {
       // version moved (or the call failed): re-read and retry
+      erro = (err as Error)?.message ?? String(err)
     }
   }
-  return { r: 'falhou', versao: null }
+  return { r: 'falhou', versao: null, erro }
 }
 
 /** Writes a milestone on specs/<id> when the stored etapa is earlier (R3), through gravarFixado. */
@@ -677,9 +684,9 @@ function nomeDaSessao(ex: Execucao): string {
 }
 
 /** Queues one observed audit record (id scheme a) and arms the 5 s flush when the queue was empty. */
-async function auditar(
+export async function auditar(
   $: any,
-  e: { acao: string; alvo: string; motivo: string; regra: string; linha: string | null; origem: 'maestro' | 'agente' },
+  e: { acao: string; alvo: string; motivo: string; regra: string; linha: string | null; origem: 'maestro' | 'agente'; antes?: string | null; depois?: string | null },
 ): Promise<void> {
   const ex = ultimoExec
   if (!ex?.papel) return
@@ -2906,7 +2913,19 @@ type DadosPainel = {
   temBanco: boolean
   /** `🔄 tentar de novo` is running: the body is the loading card (R32). */
   tentando: boolean
-  acoes: { aba: (a: string) => Acao; abrir: Acao; usarMedido: Acao; sino: Acao; tentar: Acao; pend: Parameters<typeof abaPendencias>[5] }
+  /** C04-S01: this machine's partners' catalogue sync (read only while Inteligência is open) and the plan's client. */
+  acervoSync: AcervoSync | null
+  cliente: string
+  acoes: {
+    aba: (a: string) => Acao
+    abrir: Acao
+    usarMedido: Acao
+    sino: Acao
+    tentar: Acao
+    pend: Parameters<typeof abaPendencias>[5]
+    abrirAcervo: Acao
+    abrirLinha: (url: string) => Acao
+  }
 }
 
 const MAX_LOCKS = 50
@@ -3055,6 +3074,7 @@ function painelArvore(ui: any, d: DadosPainel): any {
     { k: 'execucao', rotulo: '▶️ Execução', tecla: 2 },
     { k: 'locks', rotulo: '🔒 Locks e filas', tecla: 3, conta: (d.alertas?.vista?.locks ?? []).filter(l => l.orfao).length },
     ...(orq ? [{ k: 'pendencias', rotulo: '📌 Pendências', tecla: 4, conta: rotuloAba(d.pendencias) }] : []),
+    ...(orq ? [{ k: 'inteligencia', rotulo: '📊 Inteligência', tecla: 5 }] : []),
   ]
   // a stored tab this role does not draw (Pendências in a set session) draws Agora
   const aba = ABAS.some(a => a.k === d.aba) ? d.aba : 'agora'
@@ -3126,6 +3146,13 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
   if (aba === 'pendencias') {
     if (!d.pendencias && d.leitura.falhas.planejamento) return [k.cartaoEstado('erro', 'o painel mostra o último estado salvo; nada foi perdido', d.acoes.tentar)]
     return abaPendencias(ui, d.pendencias, d.vista, d.temArtefato, d.agora, d.acoes.pend, k)
+  }
+  if (aba === 'inteligencia') {
+    try {
+      return abaInteligencia(ui, k, d.acervoSync, d.cliente, d.agora, { abrirAcervo: d.acoes.abrirAcervo, abrirLinha: d.acoes.abrirLinha })
+    } catch (err) {
+      return [k.cartaoEstado('erro', `acervo não conseguiu desenhar: ${err}`, d.acoes.tentar)]
+    }
   }
   if (aba === 'locks') return abaLocks(ui, d, k)
   if (aba === 'execucao') {
@@ -3763,6 +3790,18 @@ export const registerMaestro: Register = on => {
       const envios = ((await ler($, 'maestroEnvios')) ?? {}) as Record<string, Envio>
       const mapa = (await ler($, 'maestroMapa')) as MapaSessoes
       const nSemConf = ex.papel === 'orquestrador' ? semConfirmacao(envios, Date.now()).length : 0
+      // desempenho.md: the store is read only while the tab that draws it is open
+      const acervoSync = aba === 'inteligencia' ? (((await $.store.get('acervo-sync-v1')) ?? null) as AcervoSync | null) : null
+      const cliente = String(plano?.projeto?.cliente ?? '').trim()
+      // Review Focus 3: an open refused with the folder fragment retries once on the bare url
+      const abre = async (url: string) => {
+        try {
+          const r = await $.tool.call({ tool: 'Artifact', action: 'open', url })
+          return !!r && r.deny === undefined && !r.isError
+        } catch {
+          return false
+        }
+      }
       return painelArvore(ui, {
         aba,
         ex,
@@ -3787,7 +3826,15 @@ export const registerMaestro: Register = on => {
         mapa,
         temBanco: !!banco && !banco.parcial,
         tentando,
+        acervoSync,
+        cliente,
         acoes: {
+          abrirAcervo: async () => {
+            if (!acervoSync) return
+            const u = cliente ? `${acervoSync.url}#${slugPasta(pastaDoCliente(cliente))}` : acervoSync.url
+            if (!(await abre(u)) && u !== acervoSync.url) await abre(acervoSync.url)
+          },
+          abrirLinha: url => async () => { await abre(url) },
           aba: a => async () => {
             await garantirSessao($)
             await $.state.set(ABA, a)

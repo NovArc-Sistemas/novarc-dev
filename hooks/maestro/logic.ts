@@ -319,3 +319,12 @@ export function lerDocs(text: string): DbDoc[] {
 export function porId(texto: string): Record<string, DbDoc> {
   return Object.fromEntries(lerDocs(texto).map(d => [d.id, d]))
 }
+
+/** The client's folder in the partners' catalogue: `Clientes/<cliente>` (trimmed segments), '' without a client. */
+export function pastaDoCliente(cliente: string | null | undefined): string {
+  const c = String(cliente ?? '').split('/').map(s => s.trim()).filter(Boolean).join('/')
+  return c ? `Clientes/${c}` : ''
+}
+
+/** A folder path's slug, the catalogue page's own rule (no marks, lowercase, runs of other chars become '-'). */
+export const slugPasta = (s: string) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

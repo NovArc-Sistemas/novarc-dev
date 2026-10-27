@@ -33,13 +33,18 @@ export type Mundo = {
   semBanco: boolean
   /** Holds or fails one tool call (Artifact / ArtifactData) the way `segurar` / `falhar` do for files. */
   segurarTool: ((e: any) => Promise<void> | null) | null
-  falharTool: ((e: any) => boolean) | null
+  /** A string return is the failed call's text (`true` keeps 'boom'). */
+  falharTool: ((e: any) => boolean | string) | null
   /** C02-S01: what `ledger.py sweep` answers (and after how long), the toasts raised, an in-memory planning db. */
   sweep: { exitCode: number; stdout: string } | (() => { exitCode: number; stdout: string }) | null
   sweepAtraso: number
   sweepFalha: boolean
   toasts: string[]
   db: Record<string, { data: any; version: number }> | null
+  /** C04-S01: in-memory dbs of other artifacts, by url; a call to one of them never reaches `db`. */
+  dbPorUrl: Record<string, Record<string, { data: any; version: number }>> | null
+  /** C04-S01: what `git config user.name` answers; null exits 1. */
+  gitNome: string | null
   /** Milliseconds added to $.clock.now (the sweep's 5 s gate), so a test steps time without waiting. */
   avanco: number
   /** Holds one plugin state read (`$.state.get`) until the returned promise settles. */
@@ -91,7 +96,8 @@ export function banco(db: Record<string, { data: any; version: number }>, e: any
     return ok(`Batch committed: ${ws.length} writes.`)
   }
   if (e.action === 'get') return ok(`=== BEGIN ARTIFACT DB x ===\n${db[k] ? linha(k) : ''}\n=== END ARTIFACT DB x ===`)
-  if (e.action === 'list') return ok(`=== BEGIN ARTIFACT DB x ===\n${Object.keys(db).filter(x => x.startsWith(`${e.collection}/`)).map(linha).join('\n')}\n=== END ARTIFACT DB x ===`)
+  // C04-S01: one page of at most `query.limit` documents in insertion order (no limit: all of them)
+  if (e.action === 'list') return ok(`=== BEGIN ARTIFACT DB x ===\n${Object.keys(db).filter(x => x.startsWith(`${e.collection}/`)).slice(0, e.query?.limit).map(linha).join('\n')}\n=== END ARTIFACT DB x ===`)
   // C03-S01: `query` with equality `where` clauses only ([field, 'eq' | '==', value])
   if (e.action === 'query') {
     const ws: any[][] = e.query?.where ?? []
@@ -117,7 +123,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   const m: Mundo = {
     branch, head: null, gitDir: '.git', id: 'sess-1', home: 'C:/Users/t', arquivos: {}, store: {},
     runs: [], lidos: [], listados: [], logs: [], tools: [], timers: [], eventos: [], segurar: null, falhar: null, abertos: [], semBanco: false,
-    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, avanco: 0, segurarEstado: null, falharEstado: null, servirEstado: null, git: null, entrega: null, falharRun: null, env: {},
+    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, dbPorUrl: null, gitNome: null, avanco: 0, segurarEstado: null, falharEstado: null, servirEstado: null, git: null, entrega: null, falharRun: null, env: {},
   }
   gravar(m, 'C:/repo/ai/ledger/fork-c02-s01.md', 'READY c02-s01  # 2026-10-15T12:00:00Z\nPLAN p.md TASKS 3  # 2026-10-15T12:05:00Z\n', 1)
   on('*', async ($: any, e: any, next: any) => {
@@ -174,6 +180,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   on('process.run', async ($: any, e: any) => {
     m.runs.push(e.argv.join(' '))
     if (m.falharRun?.(e.argv)) return { value: { exitCode: 1, stdout: '', stderr: 'falhou' } }
+    if (e.argv.includes('user.name')) return { value: m.gitNome === null ? { exitCode: 1, stdout: '', stderr: '' } : { exitCode: 0, stdout: `${m.gitNome}\n`, stderr: '' } }
     if (e.argv.includes('sweep')) {
       if (m.sweepAtraso) await dormir(m.sweepAtraso)
       if (m.sweepFalha) throw new Error('no python')
@@ -227,8 +234,10 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     m.tools.push(e)
     const espera = m.segurarTool?.(e)
     if (espera) await espera
-    if (m.falharTool?.(e)) return { result: '', text: 'boom', isError: true }
+    const falha = m.falharTool?.(e)
+    if (falha) return { result: '', text: typeof falha === 'string' ? falha : 'boom', isError: true }
     if (e.tool === 'ArtifactData' && m.semBanco) return { result: '', text: 'offline', isError: true }
+    if (e.tool === 'ArtifactData' && m.dbPorUrl?.[e.url]) return banco(m.dbPorUrl[e.url]!, e)
     if (e.tool === 'ArtifactData' && m.db) return banco(m.db, e)
     return e.tool === 'Artifact' ? { result: '', text: 'File saved: "C:/tmp/plano.json" (1 bytes)', isError: false } : { result: '', text: 'ok', isError: false }
   })

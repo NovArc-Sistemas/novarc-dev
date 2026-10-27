@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { VAZIA, anotar, raia } from './execucao'
-import { aFechar, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
+import { aFechar, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, pastaDoCliente, slugPasta, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
 
 const plano: Plano = {
   conjuntos: [
@@ -167,4 +167,13 @@ test('review: combined short flags with d are a delete push', () => {
   expect(branchDoPush(`git push -df origin ${b}`)).toBeNull()
   expect(branchDoPush(`git push -uf origin ${b}`)).toBe(b)
   expect(branchDoPush(`git push --dry-run origin ${b}`)).toBe(b)
+})
+
+test('pastaDoCliente and slugPasta: the client folder and its page slug', () => {
+  expect(pastaDoCliente('Kidsy')).toBe('Clientes/Kidsy')
+  expect(pastaDoCliente(' Kidsy ')).toBe('Clientes/Kidsy')
+  expect(pastaDoCliente('')).toBe('')
+  expect(pastaDoCliente(undefined)).toBe('')
+  expect(slugPasta('Clientes/Kidsy')).toBe('clientes-kidsy')
+  expect(slugPasta('Clientes/São Paulo')).toBe('clientes-sao-paulo')
 })

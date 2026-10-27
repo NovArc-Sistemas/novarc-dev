@@ -208,6 +208,33 @@ export type ExplorerMessage =
   | { type: 'open-folder'; folder: string }
   | { type: 'move'; ids: string[]; folder: string | null }
 
+// ---- C04-S01: the Acervo dos Sócios sync (`$.store` key acervo-sync-v1, written by the Acervo, read by the pane)
+
+export type AcervoLinha = { id: string; url: string; titulo: string; pasta: string; at: string }
+export type AcervoSync = {
+  url: string
+  ultimo: string | null
+  erro: string | null
+  reconciliacao: { at: string; renomeados: number; criados: number } | null
+  /** Newest first, at most 50. */
+  recentes: AcervoLinha[]
+  /** Failed writes, retried by the next reconciliation. */
+  pendentes: (AcervoLinha & { erro: string })[]
+}
+/** One `artefatos/{id}` document as the mod creates it: no account, no e-mail (R21). */
+export type EntradaAcervo = {
+  dono: string
+  conta: ''
+  titulo: string
+  url: string
+  pasta: string
+  tags: []
+  acesso: {}
+  apelido: ''
+  atualizadoEm: string
+  fonte: 'maestro'
+}
+
 declare module 'claude-code' {
   interface PluginState {
     novarc: {
@@ -218,7 +245,7 @@ declare module 'claude-code' {
       exec: Execucao
       /** auto: the band shows itself; on: forced by "ativar"; off: "desativar" or "nunca neste projeto". */
       maestroModo: 'auto' | 'on' | 'off'
-      maestroAba: 'agora' | 'execucao' | 'locks' | 'pendencias'
+      maestroAba: 'agora' | 'execucao' | 'locks' | 'pendencias' | 'inteligencia'
       /** null until this session's first registry read (Agora shows `lendo o registro…`). */
       maestroOutras: Registro[] | null
       /** Where this session's registry entry landed: the per-session file or the store fallback. */

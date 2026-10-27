@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { escrito, iniciar, montar, partesDaFaixa, quieto, todos } from './mundo-teste'
 import { dadosFaixa, haQuanto, semConfirmacao } from './register'
+import { quando } from './inteligencia-aba'
 
 // C11-S01: the drawing of the pane and the band over both surfaces. Data paths are proved by their own tests
 // (register.test dadosFaixa, olhos, alertas, pendencias); here a state read beneath the plugin can hand the drawing a
@@ -156,8 +157,8 @@ test('pane order: header 1200x60, strip, seções band, tab row, trail band, bod
   expect(cab.props.alt.startsWith('NovArc Maestro · Maestro v2 · toda a execução')).toBe(true)
   expect(faixa.type).toBe('Box')
   expect([d1.type, d1.props.width, d1.props.height, d1.props.alt]).toEqual(['Svg', 1200, 20, '🧭 seções'])
-  expect(String(d1.props.source)).toContain('1 a 4 trocam de aba com o painel em foco')
-  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^t-/.test(b.key)).map((b: any) => [b.key, b.props.hotkey])).toEqual([['t-agora', '1'], ['t-exec', '2'], ['t-locks', '3'], ['t-pend', '4']])
+  expect(String(d1.props.source)).toContain('1 a 5 trocam de aba com o painel em foco')
+  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^t-/.test(b.key)).map((b: any) => [b.key, b.props.hotkey])).toEqual([['t-agora', '1'], ['t-exec', '2'], ['t-locks', '3'], ['t-pend', '4'], ['t-inteligencia', '5']])
   expect(abas.type).toBe('Box')
   expect(d2.props.alt.startsWith('Maestro v2 › ')).toBe(true)
   const contas = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'error' && t.props.bold).map((t: any) => t.text)
@@ -794,4 +795,172 @@ test('the orchestrator pane has no element that sends a directive (A41, R35)', a
   const linhas = novos.filter(e => typeof e?.text === 'string' && /^\s*(GO|HOLD|FECHA|LIBERA|RELEASE|LOCK|status)\b/i.test(e.text))
   expect({ enviadas: enviadas.length, linhas }).toEqual({ enviadas: 0, linhas: [] })
   expect(novos.filter(e => e && 'to' in e && typeof e.text === 'string')).toEqual([])
+})
+
+// ---- C04-S01: the Inteligência tab, the partners' catalogue card (interface.md "Orquestradora")
+
+// the card cases mount a whole session: a loaded host needs more than the 5 s default
+const LENTO = { timeoutMs: 20_000 }
+// a test-local fake: the real url lives in the Acervo hooks only (A23)
+const ACERVO_T = 'https://claude.ai/artifact/TESTE-ACERVO'
+const KIDSY_C = () => ctx('orquestrador', { plano: { ...PLANO_V2, projeto: { ...PLANO_V2.projeto, cliente: 'Kidsy' } } })
+const TREZE = (() => {
+  const d = new Date()
+  d.setHours(13, 0, 0, 0)
+  return d.toISOString()
+})()
+const LINHA_A = (i: number, pasta = 'Clientes/Kidsy') => ({ id: `Art${i}`, url: `https://claude.ai/artifact/Art${i}`, titulo: `Artefato ${i}`, pasta, at: TREZE })
+const SYNC_A = (o: Record<string, unknown> = {}) => ({
+  url: ACERVO_T, ultimo: TREZE, erro: null, reconciliacao: { at: TREZE, renomeados: 1, criados: 1 },
+  recentes: [LINHA_A(99, 'Clientes/Outro'), ...Array.from({ length: 12 }, (_, i) => LINHA_A(i))], pendentes: [], ...o,
+})
+
+/** The orchestrator pane on Inteligência with `sync` in the store (undefined: no key). */
+async function inteligencia($: any, on: any, sync: unknown, surface: 'desktop' | 'terminal' = 'desktop') {
+  const m = montar(on, {})
+  m.servirEstado = { ctx: KIDSY_C(), exec: ORQ, maestroLeitura: LEIT(), maestroOutras: [], maestroAba: 'inteligencia' }
+  if (sync !== undefined) m.store['acervo-sync-v1'] = sync
+  await iniciar($)
+  await quieto(m)
+  const ui = await painel($, surface)
+  const corpo = await ui.find({ key: 'corpo' })
+  return { m, ui, corpo }
+}
+const textos = (n: any) => todos(n).filter((x: any) => x.type === 'Text').map((x: any) => (x.children ?? []).filter((c: any) => typeof c === 'string').join(''))
+const abrirLinhas = async (ui: any) => (await ui.findAll({ type: 'Button' })).filter((b: any) => /^abrir-Art/.test(b.key))
+
+test('A31: the orchestrator tab row gains 📊 Inteligência on 5; a set session has none', LENTO, async ($: any, on: any) => {
+  const m = montar(on, {})
+  const v: Record<string, unknown> = { ctx: KIDSY_C(), exec: ORQ, maestroLeitura: LEIT(), maestroOutras: [] }
+  m.servirEstado = v
+  await iniciar($)
+  let ui: any = await painel($, 'desktop')
+  const t = await ui.find({ key: 't-inteligencia' })
+  expect([t?.props.hotkey, t?.text]).toEqual(['5', '📊 Inteligência'])
+  await ui.press({ key: 't-inteligencia' })
+  expect(escrito(m, 'maestroAba')).toBe('inteligencia')
+  await ui.unmount()
+  v.maestroAba = 'inteligencia'
+  ui = await painel($, 'desktop')
+  expect([(await ui.find({ key: 't-inteligencia' }))?.props.variant, (await ui.find({ key: 't-pend' }))?.props.variant]).toEqual(['primary', 'secondary'])
+  await ui.unmount()
+  v.ctx = ctx('conjunto', { conjunto: 'C03' })
+  v.exec = { papel: 'conjunto', conjunto: 'C03', ledgerDir: null, forks: {} }
+  ui = await painel($, 'desktop')
+  expect(await ui.find({ key: 't-inteligencia' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('A13: the card with its pill, ten abrir rows of the client folder, the footer and abrir Acervo', LENTO, async ($: any, on: any) => {
+  const { ui, corpo } = await inteligencia($, on, SYNC_A())
+  const ts = textos(corpo)
+  expect(ts).toContain('ACERVO DESTA EXECUÇÃO')
+  expect(ts).toContain('Kidsy · Acervo dos Sócios')
+  expect(ts).toContain('sync automático na publicação')
+  expect(todos(corpo).filter((n: any) => n.type === 'Svg').map((n: any) => n.props.alt)).toEqual(['em dia · 13:00'])
+  const bs = await abrirLinhas(ui)
+  expect(bs.map((b: any) => [b.key, b.text, b.props.variant])).toEqual(Array.from({ length: 10 }, (_, i) => [`abrir-Art${i}`, 'abrir', 'secondary']))
+  expect(ts).toContain('🔐 grava só no Acervo dos Sócios, sem confirmação')
+  const aa = await ui.find({ key: 'abrir-acervo' })
+  expect([aa?.text, aa?.props.variant]).toEqual(['abrir Acervo', 'primary'])
+  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^Acervo$/.test(String(b.text)))).toEqual([])
+  await ui.unmount()
+})
+
+test('A14: a sync error turns the pill to falhou, the border warning, and keeps the rows', LENTO, async ($: any, on: any) => {
+  const { ui, corpo } = await inteligencia($, on, SYNC_A({ erro: 'offline', recentes: [0, 1, 2].map(i => LINHA_A(i)) }))
+  expect(todos(corpo).filter((n: any) => n.type === 'Svg').map((n: any) => n.props.alt)).toEqual(['falhou'])
+  expect(todos(corpo).some((n: any) => n.type === 'Box' && n.props.borderColor === 'warning')).toBe(true)
+  expect(textos(corpo)).toContain('sync automático falhou: offline')
+  expect((await abrirLinhas(ui)).length).toBe(3)
+  await ui.unmount()
+})
+
+test('A15, A32: with no acervo-sync-v1 the body is the one empty card', LENTO, async ($: any, on: any) => {
+  const { ui, corpo } = await inteligencia($, on, undefined)
+  expect(corpo.children.length).toBe(1)
+  expect(textos(corpo.children[0])).toEqual(['📭', 'Nada aqui ainda', 'o acervo desta execução aparece depois da primeira publicação'])
+  await ui.unmount()
+})
+
+test('Review Focus 4: state with nothing published yet reads aguardando and the empty-rows line', LENTO, async ($: any, on: any) => {
+  const { ui, corpo } = await inteligencia($, on, SYNC_A({ ultimo: null, recentes: [], reconciliacao: null }))
+  expect(todos(corpo).filter((n: any) => n.type === 'Svg').map((n: any) => n.props.alt)).toEqual(['aguardando'])
+  expect(textos(corpo)).toContain('Nenhum artefato desta execução ainda.')
+  expect(textos(corpo)).toContain('🔄 reconciliação ainda não rodou')
+  expect(textos(corpo).some(t => t.includes('em dia'))).toBe(false)
+  await ui.unmount()
+})
+
+test('A8 footer: the reconciliation line, and nada mudou when both counts are 0', LENTO, async ($: any, on: any) => {
+  let r = await inteligencia($, on, SYNC_A())
+  expect(textos(r.corpo)).toContain('🔄 reconciliado no início da sessão: 1 renomeado, 1 criado no claude.ai')
+  await r.ui.unmount()
+  r.m.store['acervo-sync-v1'] = SYNC_A({ reconciliacao: { at: TREZE, renomeados: 0, criados: 0 } })
+  const ui = await painel($, 'desktop')
+  expect(textos(await ui.drawn())).toContain('🔄 reconciliado no início da sessão: nada mudou')
+  await ui.unmount()
+})
+
+test('A16, A17: abrir Acervo opens the client folder, falls back to the bare url when refused; abrir opens the row', LENTO, async ($: any, on: any) => {
+  const { m, ui } = await inteligencia($, on, SYNC_A())
+  const abertos = () => m.tools.filter((t: any) => t.tool === 'Artifact' && t.action === 'open').map((t: any) => t.url)
+  await ui.press({ key: 'abrir-acervo' })
+  expect(abertos()).toEqual([`${ACERVO_T}#clientes-kidsy`])
+  m.falharTool = e => e.tool === 'Artifact' && e.action === 'open' && String(e.url).includes('#') && 'fragment refused'
+  await ui.press({ key: 'abrir-acervo' })
+  expect(abertos()).toEqual([`${ACERVO_T}#clientes-kidsy`, `${ACERVO_T}#clientes-kidsy`, ACERVO_T])
+  expect(await ui.find({ key: 'estado-erro' })).toBeUndefined()
+  await ui.press({ key: 'abrir-Art3' })
+  expect(abertos().pop()).toBe('https://claude.ai/artifact/Art3')
+  await ui.unmount()
+})
+
+test('A30: drawing the tab makes no Artifact or ArtifactData call', LENTO, async ($: any, on: any) => {
+  const m = montar(on, {})
+  m.servirEstado = { ctx: KIDSY_C(), exec: ORQ, maestroLeitura: LEIT(), maestroOutras: [], maestroAba: 'inteligencia' }
+  m.store['acervo-sync-v1'] = SYNC_A()
+  await iniciar($)
+  await quieto(m)
+  const n = m.tools.length
+  for (const surface of SUP) {
+    const ui = await painel($, surface)
+    await ui.drawn()
+    await ui.unmount()
+  }
+  await quieto(m)
+  expect(m.tools.slice(n)).toEqual([])
+})
+
+test('A33: theme keys only, a two-palette pill, every Button in a keyed Box; terminal pill in brackets', LENTO, async ($: any, on: any) => {
+  const { m, ui, corpo } = await inteligencia($, on, SYNC_A())
+  for (const n of todos(corpo)) {
+    if (n.type !== 'Box' && n.type !== 'Text') continue
+    for (const p of ['color', 'borderColor', 'backgroundColor']) expect(String(n.props?.[p] ?? '').startsWith('#')).toBe(false)
+  }
+  const selo = todos(corpo).find((n: any) => n.type === 'Svg')
+  expect(String(selo.props.source)).toContain('@media (prefers-color-scheme: dark)')
+  // the tree drawn carries no keys: each Button of the card is the only child of the Box keyed b-<its key>
+  const bs = (await ui.findAll({ type: 'Button' })).filter((b: any) => /^abrir-/.test(b.key))
+  expect(bs.length).toBe(11)
+  expect(todos(corpo).filter((n: any) => n.type === 'Button').length).toBe(11)
+  for (const b of bs) {
+    const pai = await ui.find({ key: `b-${b.key}` })
+    expect([pai?.type, pai?.children?.length, pai?.children?.[0]?.type]).toEqual(['Box', 1, 'Button'])
+  }
+  await ui.unmount()
+  m.servirEstado!.maestroAba = 'inteligencia'
+  const ut = await painel($, 'terminal')
+  expect(textos(await ut.drawn()).some(t => t.includes('[em dia · 13:00]'))).toBe(true)
+  await ut.unmount()
+})
+
+test('row time reads like the simulator: agora, há N min, há N h, ontem, then dd/mm; plural only above 1', LENTO, async ($: any, on: any) => {
+  const t = Date.parse('2026-10-27T15:00:00Z')
+  const antes = (min: number) => new Date(t - min * 60_000).toISOString()
+  expect([quando(antes(0), t), quando(antes(5), t), quando(antes(180), t), quando(antes(30 * 60), t), quando('x', t)]).toEqual(['agora', 'há 5 min', 'há 3 h', 'ontem', '—'])
+  expect(quando(antes(3 * 24 * 60), t)).toMatch(/^\d{2}\/\d{2}$/)
+  const r = await inteligencia($, on, SYNC_A({ reconciliacao: { at: TREZE, renomeados: 2, criados: 1 } }))
+  expect(textos(r.corpo)).toContain('🔄 reconciliado no início da sessão: 2 renomeados, 1 criado no claude.ai')
+  await r.ui.unmount()
 })
