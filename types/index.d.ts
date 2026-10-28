@@ -300,6 +300,12 @@ declare module 'claude-code' {
       maestroGos: Record<string, { sha: string; at: number; atualizadas: string[]; decisoesNovas: number; branches: string[]; merges?: string[] }>
       /** C05-S01: the set selected in the Execução tab (its detail card). */
       maestroSelConjunto: string | null
+      /** C05-S02: orchestrator only, the run's session family tree (never written to the database); null = first read pending. */
+      maestroFamilia: {
+        linhas: { chave: string; nivel: 0 | 1 | 2; icone: string; titulo: string; papel: 'orquestradora' | 'conjunto' | 'spec'; estado: string | null; branch: string | null; abertaPor: string | null }[]
+        at: number
+        fonte: 'app' | 'registro'
+      } | null
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

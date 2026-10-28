@@ -263,7 +263,8 @@ test('atualizar twice over the same data in a set session makes 2 list calls eac
   expect(escritas.length).toBe(0)
 })
 
-test('an orchestrator look plus a push touches only specs, execucao, config; only write is specs/<id>; no sessao, cwd or ledgerDir in any input', async ($: any, on: any) => {
+// C05-S02 R10 changed this contract: the orchestrator never owns specs/{S}, so its push writes nothing (it was one write)
+test('an orchestrator look plus a push touches only specs, execucao, config; the push writes nothing (R10); no sessao, cwd or ledgerDir in any input', async ($: any, on: any) => {
   const escritas: any[] = []
   const todas: any[] = []
   on('ui.open', async () => ({ value: { isPlaced: true } }))
@@ -271,12 +272,12 @@ test('an orchestrator look plus a push touches only specs, execucao, config; onl
   await iniciar($)
   await $.tool.call({ tool: 'Skill', skill: 'novarc:novarc-session-build', args: `orquestrar ${URL} C01` })
   await $.command.run?.({ command: 'maestro', args: '' })
+  const antes = escritas.length
   await $.tool.call({ tool: 'Bash', command: `git push -u origin ${B}` })
-  await esperar(() => escritas.length > 0)
-  await dormir(60)
+  await dormir(300)
   expect([...new Set(todas.map(c => c.collection))].sort()).toEqual(['config', 'execucao', 'pendencias', 'specs'])
-  expect(escritas.length).toBe(1)
-  expect([escritas[0].collection, escritas[0].doc_id]).toEqual(['specs', 'C01-S01'])
+  expect(escritas.length).toBe(antes)
+  expect(escritas.some(w => w.collection === 'specs')).toBe(false)
   for (const c of todas) expect(/sessao|"cwd"|ledgerDir/.test(JSON.stringify(c))).toBe(false)
 })
 
@@ -813,4 +814,224 @@ test('final fix 7: carregar does not wait on the refresh; a hung list times out 
   await quieto(m)
   expect(execs()).toBe(n + 1)
   soltar()
+})
+
+// ---- C05-S02: the owner of specs/{S} writes the milestone; any other session routes or toasts (R8-R14, R17, R19-R22)
+
+const COD5 = 'NOVARC-PLUGIN-MAESTRO'
+const DIR5 = 'C:/main/.novarc/ledger/session-build/20261029-0900'
+const B5 = 'feat/c02-s01-alertas-locks-espelho-20261029'
+const SLUG5 = 'alertas-locks-espelho'
+const SHA5 = '9f8e7d6'
+const PLANO5 = { conjuntos: [{ id: 'C02', titulo: 'Alertas', specs: ['C02-S01'] }], specs: [{ id: 'C02-S01', conjunto: 'C02', slug: SLUG5 }], projeto: { codigo: COD5 } }
+const READY5 = { tipo: 'READY', texto: `${SLUG5} branch=${B5} worktree=C:/w`, at: Date.parse('2026-10-29T09:00:00Z') }
+const LENTO5 = { timeoutMs: 20_000 }
+
+/** One session of the C02 run on B5: `papel` from the served run state, specs/C02-S01 at `etapa` in the db. */
+async function mundo5(
+  $: any,
+  on: any,
+  o: { papel: 'orquestrador' | 'conjunto' | 'spec'; etapa?: string; headSha?: string; ready?: boolean; ledger?: string; mapa?: boolean; registros?: any[]; d20a?: boolean; eventos?: any[] },
+): Promise<Mundo> {
+  const m = montarMundo(on, {}, o.papel === 'spec' ? B5 : 'main', true)
+  m.sha = SHA5
+  m.db = { 'specs/C02-S01': { data: { etapa: o.etapa ?? 'implementando', ...(o.headSha ? { headSha: o.headSha, branch: B5 } : {}) }, version: 3 }, 'execucao/C02': { data: {}, version: 1 } }
+  gravar(m, `${DIR5}/fork-${SLUG5}.md`, '# fork\n')
+  gravar(m, `${DIR5}/ledger.md`, `# set\n${o.ledger ?? ''}`)
+  if (o.d20a) m.store['maestro-d20a'] = true
+  const forks = o.ready === false ? {} : { [SLUG5]: { slug: SLUG5, spec: 'C02-S01', eventos: o.eventos ?? [READY5] } }
+  m.servirEstado = {
+    exec: { papel: o.papel, ledgerDir: DIR5, forks, codigo: COD5, conjunto: 'C02', spec: o.papel === 'spec' ? 'C02-S01' : null },
+    ctx: { artefato: URL_MUNDO, plano: PLANO5, conjunto: 'C02', spec: o.papel === 'spec' ? 'C02-S01' : null, papel: o.papel },
+    ...(o.mapa ? { maestroMapa: { conjuntos: { C02: { nome: `novarc-${COD5}-C02`, sessao: 'local_c02' } }, specs: {}, orquestrador: null, at: 1 } } : {}),
+    ...(o.registros ? { maestroOutras: o.registros } : {}),
+  }
+  await iniciarMundo($)
+  await quieto(m)
+  return m
+}
+const escritasSpecs = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'ArtifactData' && ['set', 'update'].includes(t.action) && t.collection === 'specs')
+const envios5 = (m: Mundo) => m.eventos.map(x => x.e).filter(e => e && typeof e === 'object' && 'to' in e && e.to !== 'transcript' && typeof e.text === 'string')
+const push5 = async ($: any, m: Mundo, branch = B5) => {
+  await $.tool.call({ tool: 'Bash', command: `git push -u origin ${branch}` })
+  await quieto(m)
+}
+const TOAST5 = `Maestro: marco branch-publicada de C02-S01 ignorado; dona agora: novarc-${COD5}-C02-S01`
+const regs5 = () => [
+  { sessao: 'sess-1', cwd: 'C:/w', titulo: B5, papel: 'spec', forks: 0, feitos: 0, alerta: null, at: Date.now(), codigo: COD5, ledgerDir: DIR5, conjunto: 'C02', spec: 'C02-S01' },
+  { sessao: 'local_c02', cwd: 'C:/main', titulo: 'main', papel: 'conjunto', forks: 1, feitos: 0, alerta: null, at: Date.now(), codigo: COD5, ledgerDir: DIR5, conjunto: 'C02' },
+]
+
+test('A9: the spec session that owns the build writes branch-publicada with headSha and its title, pinned; no session id, no auditoria', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'spec' })
+  await push5($, m)
+  const w = escritasSpecs(m)
+  expect(w.length).toBe(1)
+  expect([w[0].action, w[0].doc_id, w[0].if_version]).toEqual(['update', 'C02-S01', 3])
+  expect(w[0].data.etapa).toBe('branch-publicada')
+  expect(w[0].data.headSha).toBe(SHA5)
+  expect(w[0].data.origem).toBe('mod')
+  expect(w[0].data.sessao).toBe(`novarc-${COD5}-C02-S01`)
+  expect(JSON.stringify(m.db)).not.toContain('local_')
+  expect(Object.keys(m.db!).some(k => k.startsWith('auditoria/'))).toBe(false)
+  expect(m.toasts.filter(t => t.startsWith('Maestro: marco'))).toEqual([])
+})
+
+test('A10, A19: the orchestrator with D20a on writes nothing and sends one audited MARCO to the set session id', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'orquestrador', mapa: true, d20a: true })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  const e = envios5(m).filter(x => String(x.text).startsWith('MARCO'))
+  expect(e.length).toBe(1)
+  expect(e[0].to).toBe('local_c02') // endereco() gives { sessionId }; the engine hands the hook the id
+  expect(e[0].text).toBe(`MARCO C02-S01 branch-publicada ${SHA5}`)
+  const a = Object.entries(m.db!).filter(([k]) => k.startsWith('auditoria/')).map(([, d]) => d.data)
+  expect(a.length).toBe(1)
+  expect([a[0].acao, a[0].origem, a[0].linha]).toEqual(['MARCO', 'maestro', `MARCO C02-S01 branch-publicada ${SHA5}`])
+})
+
+test('R10: the orchestrator with D20a off (default) only toasts; nothing written or sent', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'orquestrador', mapa: true })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(envios5(m).filter(x => String(x.text).includes('MARCO'))).toEqual([])
+  expect(m.toasts).toContain(TOAST5)
+})
+
+test('A12: the orchestrator with no route for the set writes nothing and sends nothing', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'orquestrador', d20a: true })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(envios5(m).filter(x => String(x.text).includes('MARCO'))).toEqual([])
+})
+
+test('A11: a spec session past its accepted DONE logs NOTE MARCO in its fork ledger and sends it to its set session', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'spec', ledger: `NOTE DONE-ACEITO ${SLUG5} 1a2b3c4  # 2026-10-29T10:00:00Z\n`, registros: regs5() })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  const linha = `MARCO C02-S01 branch-publicada ${B5} ${SHA5}`
+  expect(m.runs.some(r => r.includes(`--fork ${SLUG5} --type NOTE --text ${linha}`))).toBe(true)
+  const e = envios5(m).filter(x => String(x.text).includes('MARCO'))
+  expect(e.map(x => [x.to, x.text])).toEqual([['local_c02', `NOTE ${linha}`]])
+})
+
+test('A8 via the hook: a later REABERTO gives the build back to the spec session, which writes again', LENTO5, async ($: any, on: any) => {
+  const ledger = `NOTE DONE-ACEITO ${SLUG5} 1a2b3c4  # 2026-10-29T10:00:00Z\nNOTE REABERTO ${SLUG5} VALIDACAO reprovado  # 2026-10-29T10:00:00Z\n`
+  const m = await mundo5($, on, { papel: 'spec', ledger, registros: regs5() })
+  await push5($, m)
+  expect(escritasSpecs(m).length).toBe(1)
+})
+
+test('A17: the set session during the build toasts the skipped milestone and writes nothing', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'conjunto' })
+  await push5($, m)
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(m.toasts.filter(t => t === TOAST5).length).toBe(2)
+})
+
+test('N = 1: a set session with no READY for the spec writes as today', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'conjunto', ready: false })
+  await push5($, m)
+  expect(escritasSpecs(m).length).toBe(1)
+})
+
+test('a push between git switch and READY in the spec session writes nothing and names the set session as owner', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'spec', ready: false })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(m.toasts).toContain(`Maestro: marco branch-publicada de C02-S01 ignorado; dona agora: novarc-${COD5}-C02`)
+})
+
+test('A22: gh pr create in the set session writes pr-aberto with the url; the same command in the spec session writes nothing', LENTO5, async ($: any, on: any) => {
+  const pr = 'https://github.com/o/r/pull/9'
+  const m = await mundo5($, on, { papel: 'conjunto', etapa: 'branch-publicada', headSha: SHA5 })
+  m.textoBash = pr
+  await $.tool.call({ tool: 'Skill', skill: 'novarc:novarc-session-end', args: '' }) // the close-out: gh pr create is allowed
+  await $.tool.call({ tool: 'Bash', command: `gh pr create --head ${B5} --title t --body b` })
+  await quieto(m)
+  const w = escritasSpecs(m)
+  expect(w.length).toBe(1)
+  expect([w[0].data.etapa, w[0].data.pr, w[0].data.sessao]).toEqual(['pr-aberto', pr, `novarc-${COD5}-C02`])
+})
+
+test('A22: gh pr create in the spec session writes nothing and toasts the set session as owner', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'spec', etapa: 'branch-publicada', headSha: SHA5 })
+  m.textoBash = 'https://github.com/o/r/pull/9'
+  await $.tool.call({ tool: 'Skill', skill: 'novarc:novarc-session-end', args: '' })
+  await $.tool.call({ tool: 'Bash', command: `gh pr create --head ${B5} --title t --body b` })
+  await quieto(m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(m.toasts).toContain(`Maestro: marco pr-aberto de C02-S01 ignorado; dona agora: novarc-${COD5}-C02`)
+})
+
+test('later pushes: the owner updates headSha alone, also past pr-aberto; the same sha writes nothing', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'spec', etapa: 'branch-publicada', headSha: 'abc1111' })
+  await push5($, m)
+  const w = escritasSpecs(m)
+  expect(w.length).toBe(1)
+  expect(w[0].data).toEqual({ headSha: SHA5 })
+  expect(m.db!['specs/C02-S01']!.data.etapa).toBe('branch-publicada')
+  await push5($, m)
+  expect(escritasSpecs(m).length).toBe(1)
+})
+
+test('later pushes after pr-aberto: the set session (owner after DONE-ACEITO) updates headSha alone', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'conjunto', etapa: 'pr-aberto', headSha: 'abc2222', ledger: `NOTE DONE-ACEITO ${SLUG5} abc2222  # 2026-10-29T10:00:00Z\n` })
+  await push5($, m)
+  const w = escritasSpecs(m)
+  expect(w.length).toBe(1)
+  expect(w[0].data).toEqual({ headSha: SHA5 })
+  expect(m.db!['specs/C02-S01']!.data.etapa).toBe('pr-aberto')
+})
+
+test('A13: a failing milestone write and a failing send never change the Bash result', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'orquestrador', mapa: true, d20a: true })
+  m.falharTool = (e: any) => e.tool === 'ArtifactData'
+  m.entrega = () => {
+    throw new Error('send boom')
+  }
+  const r = await $.tool.call({ tool: 'Bash', command: `git push -u origin ${B5}` })
+  expect([r.text, !!r.isError, r.deny]).toEqual(['ok', false, undefined])
+  await quieto(m)
+  expect(escritasSpecs(m)).toEqual([])
+})
+
+test('A14: with ArtifactData and send resolving after 1 s the push hook returns under 50 ms and makes no get of execucao', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'orquestrador', mapa: true, d20a: true })
+  let soltar = () => {}
+  const preso = new Promise<void>(r => (soltar = r))
+  m.segurarTool = (e: any) => (e.tool === 'ArtifactData' ? preso : null)
+  const antes = m.tools.length
+  const n = m.eventos.length
+  await $.tool.call({ tool: 'Bash', command: `git push -u origin ${B5}` })
+  const fim = performance.now()
+  // added = from the stubbed Bash call (next(e)) to the hook's return
+  const bash = m.eventos.slice(n).find(x => x.e?.tool === 'Bash')!
+  expect(fim - bash.at).toBeLessThan(50)
+  await dormir(1000)
+  soltar()
+  await quieto(m)
+  expect(m.tools.slice(antes).some((t: any) => t.tool === 'ArtifactData' && t.action === 'get' && t.collection === 'execucao')).toBe(false)
+})
+
+test('A24: a push while NOTE WIP-PUSH is the last folded fork line writes, sends and toasts nothing; after DONE the next push writes', LENTO5, async ($: any, on: any) => {
+  const wip = { tipo: 'NOTE', texto: `WIP-PUSH ${SLUG5}`, at: READY5.at + 60_000 }
+  const m = await mundo5($, on, { papel: 'spec', eventos: [READY5, wip], registros: regs5() })
+  await push5($, m)
+  expect(escritasSpecs(m)).toEqual([])
+  expect(envios5(m).filter(x => String(x.text).includes('MARCO'))).toEqual([])
+  expect(m.toasts.filter(t => t.startsWith('Maestro: marco'))).toEqual([])
+  const m2 = m
+  ;(m2.servirEstado!.exec as any).forks[SLUG5].eventos = [READY5, wip, { tipo: 'DONE', texto: SLUG5, at: wip.at + 60_000 }]
+  await push5($, m2)
+  expect(escritasSpecs(m2).length).toBe(1)
+  expect(escritasSpecs(m2)[0].data.etapa).toBe('branch-publicada')
+})
+
+test('Review Focus 1: a push of a branch with no spec of the plan writes, sends and toasts nothing', LENTO5, async ($: any, on: any) => {
+  const m = await mundo5($, on, { papel: 'conjunto' })
+  await push5($, m, 'feat/sem-spec')
+  expect(escritasSpecs(m)).toEqual([])
+  expect(m.toasts.filter(t => t.startsWith('Maestro: marco'))).toEqual([])
 })

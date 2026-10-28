@@ -58,7 +58,7 @@ export type EspelhoConjunto = {
   aCaminho?: ACaminho[]
   at: string
 }
-export type ConjuntoDoc = { iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }>; espelho?: EspelhoConjunto }
+export type ConjuntoDoc = { sessao?: string; iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }>; espelho?: EspelhoConjunto }
 export type Limiares = { calado: number; lockOrfao: number; fonte: 'padrao' | 'medido'; at: string }
 export type Proposta = { calado: number; lockOrfao: number; amostras: number; at: string }
 /** `config/orquestracao`: the orchestrator mod's singleton (run, slots, thresholds). */
@@ -69,6 +69,59 @@ export type { AuditoriaDoc } from '../../types'
 /** Rank of an etapa; -1 for none. */
 export function rank(etapa: string | null | undefined): number {
   return etapa ? ETAPAS.indexOf(etapa as Etapa) : -1
+}
+
+// ---- C05-S02: who owns specs/{S} in each phase (skills/novarc-session-build/references/milestones.md ownership table)
+
+export type Dona = 'conjunto' | 'spec'
+const CARGA_FECHAMENTO = new Set(['iniciado', 'pr-aberto', 'merge'])
+const BUILD = new Set(['plano-aprovado', 'implementando', 'branch-publicada'])
+
+/** The owner of `etapa` of a spec: build etapas belong to the spec session from its READY to `NOTE DONE-ACEITO`. */
+export function donoDaFase(etapa: string, o: { ready: boolean; aceito: boolean }): Dona | null {
+  if (CARGA_FECHAMENTO.has(etapa)) return 'conjunto'
+  if (BUILD.has(etapa)) return o.ready && !o.aceito ? 'spec' : 'conjunto'
+  return null
+}
+
+export type AcaoMarco = { acao: 'gravar' } | { acao: 'marco' } | { acao: 'nota' } | { acao: 'toast'; dona: Dona } | { acao: 'nada' }
+
+/**
+ * What this session does with a milestone it observed (R8-R12, R17, R24): identity and phase first, then the fallbacks.
+ * `ready`: a READY folded for that spec (the spec session's own fork file, or a set session's); `rota`: a set session
+ * address is known; `d20a`: the orchestrator's mod may send MARCO (probe D20a passed).
+ */
+export function decidirMarco(i: {
+  papel: 'orquestrador' | 'conjunto' | 'spec' | null
+  specDaSessao: string | null
+  spec: string
+  etapa: string
+  ready: boolean
+  aceito: boolean
+  wip: boolean
+  rota: boolean
+  d20a: boolean
+}): AcaoMarco {
+  if (i.wip && i.etapa === 'branch-publicada') return { acao: 'nada' }
+  const dona = donoDaFase(i.etapa, i)
+  if (!dona) return { acao: 'nada' }
+  if (i.papel === null) return { acao: 'gravar' }
+  if (i.papel === 'orquestrador') return !i.rota ? { acao: 'nada' } : i.d20a ? { acao: 'marco' } : { acao: 'toast', dona }
+  if (i.papel === 'spec') {
+    if (i.spec !== i.specDaSessao) return { acao: 'toast', dona }
+    if (dona === 'spec') return { acao: 'gravar' }
+    if (i.aceito) return i.rota ? { acao: 'nota' } : { acao: 'nada' }
+    return { acao: 'toast', dona }
+  }
+  if (!i.ready || dona === 'conjunto') return { acao: 'gravar' }
+  return { acao: 'toast', dona }
+}
+
+/** The phase row the ownership box highlights (R16): before load, load, READY to DONE-ACEITO, or close-out. */
+export function posseDaSpec(i: { iniciado: boolean; ready: boolean; aceito: boolean }): 'antes' | 'carga' | 'build' | 'fechamento' {
+  if (i.aceito) return 'fechamento'
+  if (i.ready) return 'build'
+  return i.iniciado ? 'carga' : 'antes'
 }
 
 /** Spec id (C01-S01) carried by a branch name, or null. */

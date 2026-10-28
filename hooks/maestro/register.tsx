@@ -74,6 +74,9 @@ import {
   checkoutPrincipal, diretivasPrevistas, lerProvaRelato, lerRelay, linhaProvaRelato, linhaRelay, relatoDoConjunto, relatoRelease, rotaDaDiretiva,
   resumoTurno, secaoMapa, type Prevista, type Relato,
 } from './execucao'
+// C05-S02: milestone ownership by phase and the session family
+import { NOTAS_DOBRADAS, aceitos, chaveDe, emWip, familia, type LinhaFamilia, type SessaoApp } from './execucao'
+import { decidirMarco, posseDaSpec } from './logic'
 
 const PANE = 'novarc-maestro'
 const CTX = { plugin: 'novarc', key: 'ctx' } as const
@@ -106,6 +109,8 @@ const ROTAS = { plugin: 'novarc', key: 'maestroRotas' } as const
 // C03-S01 Task 7: the orchestrator's directive keys and their send lifecycle, mirrored from the module copies.
 const FEITAS = { plugin: 'novarc', key: 'diretivasFeitas' } as const
 const ENVIOS = { plugin: 'novarc', key: 'maestroEnvios' } as const
+// C05-S02: the run's session family tree (orchestrator), rebuilt by the poll step, never in render; null = first read pending.
+const FAMILIA = { plugin: 'novarc', key: 'maestroFamilia' } as const
 // C05-S01: the orchestrator's local copy of each `GO <C> inicio` it sent (never a collection, R30), and the selected set.
 const GOS = { plugin: 'novarc', key: 'maestroGos' } as const
 const SEL = { plugin: 'novarc', key: 'maestroSelConjunto' } as const
@@ -141,6 +146,7 @@ const PADRAO: Record<string, () => unknown> = {
   maestroRotas: () => [],
   diretivasFeitas: () => [],
   maestroEnvios: () => ({}),
+  maestroFamilia: () => null,
   maestroGos: () => ({}),
   maestroSelConjunto: () => null,
 }
@@ -179,6 +185,7 @@ async function cru($: any, k: string): Promise<unknown> {
     case 'maestroRotas': return (await $.state.get(ROTAS)).value
     case 'diretivasFeitas': return (await $.state.get(FEITAS)).value
     case 'maestroEnvios': return (await $.state.get(ENVIOS)).value
+    case 'maestroFamilia': return (await $.state.get(FAMILIA)).value
     case 'maestroGos': return (await $.state.get(GOS)).value
     case 'maestroSelConjunto': return (await $.state.get(SEL)).value
     default: throw new Error(`ler: chave desconhecida ${k}`)
@@ -371,6 +378,82 @@ async function marco($: any, url: string, specId: string, etapa: string, campos:
   return (await gravarFixado($, url, 'specs', specId, dados, { aceita: d => rank(d.data.etapa as string) < rank(etapa) })).r
 }
 
+// ---- C05-S02: the owner of specs/{S} decides who writes a milestone (milestones.md ownership table)
+
+// The set ledger's DONE-ACEITO / REABERTO lines read so far (line order), per ledger.md path; rebuilt on a shrink.
+let aceitosLidos: { path: string; size: number; mtimeMs: number; consumido: number; eventos: Evento[] } | null = null
+
+/** Folds the new DONE-ACEITO / REABERTO lines of this session's set `ledger.md`; never throws. */
+async function lerAceitos($: any, dir: string | null): Promise<Record<string, { aceito: boolean; sha: string | null; at: number }>> {
+  if (!dir) return {}
+  const p = `${dir}/ledger.md`
+  try {
+    const f = ((await $.fs.list(dir)) as { name: string; size: number; mtimeMs: number }[]).find(x => x.name === 'ledger.md')
+    if (!f) return {}
+    const a = aceitosLidos?.path === p ? aceitosLidos : null
+    if (!a || a.size !== f.size || a.mtimeMs !== f.mtimeMs) {
+      const texto = String(await $.fs.read(p))
+      const de = a && f.size >= a.size ? a.consumido : 0
+      const n = novasLinhas(texto, de)
+      const novos = n.eventos.filter(e => e.tipo === 'NOTE' && /^(DONE-ACEITO|REABERTO)\s/.test(e.texto))
+      aceitosLidos = { path: p, size: f.size, mtimeMs: f.mtimeMs, consumido: n.consumido, eventos: [...(de ? a!.eventos : []), ...novos] }
+    }
+    return aceitos(aceitosLidos!.eventos)
+  } catch {
+    return aceitos(aceitosLidos?.path === p ? aceitosLidos.eventos : [])
+  }
+}
+
+/** The set session's address: the map (orchestrator), else the live registry entry, else `execucao/{C}.sessao` (title). */
+async function rotaConjunto($: any, conjunto: string): Promise<string | null> {
+  const doMapa = mapaAtual.conjuntos[conjunto]?.sessao
+  if (doMapa) return doMapa
+  const regs = daMinhaExecucao(((await ler($, 'maestroOutras')) ?? []) as Registro[], sessao)
+  const r = regs.find(x => x.papel === 'conjunto' && x.conjunto === conjunto && vivo(x, Date.now()))
+  if (r) return r.sessao
+  return daBanco<ConjuntoDoc>(banco?.execucao?.[conjunto])?.sessao ?? null
+}
+
+/**
+ * One observed milestone (`branch-publicada` of a push, `pr-aberto` of a PR) after the owner decision (R8-R13, R17, R24):
+ * written by the owner only, else routed as MARCO (orchestrator) or NOTE MARCO (spec session past its accepted DONE).
+ */
+async function marcoDaFase($: any, url: string, ex: Execucao, plano: Plano, spec: { id: string; conjunto: string }, etapa: 'branch-publicada' | 'pr-aberto', campos: Record<string, unknown>, prova: string): Promise<void> {
+  // the orchestrator sees the spec lanes in each set's folded ledger dir, not in its own run
+  const forks = ex.papel === 'orquestrador' ? [...Object.values(ex.forks), ...Object.values(porDir).flatMap(x => Object.values(x.forks))] : Object.values(ex.forks)
+  const fork = forks.find(f => f.spec?.toUpperCase() === spec.id)
+  const ready = !!fork?.eventos.some(e => e.tipo === 'READY')
+  const aceito = fork ? !!(await lerAceitos($, ex.ledgerDir))[fork.slug]?.aceito : false
+  const rota = ex.papel === 'orquestrador' || ex.papel === 'spec' ? await rotaConjunto($, spec.conjunto) : null
+  const d20a = ex.papel === 'orquestrador' && (await $.store.get('maestro-d20a')) === true
+  // R24: a work-in-progress push (C10-S01 R20) records nothing while NOTE WIP-PUSH is the fork's last folded line
+  const wip = !!fork && emWip(fork.eventos, fork.slug, NOTAS_DOBRADAS)
+  // a spec role taken from the branch alone, with no run ledger seen, is no session-build run: today's write (Decision 4)
+  const papel = ex.papel === 'spec' && !ex.ledgerDir ? null : ex.papel
+  const a = decidirMarco({ papel, specDaSessao: ex.spec ?? null, spec: spec.id, etapa, ready, aceito, wip, rota: !!rota, d20a })
+  const cod = ex.codigo ?? projetoDoPlano(plano).codigo ?? ''
+  if (a.acao === 'gravar') {
+    const r = await marco($, url, spec.id, etapa, papel ? { ...campos, sessao: nomeDaSessao(ex) } : campos)
+    const sha = campos.headSha
+    // a later push updates headSha alone (milestones.md "Write a milestone" step 2), only in a run session that owns it
+    if (r === 'ja-estava' && etapa === 'branch-publicada' && papel && typeof sha === 'string' && sha)
+      await gravarFixado($, url, 'specs', spec.id, () => ({ headSha: sha }), { aceita: d => rank(d.data.etapa as string) >= rank('branch-publicada') && d.data.headSha !== sha })
+  } else if (a.acao === 'marco') {
+    const text = `MARCO ${spec.id} ${etapa} ${prova}`
+    await enviar($, { to: rota!, text, chave: chaveDe('marco', spec.id, etapa, prova), acao: 'MARCO', alvo: spec.conjunto, motivo: 'marco observado fora da sessão dona', regra: 'milestones.md:40-49' })
+  } else if (a.acao === 'nota') {
+    const linha = `MARCO ${spec.id} ${etapa} ${String(campos.branch ?? '')} ${prova}`.replace(/\s+/g, ' ')
+    await anexarLedger($, 'NOTE', linha, fork!.slug)
+    try {
+      await $.session.send({ to: endereco(rota!), text: `NOTE ${linha}` })
+    } catch {
+      // the line stays in the fork ledger; the set session reconciles from it
+    }
+  } else if (a.acao === 'toast') {
+    $.ui.toast(`Maestro: marco ${etapa} de ${spec.id} ignorado; dona agora: novarc-${cod}-${a.dona === 'spec' ? spec.id : spec.conjunto}`)
+  }
+}
+
 /** Re-reads the current branch, so a session that switches branch or worktree after start follows it. */
 async function seguirBranch($: any, c: Contexto, g = geracao): Promise<Contexto> {
   try {
@@ -382,6 +465,38 @@ async function seguirBranch($: any, c: Contexto, g = geracao): Promise<Contexto>
   } catch {
     return c
   }
+}
+
+const LIST_SESSIONS = 'mcp__ccd_session_mgmt__list_sessions'
+// Whether the app's session list tool exists here, read once per session (as ArtifactData's availability is).
+let temListSessions: boolean | null = null
+
+type Familia = { linhas: LinhaFamilia[]; at: number; fonte: 'app' | 'registro' }
+
+/**
+ * familia-refresh (jobs.md): one `list_sessions` call (the linked family, archived included), joined with the registry
+ * and the address map into `maestroFamilia`. A direct call (pane open) rebuilds only a tree older than 60 s (R7).
+ */
+async function refrescarFamilia($: any, forcar: boolean, g = geracao): Promise<void> {
+  const agora = Date.now()
+  const antes = ((await ler($, 'maestroFamilia')) ?? null) as Familia | null
+  if (!forcar && antes && agora - antes.at < 60_000) return
+  temListSessions ??= (await $.tool.list()).some((t: { name: string }) => t.name === LIST_SESSIONS)
+  let sessoes: SessaoApp[] | null = null
+  if (temListSessions) {
+    try {
+      const r = await $.tool.call({ tool: LIST_SESSIONS, linked: true, include_archived: true, limit: 300 })
+      const lido = !r || r.deny !== undefined || r.isError ? null : JSON.parse(String(r.text ?? ''))
+      sessoes = Array.isArray(lido) ? (lido as SessaoApp[]) : null
+    } catch {
+      sessoes = null // R4: the tree from the registry alone
+    }
+  }
+  const ex = ultimoExec ?? (await exec($))
+  await lerOutras($) // the registry as of now (files cached by mtime), so a pane open right after start joins it
+  const registros = daMinhaExecucao(((await ler($, 'maestroOutras')) ?? []) as Registro[], sessao)
+  const linhas = familia({ sessoes, registros, mapa: mapaAtual, codigo: ex.codigo ?? '', eu: sessao, agora, aguardando: r => !!r.aguardandoGo })
+  if (!velho(g)) await $.state.set(FAMILIA, { linhas, at: agora, fonte: sessoes ? 'app' : 'registro' } satisfies Familia)
 }
 
 // Bumped when a session ends: a look or poll still in flight from the ended session writes nothing after that.
@@ -416,6 +531,13 @@ async function atualizar($: any, doTimer = false): Promise<void> {
         await refrescarPendencias($, g)
       } catch (err) {
         await logarUmaVez($, 'pendencias', err)
+      }
+    }
+    if (!velho(g) && ultimoExec?.papel === 'orquestrador') {
+      try {
+        await refrescarFamilia($, doTimer, g) // R7: the timer always reads; a pane open only past 60 s
+      } catch (err) {
+        await logarUmaVez($, 'familia', err)
       }
     }
     if (!velho(g)) await prepararFaixa($)
@@ -865,11 +987,11 @@ function scriptDoLedger($: any): string {
 }
 
 /** `ledger.py append --dir <ledgerDir> --type <tipo> --text <texto>` (R46: the only disk write); true when it ran clean. */
-async function anexarLedger($: any, tipo: string, texto: string): Promise<boolean> {
+async function anexarLedger($: any, tipo: string, texto: string, fork?: string): Promise<boolean> {
   const dir = ultimoExec?.ledgerDir
   if (!dir) return false
   try {
-    const r = await $.process.run(['python', scriptDoLedger($), 'append', '--dir', dir, '--type', tipo, '--text', texto])
+    const r = await $.process.run(['python', scriptDoLedger($), 'append', '--dir', dir, ...(fork ? ['--fork', fork] : []), '--type', tipo, '--text', texto])
     return Number(r?.exitCode) === 0
   } catch {
     return false
@@ -1415,7 +1537,7 @@ async function relatosDoDisco($: any, base: BasePrevista, avisar: string[]): Pro
 }
 
 /** `GO`, `RELEASE` or `status`: the word the toasts use for a directive's action. */
-const palavra = (acao: string) => (acao === 'GO' ? 'GO' : acao === 'RELEASE-REPASSADO' ? 'RELEASE' : 'status')
+const palavra = (acao: string) => (acao === 'GO' || acao === 'MARCO' ? acao : acao === 'RELEASE-REPASSADO' ? 'RELEASE' : 'status')
 
 /**
  * jobs.md `enviar`: (1) key done -> stop; (2) `auditoria/<key>` set `enviando` without if_version (refused as existing:
@@ -2415,6 +2537,7 @@ async function olharAgora($: any, doTimer = false): Promise<void> {
       // the dir was not read: its marker says nothing about the files now, so no sweep and no espelho trusts it
       if (ex.ledgerDir) delete marcadores[ex.ledgerDir]
     }
+    if (ex.papel === 'conjunto') await lerAceitos($, ex.ledgerDir) // C05-S02: the ownership box reads the module copy
     if (velho(g)) return
     try {
       await registrar($, ex)
@@ -2696,6 +2819,8 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   nAuditoria = 0
   descarregando = false
   mapaAtual = MAPA_VAZIO()
+  aceitosLidos = null
+  temListSessions = null
   cheiaAvisada = false
   manifestos = {}
   relatados = new Set()
@@ -2956,6 +3081,10 @@ type DadosPainel = {
   /** C04-S01: this machine's partners' catalogue sync (read only while Inteligência is open) and the plan's client. */
   acervoSync: AcervoSync | null
   cliente: string
+  /** C05-S02: the run's session family (orchestrator), from `maestroFamilia`; null while the first read is pending. */
+  familia?: Familia | null
+  /** C05-S02 (R16): set session, per spec of its lanes, the phase row of `quem grava specs/<spec> agora`. */
+  posse?: { spec: string; titulo: string; fase: 'antes' | 'carga' | 'build' | 'fechamento' }[]
   acoes: {
     aba: (a: string) => Acao
     abrir: Acao
@@ -3351,6 +3480,7 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
           ...raias(det, 'det', `etapas das specs de ${c.id}`),
           c.raias.length > det.length ? <Text key="mais-det" size="footnote" color="subtle">{`mais ${c.raias.length - det.length}`}</Text> : null,
           caixa,
+          ...(d.posse ?? []).map(p => caixaPosse(ui, k, p)),
           ...sessoes(c.id),
         ], { faixa: COR_CONJ[c.id] ?? 'promptBorder' }),
       )
@@ -3364,7 +3494,7 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
   // Agora
   if (d.outras === null) return [k.cartaoEstado('carregando', 'lendo o registro…')]
   const cartoes = cartoesAgora(d.outras, d.eu)
-  if (!cartoes.length) return [k.cartaoEstado('vazio', 'Nenhuma execução ativa na máquina.')]
+  if (!cartoes.length) return [k.cartaoEstado('vazio', 'Nenhuma execução ativa na máquina.'), ...(d.ex.papel === 'orquestrador' ? secaoFamilia(ui, k, d.familia ?? null) : [])]
   const atencao = cartoes.filter(c => c.alerta).length
   const tom = (c: (typeof cartoes)[number]): Tom => (c.alerta ? 'ruim' : c.papel === 'esta sessão' ? 'info' : c.papel === 'parado' ? 'neutro' : 'ok')
   return [
@@ -3388,7 +3518,72 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
         c.meu ? k.botao({ key: 'abrir', primario: true, onPress: d.acoes.abrir, children: 'abrir execução' }) : null,
       ], { cor: c.alerta ? 'error' : 'promptBorder' }),
     ),
+    ...(d.ex.papel === 'orquestrador' ? secaoFamilia(ui, k, d.familia ?? null) : []),
     <Text key="registro" size="footnote" color="subtle">{`📄 registro: ${d.onde === 'store' ? 'store do plugin' : '~/.claude/maestro/sessoes'} · ${d.outras.length} sessões vivas · branch lida do git`}</Text>,
+  ]
+}
+
+/** C05-S02 (R16): each spec lane of this set session and its phase row, from the folded run and the DONE-ACEITO copy. */
+function posseDoConjunto(ex: Execucao): NonNullable<DadosPainel['posse']> {
+  const ac = aceitos(aceitosLidos?.eventos ?? [])
+  return Object.values(ex.forks)
+    .filter(f => f.spec)
+    .sort((a, b) => a.spec!.localeCompare(b.spec!))
+    .map(f => {
+      const ready = f.eventos.some(e => e.tipo === 'READY')
+      return { spec: f.spec!.toUpperCase(), titulo: `novarc-${ex.codigo ?? ''}-${f.spec!.toUpperCase()}`, fase: posseDaSpec({ iniciado: true, ready, aceito: !!ac[f.slug]?.aceito }) }
+    })
+}
+
+/** C05-S02 (R16, R26): the `quem grava specs/<spec> agora` caixa card, the current owner's label in `claude`. */
+function caixaPosse(ui: any, k: Kit, p: NonNullable<DadosPainel['posse']>[number]): any {
+  const { Box, Text } = ui
+  const qi = (key: string, rotulo: string, quem: string, atual: boolean) => (
+    <Box key={key} flexDirection="row" justifyContent="space-between" gap="sm">
+      <Text wrap="truncate-end">{rotulo}</Text>
+      <Text size="footnote" weight="medium" color={atual ? 'claude' : 'subtle'}>{quem}</Text>
+    </Box>
+  )
+  const linhas =
+    p.fase === 'antes'
+      ? [qi('carga', 'carga: reserva, revisão, iniciado', 'ainda não', false)]
+      : [
+          qi('carga', 'carga: reserva, revisão, iniciado', 'esta sessão', p.fase === 'carga'),
+          qi('build', 'READY até DONE: plano aprovado, implementando, branch publicada', p.fase === 'build' ? `${p.titulo} · agora` : p.titulo, p.fase === 'build'),
+          qi('fecha', 'fechamento: PR aberto, merge', 'esta sessão', p.fase === 'fechamento'),
+        ]
+  return k.caixa(`posse-${p.spec}`, `quem grava specs/${p.spec} agora`, [
+    ...linhas,
+    <Text key="dica" size="footnote" color="subtle">MARCO do orquestrador chega aqui e é repassado à sessão da spec enquanto ela é dona</Text>,
+  ], 'suggestion')
+}
+
+/** C05-S02 (R5, R25): the Agora section `sessões desta execução`, one row per family member, indented per level. */
+function secaoFamilia(ui: any, k: Kit, f: Familia | null): any[] {
+  const { Box, Text } = ui
+  const dim = (key: string, t: string) => <Text key={key} size="footnote" color="subtle">{t}</Text>
+  const corpo = !f
+    ? [dim('fam-lendo', 'lendo a família…')]
+    : !f.linhas.length
+      ? [dim('fam-vazio', 'Nenhuma sessão desta execução no registro.')]
+      : f.linhas.map(l => {
+          let row = (
+            <Box key={`fam-${l.chave}`} flexDirection="row" gap="sm" alignItems="center">
+              <Text>{l.icone}</Text>
+              <Box flexDirection="column" flexGrow={1} width={0}>
+                <Text mono wrap="truncate-end">{l.titulo}</Text>
+                {l.branch || l.abertaPor ? <Text size="footnote" color="subtle" wrap="truncate-end">{`${l.branch ?? '—'} · aberta por ${l.abertaPor ?? '—'}`}</Text> : null}
+              </Box>
+              {k.chip(l.papel, 'neutro')}
+              {l.estado ? <Text size="footnote">{l.estado}</Text> : null}
+            </Box>
+          )
+          for (let n = 0; n < l.nivel; n++) row = <Box key={`fam-${l.chave}-${n}`} paddingLeft="lg">{row}</Box>
+          return row
+        })
+  return [
+    k.titulo('sessões desta execução'),
+    k.quadro('fam', [...corpo, ...(f?.fonte === 'registro' ? [dim('fam-reg', 'família do app não lida; árvore pelo registro desta máquina')] : [])]),
   ]
 }
 
@@ -3540,13 +3735,21 @@ export const registerMaestro: Register = on => {
             if (!c?.artefato || !c.plano) return
             const artefato = c.artefato
             const plano = c.plano as Plano
+            // C05-S02: the fork and set ledgers are re-folded first, so a READY or DONE-ACEITO appended before this
+            // command decides the owner (after the hook returned: R14)
+            let ex = await exec($)
+            try {
+              ex = await lerDir($, ex)
+            } catch {
+              // ledger dir unreadable: the last folded run decides
+            }
             // a push and a PR in one && chain write both, in milestone order (marco never moves an etapa back); each
             // half on its own, so a failed push half never skips the PR half
             try {
               const sp = pushed ? specDaBranch(pushed, plano) : null
               if (pushed && sp) {
-                const sha = await $.process.run(['git', 'rev-parse', pushed])
-                await marco($, artefato, sp.id, 'branch-publicada', { branch: pushed, headSha: sha.stdout.trim() })
+                const sha = (await $.process.run(['git', 'rev-parse', pushed])).stdout.trim()
+                await marcoDaFase($, artefato, ex, plano, sp, 'branch-publicada', { branch: pushed, headSha: sha }, sha)
               }
             } catch {
               // a failed milestone write never breaks the command; the skills reconcile from git and the ledger
@@ -3558,7 +3761,7 @@ export const registerMaestro: Register = on => {
                 const head = i >= 0 ? w[i + 1] : w.find(a => a.startsWith('--head='))?.slice(7)
                 const branch = head || (await $.process.run(['git', 'branch', '--show-current'])).stdout.trim()
                 const s = specDaBranch(branch, plano)
-                if (s) await marco($, artefato, s.id, 'pr-aberto', { pr: url })
+                if (s) await marcoDaFase($, artefato, ex, plano, s, 'pr-aberto', { pr: url }, url)
               }
             } catch {
               // same: the skills reconcile pr-aberto
@@ -3950,6 +4153,8 @@ export const registerMaestro: Register = on => {
         tentando,
         acervoSync,
         cliente,
+        familia: ex.papel === 'orquestrador' ? (((await ler($, 'maestroFamilia')) ?? null) as Familia | null) : undefined,
+        posse: ex.papel === 'conjunto' ? posseDoConjunto(ex) : undefined,
         acoes: {
           abrirAcervo: async () => {
             if (!acervoSync) return

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Execucao, Registro } from '../../types'
 import {
-  VAZIA, alerta, alertaRaias, anotar, cartoesAgora, chamadaLedger, checkpoint, ehBuild, faixaConjuntoRaias, laneDaMensagem, lerLedger, linhaConjunto,
+  NOTAS_DOBRADAS, VAZIA, aceitos, alerta, alertaRaias, anotar, chaveDe, emWip, familia, lerRelay, linhaRelay, type SessaoApp, cartoesAgora, chamadaLedger, checkpoint, ehBuild, faixaConjuntoRaias, laneDaMensagem, lerLedger, linhaConjunto,
   espelhoParaGravar, novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, resumoEspelho, ritmo, slugDoSpawn, vivo,
 } from './execucao'
 import { ETAPA_FAIXA, idDaBranch, projetoDoPlano, quadrados } from './logic'
@@ -445,4 +445,135 @@ test('conjuntosDaAba unions blocks, SESSAO and CARTAO sets and classifies vazia 
   // validation fix 3: a cancelled set is its own state, never waiting
   const can = notasOrq(lerLedger(`NOTE SESSAO C04 c04-x ${U1} vazia  # 2026-10-28T10:00:00Z\nNOTE CANCELADO C04 removido do plano  # 2026-10-28T11:00:00Z\n`))
   expect(conjuntosDaAba([], can, {}, [], {}, {}, T).map(c => [c.id, c.estado, c.motivo])).toEqual([['C04', 'cancelado', 'removido do plano']])
+})
+
+// ---- C05-S02: the set ledger's DONE-ACEITO / REABERTO, the WIP-PUSH skip, the session family tree
+
+const nota = (texto: string, at = T0): { tipo: string; texto: string; at: number } => ({ tipo: 'NOTE', texto, at })
+
+test('aceitos: the last DONE-ACEITO or REABERTO line of a slug decides, in line order even within one second (A8, A15)', () => {
+  const s = 'alertas-locks-espelho'
+  expect(aceitos([nota(`DONE-ACEITO ${s} 1a2b3c4`), nota(`REABERTO ${s} VALIDACAO reprovado`, T0 + 1000)])[s]?.aceito).toBe(false)
+  const a = aceitos([nota(`REABERTO ${s} VALIDACAO reprovado`), nota(`DONE-ACEITO ${s} 1a2b3c4`, T0 + 1000)])[s]
+  expect(a?.aceito).toBe(true)
+  expect(a?.sha).toBe('1a2b3c4')
+  expect(aceitos([nota(`DONE-ACEITO ${s} 1a2b3c4`), nota(`REABERTO ${s} x`)])[s]?.aceito).toBe(false)
+  expect(aceitos([nota(`REABERTO ${s} x`), nota(`DONE-ACEITO ${s} 1a2b3c4`)])[s]?.aceito).toBe(true)
+  const outro = aceitos([nota(`DONE-ACEITO ${s} 1a2b3c4`), nota(`REABERTO ${s}-x motivo`), { tipo: 'DONE', texto: s, at: T0 }])
+  expect(outro[s]?.aceito).toBe(true)
+  expect(outro[`${s}-x`]?.aceito).toBe(false)
+  expect(Object.keys(aceitos([nota('ORQUESTRADOR local_x'), nota('DONE-ACEITO')]))).toEqual([])
+})
+
+test('emWip: only the last folded line counts; an unknown NOTE prefix does not end it (A24)', () => {
+  const s = 'alertas-locks-espelho'
+  const conhecidas = new Set(['WIP-PUSH', 'FOO'])
+  const wip = nota(`WIP-PUSH ${s}`)
+  expect(emWip([{ tipo: 'READY', texto: s, at: T0 }, wip], s, conhecidas)).toBe(true)
+  expect(emWip([wip, { tipo: 'DONE', texto: s, at: T0 + 1 }], s, conhecidas)).toBe(false)
+  expect(emWip([wip, nota('BAR algo', T0 + 1)], s, conhecidas)).toBe(true)
+  expect(emWip([wip, nota('FOO algo', T0 + 1)], s, conhecidas)).toBe(false)
+  expect(emWip([nota('WIP-PUSH outro-slug')], s, conhecidas)).toBe(false)
+  expect(emWip([], s, conhecidas)).toBe(false)
+})
+
+test('NOTAS_DOBRADAS holds the C05-S02 lines and not commentary prefixes (A15, A24)', () => {
+  for (const p of ['DONE-ACEITO', 'REABERTO', 'WIP-PUSH', 'MARCO', 'SESSAO', 'CUT']) expect(NOTAS_DOBRADAS.has(p)).toBe(true)
+  for (const p of ['ASSUMPTION', 'PEERS', 'RULING']) expect(NOTAS_DOBRADAS.has(p)).toBe(false)
+  const s = 'alertas-locks-espelho'
+  expect(emWip([nota(`WIP-PUSH ${s}`), nota('ASSUMPTION x', T0 + 1)], s, NOTAS_DOBRADAS)).toBe(true)
+  expect(emWip([nota(`WIP-PUSH ${s}`), nota(`MARCO C02-S01 implementando`, T0 + 1)], s, NOTAS_DOBRADAS)).toBe(false)
+})
+
+test('lerRelay round-trips a MARCO send key (artifact-less proof, never resent after a reload)', () => {
+  const chave = chaveDe('marco', 'C02-S01', 'branch-publicada', 'abc1234')
+  expect(chave).toBe('marco-c02-s01-branch-publicada-abc1234')
+  const p = { to: 'local_x', text: 'MARCO C02-S01 branch-publicada abc1234', chave, acao: 'MARCO', alvo: 'C02', motivo: 'm', regra: 'r' }
+  expect(lerRelay(linhaRelay(p))).toEqual({ acao: 'MARCO', alvo: 'C02', chave, linha: p.text })
+})
+
+const COD = 'NOVARC-PLUGIN-MAESTRO'
+const ORQ = `novarc-orq-${COD}`
+const regF = (o: Partial<Registro> & { sessao: string }): Registro => ({ cwd: 'C:/r', titulo: 'x', papel: null, forks: 0, feitos: 0, alerta: null, at: T0, codigo: COD, ...o })
+const app = (sessionId: string, title: string, o: Partial<SessaoApp> = {}): SessaoApp => ({ sessionId, title, isArchived: false, isRunning: true, ...o })
+const MAPA0 = { conjuntos: {}, specs: {}, orquestrador: null, at: 0 }
+const B1 = 'feat/c02-s01-alertas-locks-espelho-20261029'
+function mundoFamilia(sessoes: SessaoApp[] | null = null) {
+  const registros = [
+    regF({ sessao: 'local_orq', titulo: 'main', papel: 'orquestrador' }),
+    regF({ sessao: 'local_c02', titulo: 'main', papel: 'conjunto', conjunto: 'C02' }),
+    regF({ sessao: 'local_s01', titulo: B1, papel: 'spec', conjunto: 'C02', spec: 'C02-S01', branch: B1 }),
+    regF({ sessao: 'local_s02', titulo: 'feat/c02-s02-y', papel: 'spec', conjunto: 'C02', spec: 'C02-S02', branch: 'feat/c02-s02-y' }),
+  ]
+  const lista = sessoes ?? [
+    app('local_c02', `novarc-${COD}-C02`, { startedBy: 'local_orq' }),
+    app('local_s01', `novarc-${COD}-C02-S01`, { startedBy: 'local_orq' }),
+    app('local_s02', `novarc-${COD}-C02-S02`, { startedBy: 'local_c02', isRunning: false }),
+  ]
+  return { sessoes: lista, registros, mapa: MAPA0, codigo: COD, eu: 'local_orq', agora: T0 }
+}
+
+test('familia: three levels, orchestrator from its own registry entry, sets then their specs (A1, A2)', () => {
+  const ls = familia(mundoFamilia())
+  expect(ls.map(l => [l.nivel, l.icone, l.titulo, l.papel])).toEqual([
+    [0, '▶️', ORQ, 'orquestradora'],
+    [1, '🔹', `novarc-${COD}-C02`, 'conjunto'],
+    [2, '🔹', `novarc-${COD}-C02-S01`, 'spec'],
+    [2, '🔹', `novarc-${COD}-C02-S02`, 'spec'],
+  ])
+  const s1 = ls[2]!
+  expect(s1.estado).toBe('🟠 rodando')
+  expect(s1.branch).toBe(B1)
+  expect(s1.abertaPor).toBe(ORQ)
+  expect(ls[3]!.estado).toBe('🔴 parada')
+  expect(ls[3]!.abertaPor).toBe(`novarc-${COD}-C02`)
+})
+
+test('familia: aberta por from the registry pai is the session-build name, never the branch title', () => {
+  const m = mundoFamilia()
+  m.registros[2] = { ...m.registros[2]!, pai: 'local_orq' }
+  m.sessoes[1] = { ...m.sessoes[1]!, startedBy: undefined }
+  expect(familia(m)[2]!.abertaPor).toBe(ORQ)
+})
+
+test('familia: an archived set session leaves its specs under a bare set row; an archived spec reads arquivada (A3, R2)', () => {
+  const m = mundoFamilia()
+  m.sessoes[0] = { ...m.sessoes[0]!, isArchived: true }
+  m.sessoes[2] = { ...m.sessoes[2]!, isArchived: true }
+  const ls = familia(m)
+  expect(ls[1]).toEqual({ chave: 'C02', nivel: 1, icone: '🔹', titulo: 'C02', papel: 'conjunto', estado: null, branch: null, abertaPor: null })
+  expect(ls[3]!.titulo).toBe(`novarc-${COD}-C02-S02`)
+  expect(ls[3]!.nivel).toBe(2)
+  expect(ls[3]!.estado).toBe('💤 arquivada')
+})
+
+test('familia: 300 listed sessions of which 31 are the run give 31 rows (A6)', () => {
+  const sessoes: SessaoApp[] = []
+  for (let i = 0; i < 269; i++) sessoes.push(app(`local_z${i}`, `outra sessão ${i}`))
+  sessoes.push(app('local_orq2', `novarc-orq-${COD}-velha`)) // not this run's orchestrator title: dropped
+  for (let c = 1; c <= 9; c++) {
+    const C = `C${String(c).padStart(2, '0')}`
+    sessoes.push(app(`local_${C}`, `novarc-${COD}-${C}`))
+  }
+  for (let k = 0; k < 21; k++) {
+    const C = `C${String((k % 9) + 1).padStart(2, '0')}`
+    sessoes.push(app(`local_s${k}`, `novarc-${COD}-${C}-S${String(Math.floor(k / 9) + 1).padStart(2, '0')}`))
+  }
+  expect(sessoes.length).toBe(300)
+  const ls = familia({ sessoes, registros: [regF({ sessao: 'local_orq', papel: 'orquestrador' })], mapa: MAPA0, codigo: COD, eu: 'local_orq', agora: T0 })
+  expect(ls.length).toBe(31)
+  expect(ls[0]!.titulo).toBe(ORQ)
+})
+
+test('familia: without the app list the tree comes from the registry alone; no entry of the run gives no row (R4, R5)', () => {
+  const ls = familia({ ...mundoFamilia(), sessoes: null })
+  expect(ls.map(l => l.titulo)).toEqual([ORQ, `novarc-${COD}-C02`, `novarc-${COD}-C02-S01`, `novarc-${COD}-C02-S02`])
+  expect(ls[2]!.estado).toBe('🟠 rodando')
+  expect(ls[2]!.branch).toBe(B1)
+  expect(familia({ sessoes: [], registros: [], mapa: MAPA0, codigo: COD, eu: 'local_orq', agora: T0 })).toEqual([])
+})
+
+test('familia: a waiting registry entry reads aguardando GO', () => {
+  const ls = familia({ ...mundoFamilia(), aguardando: r => r.sessao === 'local_s02' })
+  expect(ls[3]!.estado).toBe('⚪ aguardando GO')
 })

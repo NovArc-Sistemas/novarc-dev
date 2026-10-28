@@ -63,6 +63,12 @@ export type Mundo = {
   falharRun: ((argv: string[]) => boolean) | null
   /** C03-S01 final fix 4: extra environment variables `$.env.get` answers (TEMP, TMPDIR...). */
   env: Record<string, string>
+  /** C05-S02: what `git rev-parse <branch>` answers (a push's headSha); unset keeps the branch answer. */
+  sha?: string
+  /** C05-S02: the text a Bash call answers (a `gh pr create` printing its url); unset keeps 'ok'. */
+  textoBash?: string
+  /** C05-S02: the app's `list_sessions` answer (the tool is listed only when set); a string is answered as is. */
+  listSessions?: unknown[] | string
 }
 export const norm = (p: unknown) => String(p).replace(/\\/g, '/')
 export let seq = 0
@@ -189,6 +195,8 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
       const s = typeof m.sweep === 'function' ? m.sweep() : m.sweep
       return { value: { ...(s ?? { exitCode: 0, stdout: 'SWEEP SUMMARY forks=1 grants=0 outstanding=0 ungranted=0\n' }), stderr: '' } }
     }
+    if (m.sha && e.argv[1] === 'rev-parse' && e.argv.length === 3 && !String(e.argv[2]).startsWith('-')) return { value: { exitCode: 0, stdout: `${m.sha}
+`, stderr: '' } }
     if (m.git && e.argv.includes('--show-toplevel')) return { value: { exitCode: 0, stdout: `${m.git.toplevel}\n`, stderr: '' } }
     if (m.git && e.argv.includes('symbolic-ref')) return { value: { exitCode: 0, stdout: `${m.git.origemHead}\n`, stderr: '' } }
     return { value: { exitCode: 0, stdout: e.argv.includes('--git-dir') ? `${m.gitDir}\n` : `${m.branch}\n`, stderr: '' } }
@@ -231,13 +239,16 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     return { value: { isPlaced: true } }
   })
   on('ui.render', async () => ({ type: 'Box', children: ['engine'] })) // the engine's own drawing, under a hook's next(e)
-  on('tool.list', async () => ({ value: comPlano ? [{ name: 'ArtifactData' }] : [] }))
+  on('tool.list', async () => ({ value: [...(comPlano ? [{ name: 'ArtifactData' }] : []), ...(m.listSessions !== undefined ? [{ name: 'mcp__ccd_session_mgmt__list_sessions' }] : [])] }))
   on('tool.call', async ($: any, e: any) => {
     m.tools.push(e)
     const espera = m.segurarTool?.(e)
     if (espera) await espera
     const falha = m.falharTool?.(e)
     if (falha) return { result: '', text: typeof falha === 'string' ? falha : 'boom', isError: true }
+    if (e.tool === 'mcp__ccd_session_mgmt__list_sessions' && m.listSessions !== undefined)
+      return { result: '', text: typeof m.listSessions === 'string' ? m.listSessions : JSON.stringify(m.listSessions), isError: false }
+    if (e.tool === 'Bash' && m.textoBash) return { result: '', text: m.textoBash, isError: false }
     if (e.tool === 'ArtifactData' && m.semBanco) return { result: '', text: 'offline', isError: true }
     if (e.tool === 'ArtifactData' && m.dbPorUrl?.[e.url]) return banco(m.dbPorUrl[e.url]!, e)
     if (e.tool === 'ArtifactData' && m.db) return banco(m.db, e)

@@ -862,7 +862,7 @@ const carimbo = (x: string | number) => {
   return Number.isNaN(d.getTime()) ? String(x) : d.toISOString().replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '')
 }
 /** Keys are lowercased and safe as a db id: anything outside `[a-z0-9._-]` becomes `-`. */
-const chaveDe = (...partes: (string | number)[]) => partes.join('-').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
+export const chaveDe = (...partes: (string | number)[]) => partes.join('-').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
 /**
  * The directives due now, minus the keys in `feitas` (R13, R19, jobs.md): `status <C|slug>?` for a quiet unit (the second
@@ -969,7 +969,7 @@ export function linhaRelay(p: Prevista): string {
 
 /** Parses `linhaRelay` back; a RELAY whose third field is not a directive key (the set ledger's own RELAY) is null. */
 export function lerRelay(linha: string): { acao: string; alvo: string; chave: string; linha: string } | null {
-  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^RELAY (\S+) (\S+) ((?:go|release|status|lock|slot)-\S+) (.+)$/)
+  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^RELAY (\S+) (\S+) ((?:go|release|status|lock|slot|marco)-\S+) (.+)$/)
   return m ? { acao: m[1]!, alvo: m[2]!, chave: m[3]!, linha: m[4]! } : null
 }
 
@@ -1127,4 +1127,143 @@ export function conjuntosDaAba(
     const estado = cancelado ? 'cancelado' : go ? 'go' : esperando.has(id) ? 'vazia' : 'normal'
     return { id, titulo: b?.titulo || titulos[id] || '', raias: b?.raias ?? [], estado, apos: dependeDe[id] ?? [], ...(cancelado ? { motivo: cancelado.motivo } : {}) }
   })
+}
+
+// ---- C05-S02: the set ledger's DONE-ACEITO / REABERTO, the WIP-PUSH skip, the session family tree
+
+/**
+ * Per spec slug, whether the set session accepted its DONE: `NOTE DONE-ACEITO <slug> <sha>` and `NOTE REABERTO <slug>
+ * <motivo>` folded in the order received (file line order: ledger.py stamps to the second), the last line winning.
+ */
+export function aceitos(eventos: Evento[]): Record<string, { aceito: boolean; sha: string | null; at: number }> {
+  const out: Record<string, { aceito: boolean; sha: string | null; at: number }> = {}
+  for (const e of eventos) {
+    if (e.tipo !== 'NOTE') continue
+    const m = e.texto.match(/^(DONE-ACEITO|REABERTO)\s+(\S+)(?:\s+(\S+))?/)
+    if (!m) continue
+    out[m[2]!] = { aceito: m[1] === 'DONE-ACEITO', sha: m[1] === 'DONE-ACEITO' ? m[3] ?? null : null, at: e.at }
+  }
+  return out
+}
+
+/**
+ * The NOTE prefixes the protocol writes and the mod folds as a lane's line (C02-S02 CUT and PRE-FECHAMENTO, C03-S01
+ * ORQUESTRADOR and RELATO, C05-S01 SESSAO, BASE, CARTAO and CANCELADO, C05-S02 MARCO, DONE-ACEITO, REABERTO and
+ * WIP-PUSH); any other NOTE (ASSUMPTION, PEERS, ...) is commentary and never ends a WIP-PUSH skip (R24).
+ */
+export const NOTAS_DOBRADAS: ReadonlySet<string> = new Set([
+  'CUT', 'PRE-FECHAMENTO', 'ORQUESTRADOR', 'RELATO', 'SESSAO', 'BASE', 'CARTAO', 'CANCELADO', 'MARCO', 'DONE-ACEITO', 'REABERTO', 'WIP-PUSH',
+])
+
+/**
+ * Whether the last folded line of a spec's fork ledger is `NOTE WIP-PUSH <slug>` (R24): every checkpoint folds, a NOTE
+ * folds only when its first word is in `conhecidas`, so an unknown NOTE never ends the skip.
+ */
+export function emWip(eventos: Evento[], slug: string, conhecidas: ReadonlySet<string>): boolean {
+  const dobrados = eventos.filter(e => e.tipo !== 'NOTE' || conhecidas.has(e.texto.split(/\s+/)[0] ?? ''))
+  const u = dobrados[dobrados.length - 1]
+  return !!u && u.tipo === 'NOTE' && /^WIP-PUSH\s+(\S+)/.exec(u.texto)?.[1] === slug
+}
+
+/** One row of the app's `list_sessions` answer (the fields the family reads). */
+export type SessaoApp = { sessionId: string; title: string; isArchived?: boolean; isRunning?: boolean; startedBy?: string; name?: string }
+export type LinhaFamilia = {
+  chave: string
+  nivel: 0 | 1 | 2
+  icone: '▶️' | '🔹'
+  titulo: string
+  papel: 'orquestradora' | 'conjunto' | 'spec'
+  estado: '🟠 rodando' | '⚪ aguardando GO' | '🔴 parada' | '💤 arquivada' | null
+  branch: string | null
+  abertaPor: string | null
+}
+
+const MAX_FAMILIA = 31 // 1 orchestrator + 9 sets + 21 specs (R6)
+
+/** The session-build name of a registry entry (`titulo` carries the branch, never the name). */
+export function nomeDoRegistro(r: Registro): string {
+  return r.papel === 'orquestrador' ? `novarc-orq-${r.codigo ?? ''}` : `novarc-${r.codigo ?? ''}-${r.spec ?? r.conjunto ?? ''}`
+}
+
+/**
+ * The run's session family in three levels (R1-R6): orchestrator, set sessions, spec sessions under their set; from the
+ * app list (`sessoes`, null when unread: registry alone) joined with the registry by session id. An archived or absent
+ * set session leaves its specs under a bare `<C>` row. Branch from the registry entry (read from git), never the app's.
+ */
+export function familia(i: {
+  sessoes: SessaoApp[] | null
+  registros: Registro[]
+  mapa: MapaSessoes
+  codigo: string
+  eu: string
+  agora: number
+  aguardando?: (r: Registro) => boolean
+}): LinhaFamilia[] {
+  const orqTitulo = `novarc-orq-${i.codigo}`
+  const esc = i.codigo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^novarc-${esc}-(C\\d{2})(?:-(S\\d{2}))?$`)
+  const regs = i.registros.filter(r => r.papel && r.codigo === i.codigo)
+  const regDe = (id: string) => regs.find(r => r.sessao === id) ?? i.registros.find(r => r.sessao === id)
+  type No = { id: string; titulo: string; papel: LinhaFamilia['papel']; conjunto: string | null; app: SessaoApp | null; reg: Registro | null }
+  const nos = new Map<string, No>()
+  const papelDe = (titulo: string, id: string): Pick<No, 'papel' | 'conjunto'> | null => {
+    if (titulo === orqTitulo) return { papel: 'orquestradora', conjunto: null }
+    const m = re.exec(titulo)
+    if (m) return { papel: m[2] ? 'spec' : 'conjunto', conjunto: m[1]! }
+    const c = Object.entries(i.mapa.conjuntos).find(([, v]) => v.sessao === id)?.[0]
+    return c ? { papel: 'conjunto', conjunto: c } : null
+  }
+  for (const s of i.sessoes ?? []) {
+    const reg = regDe(s.sessionId) ?? null
+    const p = papelDe(s.title, s.sessionId) ?? (reg && regs.includes(reg) ? papelDoRegistro(reg) : null)
+    if (p) nos.set(s.sessionId, { id: s.sessionId, titulo: p.papel === 'conjunto' && !re.test(s.title) && reg ? nomeDoRegistro(reg) : s.title, ...p, app: s, reg })
+  }
+  for (const r of regs) {
+    if (nos.has(r.sessao)) continue
+    const p = papelDoRegistro(r)
+    if (p) nos.set(r.sessao, { id: r.sessao, titulo: nomeDoRegistro(r), ...p, app: null, reg: r })
+  }
+  const estado = (n: No): LinhaFamilia['estado'] => {
+    if (n.app?.isArchived) return '💤 arquivada'
+    if (n.id === i.eu) return '🟠 rodando'
+    if (n.app?.isRunning) return '🟠 rodando'
+    if (n.reg && i.aguardando?.(n.reg)) return '⚪ aguardando GO'
+    if (!n.app && i.sessoes === null && n.reg && vivo(n.reg, i.agora)) return '🟠 rodando'
+    return '🔴 parada'
+  }
+  const nomePorId = (id: string | null | undefined): string | null => {
+    if (!id) return null
+    const r = regDe(id)
+    if (r && r.papel) return nomeDoRegistro(r)
+    return (i.sessoes ?? []).find(s => s.sessionId === id)?.title ?? null
+  }
+  const linha = (n: No, nivel: 0 | 1 | 2): LinhaFamilia => ({
+    chave: n.id,
+    nivel,
+    icone: nivel === 0 ? '▶️' : '🔹',
+    titulo: n.titulo,
+    papel: n.papel,
+    estado: estado(n),
+    branch: n.reg?.branch ?? null,
+    abertaPor: nomePorId(n.reg?.pai) ?? nomePorId(n.app?.startedBy),
+  })
+  const todos = [...nos.values()]
+  const ordem = (a: No, b: No) => a.titulo.localeCompare(b.titulo)
+  const out: LinhaFamilia[] = todos.filter(n => n.papel === 'orquestradora').sort(ordem).slice(0, 1).map(n => linha(n, 0))
+  const conjuntos = [...new Set(todos.filter(n => n.papel !== 'orquestradora').map(n => n.conjunto!))].sort()
+  for (const c of conjuntos) {
+    const cj = todos.filter(n => n.papel === 'conjunto' && n.conjunto === c && !n.app?.isArchived).sort(ordem)[0]
+    const specs = todos.filter(n => n.papel === 'spec' && n.conjunto === c).sort(ordem)
+    if (cj) out.push(linha(cj, 1))
+    else if (specs.length) out.push({ chave: c, nivel: 1, icone: '🔹', titulo: c, papel: 'conjunto', estado: null, branch: null, abertaPor: null })
+    for (const s of specs) out.push(linha(s, 2))
+  }
+  return out.slice(0, MAX_FAMILIA)
+}
+
+function papelDoRegistro(r: Registro): { papel: LinhaFamilia['papel']; conjunto: string | null } | null {
+  if (r.papel === 'orquestrador') return { papel: 'orquestradora', conjunto: null }
+  if (r.papel === 'spec' && r.conjunto) return { papel: 'spec', conjunto: r.conjunto }
+  if (r.papel === 'conjunto' && r.conjunto) return { papel: 'conjunto', conjunto: r.conjunto }
+  return null
 }

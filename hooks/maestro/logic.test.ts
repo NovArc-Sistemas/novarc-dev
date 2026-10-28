@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { VAZIA, anotar, raia } from './execucao'
-import { aFechar, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, pastaDoCliente, slugPasta, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
+import { aFechar, decidirMarco, donoDaFase, posseDaSpec, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, pastaDoCliente, slugPasta, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
 
 const plano: Plano = {
   conjuntos: [
@@ -176,4 +176,51 @@ test('pastaDoCliente and slugPasta: the client folder and its page slug', () => 
   expect(pastaDoCliente(undefined)).toBe('')
   expect(slugPasta('Clientes/Kidsy')).toBe('clientes-kidsy')
   expect(slugPasta('Clientes/São Paulo')).toBe('clientes-sao-paulo')
+})
+
+// ---- C05-S02: who owns specs/{S} in each phase (milestones.md ownership table)
+
+test('donoDaFase: load and close-out etapas are the set session, build etapas the spec session from READY to DONE-ACEITO (A8)', () => {
+  const build = { ready: true, aceito: false }
+  expect(donoDaFase('branch-publicada', build)).toBe('spec')
+  expect(donoDaFase('plano-aprovado', build)).toBe('spec')
+  expect(donoDaFase('implementando', build)).toBe('spec')
+  expect(donoDaFase('iniciado', build)).toBe('conjunto')
+  expect(donoDaFase('pr-aberto', build)).toBe('conjunto')
+  expect(donoDaFase('merge', build)).toBe('conjunto')
+  expect(donoDaFase('branch-publicada', { ready: true, aceito: true })).toBe('conjunto')
+  expect(donoDaFase('branch-publicada', { ready: false, aceito: false })).toBe('conjunto')
+  expect(donoDaFase('revisando', build)).toBe(null)
+})
+
+test('decidirMarco: write, MARCO, NOTE MARCO, toast or nothing by role and phase (R8-R12, R17, R24)', () => {
+  const base = { specDaSessao: null, spec: 'C02-S01', etapa: 'branch-publicada', ready: true, aceito: false, wip: false, rota: true, d20a: false }
+  const orq = { ...base, papel: 'orquestrador' as const }
+  expect(decidirMarco(orq)).toEqual({ acao: 'toast', dona: 'spec' })
+  expect(decidirMarco({ ...orq, d20a: true })).toEqual({ acao: 'marco' })
+  expect(decidirMarco({ ...orq, d20a: true, rota: false })).toEqual({ acao: 'nada' })
+  const cj = { ...base, papel: 'conjunto' as const }
+  expect(decidirMarco(cj)).toEqual({ acao: 'toast', dona: 'spec' })
+  expect(decidirMarco({ ...cj, etapa: 'pr-aberto' })).toEqual({ acao: 'gravar' })
+  expect(decidirMarco({ ...cj, ready: false })).toEqual({ acao: 'gravar' })
+  expect(decidirMarco({ ...cj, aceito: true })).toEqual({ acao: 'gravar' })
+  const sp = { ...base, papel: 'spec' as const, specDaSessao: 'C02-S01' }
+  expect(decidirMarco(sp)).toEqual({ acao: 'gravar' })
+  expect(decidirMarco({ ...sp, aceito: true })).toEqual({ acao: 'nota' })
+  expect(decidirMarco({ ...sp, aceito: true, rota: false })).toEqual({ acao: 'nada' })
+  expect(decidirMarco({ ...sp, etapa: 'pr-aberto' })).toEqual({ acao: 'toast', dona: 'conjunto' })
+  expect(decidirMarco({ ...sp, etapa: 'pr-aberto', ready: false })).toEqual({ acao: 'toast', dona: 'conjunto' })
+  expect(decidirMarco({ ...sp, ready: false })).toEqual({ acao: 'toast', dona: 'conjunto' })
+  expect(decidirMarco({ ...sp, specDaSessao: 'C02-S02', ready: false })).toEqual({ acao: 'toast', dona: 'conjunto' })
+  expect(decidirMarco({ ...sp, specDaSessao: 'C02-S02' })).toEqual({ acao: 'toast', dona: 'spec' })
+  expect(decidirMarco({ ...sp, wip: true })).toEqual({ acao: 'nada' })
+  expect(decidirMarco({ ...sp, etapa: 'revisando' })).toEqual({ acao: 'nada' })
+  expect(decidirMarco({ ...base, papel: null })).toEqual({ acao: 'gravar' })
+})
+
+test('posseDaSpec: the ownership box row by phase (R16)', () => {
+  expect(posseDaSpec({ iniciado: false, ready: false, aceito: false })).toBe('antes')
+  expect(posseDaSpec({ iniciado: true, ready: false, aceito: false })).toBe('carga')
+  expect(posseDaSpec({ iniciado: true, ready: true, aceito: false })).toBe('build')
+  expect(posseDaSpec({ iniciado: true, ready: true, aceito: true })).toBe('fechamento')
 })

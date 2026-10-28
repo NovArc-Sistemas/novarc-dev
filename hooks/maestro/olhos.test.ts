@@ -1960,3 +1960,181 @@ test('C05-S01 validation fix 3, R23: a set the plan removed shows the cancelado 
   }
   expect(m.eventos.length).toBeGreaterThan(0)
 })
+
+// ---- C05-S02: the session family in the Agora tab (R1-R7, R20, R25)
+
+const COD_F = 'NOVARC-PLUGIN-MAESTRO'
+const B_F1 = 'feat/c02-s01-alertas-locks-espelho-20261029'
+const LENTO_F = { timeoutMs: 20_000 }
+/** An orchestrator (this session, sess-1) with set C02 and spec sessions C02-S01 / C02-S02 in the registry. */
+async function orqFamilia($: any, on: any, o: { lista?: unknown[] | string; semRegistro?: boolean; comPlano?: boolean; aguardando?: boolean } = {}): Promise<Mundo> {
+  const m = montar(on, {}, 'main', o.comPlano !== false)
+  if (o.comPlano !== false) {
+    gravar(m, 'C:/repo/ai/specs/EXM/artefato.txt', `${URL}\n`)
+    m.db = {}
+  }
+  if (o.lista !== undefined) m.listSessions = o.lista
+  if (!o.semRegistro) {
+    gravar(m, `${SESSOES}/local_c02.json`, entrada('local_c02', { papel: 'conjunto', conjunto: 'C02', titulo: 'main' }))
+    gravar(m, `${SESSOES}/local_s01.json`, entrada('local_s01', { papel: 'spec', conjunto: 'C02', spec: 'C02-S01', branch: B_F1, titulo: B_F1 }))
+    gravar(m, `${SESSOES}/local_s02.json`, entrada('local_s02', { papel: 'spec', conjunto: 'C02', spec: 'C02-S02', branch: 'feat/c02-s02-y-20261029', titulo: 'x', aguardandoGo: o.aguardando ?? null }))
+  }
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: `orquestrar ${URL}` })
+  await quieto(m)
+  return m
+}
+const LISTA_F = [
+  { sessionId: 'local_c02', title: `novarc-${COD_F}-C02`, isArchived: false, isRunning: true, startedBy: 'sess-1' },
+  { sessionId: 'local_s01', title: `novarc-${COD_F}-C02-S01`, isArchived: false, isRunning: true, startedBy: 'sess-1' },
+  { sessionId: 'local_s02', title: `novarc-${COD_F}-C02-S02`, isArchived: false, isRunning: false, startedBy: 'local_c02' },
+]
+const chamadasLista = (m: Mundo) => m.tools.filter((t: any) => t.tool === 'mcp__ccd_session_mgmt__list_sessions')
+async function agora(m: Mundo, $: any, surface: 'desktop' | 'terminal' = 'desktop') {
+  await $.command.run?.({ command: 'maestro', args: '' })
+  await quieto(m)
+  const ui = await $.ui.mount({ ...PAINEL, surface })
+  await ui.press({ key: 't-agora' })
+  return ui
+}
+/** The Box ancestors of the first node whose text is `t`, nearest last. */
+function caixasAte(raiz: any, t: string): any[] {
+  const busca = (n: any, pilha: any[]): any[] | null => {
+    if (!n || typeof n !== 'object') return null
+    if (n.type === 'Text' && textoDe(n) === t) return pilha
+    for (const c of n.children ?? []) {
+      const r = busca(c, n.type === 'Box' ? [...pilha, n] : pilha)
+      if (r) return r
+    }
+    return null
+  }
+  return busca(raiz, []) ?? []
+}
+
+test('A1, A2, A25: the orchestrator Agora draws the family in three levels with pills, state and the branch line', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on, { lista: LISTA_F })
+  const ui = await agora(m, $)
+  const arvore = await ui.drawn()
+  const txt = textoDe(arvore)
+  expect(txt).toContain('SESSÕES DESTA EXECUÇÃO')
+  expect(txt).toContain(`novarc-orq-${COD_F}`)
+  expect(txt).toContain(`${B_F1} · aberta por novarc-orq-${COD_F}`)
+  expect(txt).toContain('🟠 rodando')
+  expect(txt).toContain('🔴 parada')
+  const nivel = (t: string) => caixasAte(arvore, t).filter(b => b.props?.paddingLeft === 'lg').length
+  expect(nivel(`novarc-orq-${COD_F}`)).toBe(0)
+  expect(nivel(`novarc-${COD_F}-C02`)).toBe(1)
+  expect(nivel(`novarc-${COD_F}-C02-S01`)).toBe(2)
+  expect(nivel(`novarc-${COD_F}-C02-S02`)).toBe(2)
+  const pills = (await ui.findAll({ type: 'Svg' })).filter((x: any) => ['orquestradora', 'conjunto', 'spec'].includes(String(x.props.alt)))
+  expect([...new Set(pills.map((x: any) => x.props.alt))].sort()).toEqual(['conjunto', 'orquestradora', 'spec'])
+  for (const p of pills) expect(String(p.props.source)).toContain('prefers-color-scheme: dark')
+  for (const n of todos(arvore)) {
+    if (n.type !== 'Box' && n.type !== 'Text') continue
+    expect(String(n.props?.color ?? '').startsWith('#')).toBe(false)
+    expect(String(n.props?.backgroundColor ?? '').startsWith('#')).toBe(false)
+  }
+  // A2: the branch comes from the registry (git), and no get_session call is made
+  expect(m.tools.some((t: any) => String(t.tool).includes('get_session'))).toBe(false)
+  expect(chamadasLista(m).map((t: any) => [t.linked, t.include_archived, t.limit])).toEqual([[true, true, 300]])
+  await ui.unmount()
+})
+
+test('a spec session opened empty (S01 aguardandoGo) and idle reads aguardando GO', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on, { lista: LISTA_F, aguardando: true })
+  const ui = await agora(m, $)
+  expect(textoDe(await ui.drawn())).toContain('⚪ aguardando GO')
+  await ui.unmount()
+})
+
+test('A4: list_sessions absent draws the tree from the registry with the R4 line', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on)
+  const ui = await agora(m, $)
+  const txt = textoDe(await ui.drawn())
+  expect(txt).toContain('família do app não lida; árvore pelo registro desta máquina')
+  expect(txt).toContain(`novarc-${COD_F}-C02-S01`)
+  expect(chamadasLista(m)).toEqual([])
+  await ui.unmount()
+})
+
+test('Review Focus 2: a list_sessions answer that is not JSON is read as absent, never a thrown render', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on, { lista: 'not json' })
+  const ui = await agora(m, $)
+  const txt = textoDe(await ui.drawn())
+  expect(txt).toContain('família do app não lida; árvore pelo registro desta máquina')
+  expect(txt).toContain(`novarc-${COD_F}-C02-S01`)
+  await ui.unmount()
+})
+
+test('A5: the pending first read reads lendo a família…; no entry of the run reads the empty line', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on, { lista: [], semRegistro: true })
+  m.servirEstado = { maestroFamilia: null }
+  let ui = await agora(m, $)
+  expect(textoDe(await ui.drawn())).toContain('lendo a família…')
+  await ui.unmount()
+  m.servirEstado = { maestroFamilia: { linhas: [], at: Date.now(), fonte: 'app' } }
+  ui = await agora(m, $)
+  expect(textoDe(await ui.drawn())).toContain('Nenhuma sessão desta execução no registro.')
+  await ui.unmount()
+})
+
+test('A7, A20: one list_sessions per poll tick, none on a pane open inside 60 s; the tree never reaches the database', LENTO_F, async ($: any, on: any) => {
+  const m = await orqFamilia($, on, { lista: LISTA_F, comPlano: true })
+  await $.command.run?.({ command: 'maestro', args: '' })
+  await quieto(m)
+  const n = chamadasLista(m).length
+  expect(n).toBe(1)
+  disparar(m, 5 * 60 * 1000)
+  await quieto(m)
+  expect(chamadasLista(m).length).toBe(n + 1)
+  await $.command.run?.({ command: 'maestro', args: '' })
+  await quieto(m)
+  expect(chamadasLista(m).length).toBe(n + 1)
+  const escritas = m.tools.filter((t: any) => t.tool === 'ArtifactData' && !['get', 'list', 'query'].includes(t.action))
+  for (const w of escritas) expect(/nivel|abertaPor|local_s0|local_c02/.test(JSON.stringify(w))).toBe(false)
+})
+
+// ---- C05-S02: the ownership box in the set session's Execução detail card (R16, R26)
+
+const SET_DIR_P = 'C:/set/posse/ledger'
+async function conjuntoPosse($: any, on: any, ledger = ''): Promise<{ m: Mundo; ui: any }> {
+  const m = montar(on, {}, 'main', true) // the plan gives the run its codigo, so the spec session's title is known
+  m.db = {}
+  gravar(m, `${SET_DIR_P}/fork-olhos.md`, linha('READY', 'olhos branch=feat/c01-s01-olhos-20261017'))
+  gravar(m, `${SET_DIR_P}/ledger.md`, `# set
+${ledger}`)
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: CONJ })
+  await $.tool.call({ tool: 'Bash', command: `python ledger.py init --dir ${SET_DIR_P} --run-id x` })
+  await $.command.run?.({ command: 'maestro', args: '' })
+  await quieto(m)
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 't-exec' })
+  return { m, ui }
+}
+const textoCor = (raiz: any, t: string) => todos(raiz).find(n => n.type === 'Text' && textoDe(n) === t)
+
+test('A16, A26: a spec at READY without DONE-ACEITO highlights the build row with its session in claude', LENTO_F, async ($: any, on: any) => {
+  const { ui } = await conjuntoPosse($, on)
+  const arvore = await ui.drawn()
+  expect(textoDe(arvore)).toContain('QUEM GRAVA SPECS/C01-S01 AGORA')
+  const dona = textoCor(arvore, `novarc-${COD_F}-C01-S01 · agora`)
+  expect([dona?.props?.color, dona?.props?.weight, dona?.props?.size]).toEqual(['claude', 'medium', 'footnote'])
+  const outras = todos(arvore).filter(n => n.type === 'Text' && textoDe(n) === 'esta sessão')
+  expect(outras.length).toBe(2)
+  for (const o of outras) expect([o.props.color, o.props.weight]).toEqual(['subtle', 'medium'])
+  const cap = textoCor(arvore, 'QUEM GRAVA SPECS/C01-S01 AGORA')
+  expect(cap?.props?.color).toBe('suggestion')
+  expect(todos(arvore).some(n => n.type === 'Box' && n.props?.width === 0.3 && n.props?.backgroundColor === 'suggestion')).toBe(true)
+  expect(textoDe(arvore)).toContain('MARCO do orquestrador chega aqui e é repassado à sessão da spec enquanto ela é dona')
+  await ui.unmount()
+})
+
+test('R16: after NOTE DONE-ACEITO the close-out row is the owner', LENTO_F, async ($: any, on: any) => {
+  const { ui } = await conjuntoPosse($, on, linha('NOTE', 'DONE-ACEITO olhos 1a2b3c4', 30))
+  const arvore = await ui.drawn()
+  expect(textoCor(arvore, `novarc-${COD_F}-C01-S01`)?.props?.color).toBe('subtle')
+  const sessoesEsta = todos(arvore).filter(n => n.type === 'Text' && textoDe(n) === 'esta sessão')
+  expect(sessoesEsta.map(n => n.props.color)).toEqual(['subtle', 'claude'])
+  await ui.unmount()
+})

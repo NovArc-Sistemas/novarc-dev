@@ -45,6 +45,19 @@ again with every later push the ledger reports (`PUSHED <branch> <range>`), so a
 | build: `plano-aprovado`, `implementando`, `branch-publicada`, every later `headSha` | the spec session, from its first READY until the set session **accepts** its `DONE` (diff read, core step-05 duty 4); a `DONE` the diff refutes reopens the spec session and ownership never left it |
 | after the `DONE` is accepted: reconciliation, `VALIDACAO` rework that reopens the spec session, close-out (`pr-aberto`, `merge`) | the set session again; if it reopens the spec session for rework, ownership returns to that session until its next `DONE` |
 
+**The boundary is two lines in the set's `ledger.md`**, written by the set session through `ledger.py append --type NOTE`:
+`NOTE DONE-ACEITO <spec slug> <headSha>` when it accepts a spec session's `DONE` after reading the branch diff, and
+`NOTE REABERTO <spec slug> <motivo>` when rework reopens the spec session. The last of the two for a slug decides who
+owns `specs/{id}` now; with neither, a spec session with a READY owns its build etapas. A work-in-progress push at a
+plan-phase boundary is preceded by `NOTE WIP-PUSH <spec slug>` in the spec's `fork-<slug>.md`: while it is the last
+folded line of that file, the push records no milestone.
+
+**The `novarc` mod follows the same table: it writes only in the owning session and otherwise routes the proof.** In the
+orchestrator it writes nothing and sends `MARCO <S> <etapa> <proof>` to the set session (once probe D20a showed a set
+session accepts a mod-sent line; until then it only raises a toast); in a spec session past its accepted `DONE` it
+appends `NOTE MARCO <S> <etapa> [branch headSha]` to its fork ledger and sends the same line to its set session; in any
+other non-owning session it writes nothing and raises the toast `Maestro: marco <etapa> de <spec> ignorado; dona agora: <sessão>`.
+
 `sessao` is informational (the last writer's title). Routing never reads it: the set session is
 `execucao/{C}.sessao`, and the spec sessions are in the set's `ledger.md`.
 
