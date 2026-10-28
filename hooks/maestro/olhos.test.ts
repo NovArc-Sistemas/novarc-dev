@@ -519,9 +519,16 @@ test('pane for 3 runs, 9 sets and 21 specs draws under 2,000 nodes and 50,000 ch
       expect(JSON.stringify(arvore, (k, v) => (k === 'source' ? undefined : v)).length).toBeLessThan(50_000)
       for (const sv of await ui.findAll({ type: 'Svg' })) expect(String(sv.props.source).length).toBeLessThan(131_072)
     }
-    if (surface === 'terminal') expect((await ui.findAll({ type: 'Text', text: /^C\d{2}-S\d{2}$/ })).length).toBe(21)
-    else expect(new Set((await idsNasTabelas(ui))).size).toBe(21)
-    expect((await ui.findAll({ type: 'Text', text: /^C\d{2}( · .*)?$/ })).length).toBe(3) // own run's 3 sets only
+    // C05-S01 (R35): 21 progress rows across the 3 set cards; the detail card holds the selected set's 7 lanes
+    if (surface === 'terminal') {
+      expect((await ui.findAll({ type: 'Text', text: /^C\d{2}-S\d{2}$/ })).length).toBe(7)
+      expect((await ui.findAll({ type: 'Text', text: /^S0\d$/ })).length).toBe(21)
+    } else {
+      expect(new Set((await idsNasTabelas(ui))).size).toBe(7)
+      expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => /^C0\d S0\d \d+\/8 etapas$/.test(String(x.props.alt))).length).toBe(21)
+    }
+    expect((await ui.findAll({ type: 'Text', text: /^C\d{2}( · .*)?$/ })).length).toBe(1) // the detail card's title
+    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^sel-C\d{2}$/.test(String(b.key))).length).toBe(3) // own run's 3 sets only
     expect(await ui.find({ type: 'Text', text: /^mais / })).toBeUndefined()
     await ui.press({ key: 't-agora' })
     await ui.unmount()
@@ -541,7 +548,8 @@ test('Execução past 21 lanes draws 21 and says mais 1 under the last block', a
     expect(textoDe(await ui.drawn())).toMatch(MAESTRO)
     if (surface === 'terminal') expect((await ui.findAll({ type: 'Text', text: /^C01-S\d{2}$/ })).length).toBe(21)
     else expect(new Set(await idsNasTabelas(ui)).size).toBe(21)
-    expect(await ui.find({ type: 'Text', text: /^mais 1$/ })).toBeDefined()
+    // C05-S01: one cut under the card grid, one inside the detail card
+    expect((await ui.findAll({ type: 'Text', text: /^mais 1$/ })).length).toBe(2)
     await ui.press({ key: 't-agora' })
     await ui.unmount()
   }
@@ -1717,4 +1725,238 @@ test('a RELEASE heard while the ledger dir cannot be read mirrors nothing until 
   gravar(m, FORK, (m.arquivos[FORK]?.text ?? '') + linhaHa('RELEASE', `verify ${VERIFY}`, 0))
   await olhar(m)
   expect(m.db!['execucao/C03']!.data.espelho.locks).toEqual({})
+})
+
+// ---- C05-S01: sessions opened empty, the GO with the current brief, the Execução set cards and detail card
+
+import { todos } from './mundo-teste'
+
+const URL_C5 = 'https://claude.ai/artifact/X'
+const SET_C5 = `Você é a sessão do conjunto C02 da execução NOVARC-PLUGIN-MAESTRO (${URL_C5}).\nsession name: novarc-NOVARC-PLUGIN-MAESTRO-C02\nAguarde o GO do orquestrador. Não leia specs nem crie branch antes dele.`
+const SPEC_C5 = `Você é a sessão da spec S01 do conjunto C02 da execução NOVARC-PLUGIN-MAESTRO (${URL_C5}).\nsession name: novarc-NOVARC-PLUGIN-MAESTRO-C02-S01\nAguarde o GO da sessão do conjunto C02. Não leia specs nem crie branch antes dele.`
+const L1 = 'local_11111111-1111-4111-8111-111111111111'
+const L2 = 'local_22222222-2222-4222-8222-222222222222'
+const ORQ_DIR = 'C:/repo/.novarc/ledger/novarc-orq/20261028-0300'
+const PLANO_C5 = {
+  ...PLANO,
+  conjuntos: [
+    { id: 'C01', titulo: 'Base', specs: ['C01-S01'] },
+    { id: 'C02', titulo: 'Alertas', specs: ['C02-S01'], dependeDe: ['C01'] },
+    { id: 'C03', titulo: 'Guardas', specs: ['C03-S01'], dependeDe: ['C02'] },
+  ],
+}
+const lerPlanoC5 = (t: any) => t.tool === 'Artifact' || t.tool === 'ArtifactData'
+const hhmm = (iso: string) => new Date(Date.parse(iso)).toTimeString().slice(0, 5)
+const semHex = (n: any) => todos(n).every(x => !['color', 'borderColor', 'backgroundColor'].some(k => String(x?.props?.[k] ?? '').startsWith('#')))
+
+test('C05-S01 A29: the set minimal brief names the role and the wait, reads no plan; a GO inicio clears the wait', async ($: any, on: any) => {
+  const escritos: Record<string, string> = {}
+  const m = montar(on, escritos, 'main', true)
+  await iniciar($)
+  const n = m.tools.length
+  await $.prompt.submit?.({ text: SET_C5, origin: { kind: 'composer' } })
+  await quieto(m)
+  const r = registro(escritos)
+  expect([r.papel, r.conjunto, r.codigo, r.artefato, r.aguardandoGo]).toEqual(['conjunto', 'C02', 'NOVARC-PLUGIN-MAESTRO', URL_C5, true])
+  expect(m.tools.slice(n).filter(lerPlanoC5)).toEqual([]) // R10: no plan, no database before the GO
+  await $.session.receive?.({ origin: { kind: 'peer' }, text: 'oi, tudo certo por aí?' })
+  expect(registro(escritos).aguardandoGo).toBe(true)
+  await $.session.receive?.({ origin: { kind: 'peer' }, text: 'GO C02 inicio 9f8e7d6\nspecs: 9f8e7d6' })
+  expect(registro(escritos).aguardandoGo).toBe(false)
+})
+
+test('C05-S01 A29: the spec minimal brief gives spec C02-S01 waiting; GO PLAN clears it', async ($: any, on: any) => {
+  const escritos: Record<string, string> = {}
+  const m = montar(on, escritos, 'main', true)
+  await iniciar($)
+  await $.prompt.submit?.({ text: SPEC_C5, origin: { kind: 'composer' } })
+  await quieto(m)
+  const r = registro(escritos)
+  expect([r.papel, r.conjunto, r.spec, r.aguardandoGo]).toEqual(['spec', 'C02', 'C02-S01', true])
+  await $.session.receive?.({ origin: { kind: 'peer' }, text: 'GO PLAN\nspec slug: alertas' })
+  expect(registro(escritos).aguardandoGo).toBe(false)
+})
+
+/** An orchestrator of PLANO_C5 whose ledger has the given lines, C01 running with one lane, after one tick. */
+async function orqC5($: any, on: any, linhas: string): Promise<Mundo> {
+  const m = montar(on, {}, 'main', true)
+  m.plano = PLANO_C5 // this run's plan, with dependeDe
+  gravar(m, `${SESSOES}/set-1.json`, entrada('set-1', { papel: 'conjunto', conjunto: 'C01', ledgerDir: 'C:/set/ledger' }))
+  gravar(m, 'C:/set/ledger/fork-c01-s01.md', linhaHa('READY', 'branch=feat/c01-s01-olhos-20261017', 30))
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: `orquestrar ${URL}` })
+  await $.tool.call({ tool: 'Bash', command: `python ledger.py init --dir ${ORQ_DIR} --run-id 20261028-0300` })
+  gravar(m, `${ORQ_DIR}/ledger.md`, linhas)
+  await tick(m)
+  await quieto(m)
+  return m
+}
+
+const LEDGER_C5 = [
+  `NOTE SESSAO C02 c02-novarc-plugin-maestr ${L2} vazia  # 2026-10-28T10:00:00Z`,
+  `NOTE SESSAO C02-S01 c02-s01-alertas-locks-es ${L1} vazia  # 2026-10-28T10:00:01Z`,
+  `NOTE SESSAO C03 c03-novarc-plugin-maestr ${L2} vazia  # 2026-10-28T10:00:02Z`,
+  'NOTE BASE aaaa111  # 2026-10-28T10:00:03Z',
+  'NOTE CARTAO C11 sem-fechamento  # 2026-10-28T14:05:00Z',
+].join('\n') + '\n'
+
+test('C05-S01 A7, A22, A30, A32, A33: NOTE SESSAO fills the map; waiting cards, KPI, selection, waiting box and card row', LENTO_8, async ($: any, on: any) => {
+  const m = await orqC5($, on, LEDGER_C5)
+  const mapa = escrito(m, 'maestroMapa')
+  expect([mapa.specs['C02-S01']?.sessao, mapa.specs['C02-S01']?.nome]).toEqual([L1, 'novarc-NOVARC-PLUGIN-MAESTRO-C02-S01'])
+  for (const surface of SUPERFICIES) {
+    const ui = await $.ui.mount({ ...PAINEL, surface, props: { ...PAINEL.props, bodyColumns: 70 } })
+    await ui.press({ key: 't-exec' })
+    expect(await ui.find({ type: 'Text', text: 'aguardando GO' })).toBeDefined()
+    expect((await ui.find({ key: 'exk-2' }))?.text).toMatch(/⏳.*2.*aguardando GO/)
+    const c2 = await ui.find({ key: 'cj-C02' })
+    expect(c2?.text).toContain('⏸️')
+    expect(c2?.text).toContain('aberta vazia · aguardando GO')
+    expect((await ui.find({ type: 'Text', text: 'após C01' }))?.props).toMatchObject({ mono: true, color: 'subtle' })
+    expect(await ui.find({ type: 'Text', text: 'após C02' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'CONJUNTOS' })).toBeDefined()
+    // 4 cards (C01, C02, C03, C11) at 70 columns: one row of 3 (C03 among them), then one
+    expect((await ui.find({ key: 'cj-fila-0' }))?.text).toContain('após C02')
+    expect(await ui.find({ key: 'cj-fila-1' })).toBeDefined()
+    expect(await ui.find({ key: 'cj-fila-2' })).toBeUndefined()
+    expect((await ui.find({ key: 'sel-C01' }))?.props.variant).toBe('primary')
+    expect((await ui.find({ key: 'sel-C02' }))?.props.variant).toBe('secondary')
+    await ui.press({ key: 'sel-C02' })
+    expect((await ui.find({ key: 'sel-C02' }))?.props.variant).toBe('primary')
+    expect(await ui.find({ type: 'Text', text: 'DETALHE · C02' })).toBeDefined()
+    const det = await ui.find({ key: 'det' })
+    expect(det?.text).toContain('Sessão aberta vazia · aguardando GO')
+    expect(det?.text).toContain('nada de spec, contexto ou branch carregado, então nada fica velho')
+    expect(det?.text).toContain('SESSÕES')
+    const brf = await ui.find({ key: 'brf' })
+    expect(brf?.props.borderColor).toBe('promptBorder')
+    expect(semHex(brf)).toBe(true)
+    for (const C of ['C01', 'C02', 'C03', 'C11']) expect((await ui.find({ key: `cj-${C}` }))?.text).not.toContain('SESSÕES')
+    await ui.press({ key: 'sel-C11' })
+    const dim = 'abertas no seu turno · endereços restaurados após compactação'
+    const cartao = `${hhmm('2026-10-28T14:05:00Z')} cartão proposto: C11 (clique equivale a colar o prompt)`
+    const t11 = String((await ui.find({ key: 'det' }))?.text)
+    expect(t11.endsWith(cartao)).toBe(true)
+    expect(t11.indexOf(dim)).toBeGreaterThan(-1)
+    expect(t11.indexOf(dim)).toBeLessThan(t11.indexOf(cartao))
+    expect((await ui.find({ type: 'Text', text: dim }))?.props.color).toBe('subtle')
+    expect((await ui.find({ type: 'Text', text: cartao }))?.props.color).toBe('subtle')
+    await ui.press({ key: 'sel-C01' })
+    await ui.unmount()
+  }
+  // at 56 columns the cards go in rows of 2
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop', props: { ...PAINEL.props, bodyColumns: 56 } })
+  await ui.press({ key: 't-exec' })
+  expect((await ui.find({ key: 'cj-fila-0' }))?.text).not.toContain('após C02') // C03 moved to the second row
+  expect((await ui.find({ key: 'cj-fila-1' }))?.text).toContain('após C02')
+  expect(await ui.find({ key: 'cj-fila-2' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('C05-S01 A24: 20 renders of Execução write nothing to the database or the ledgers', LENTO_8, async ($: any, on: any) => {
+  const m = await orqC5($, on, LEDGER_C5)
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 't-exec' })
+  await quieto(m)
+  const t0 = m.tools.length
+  const e0 = m.eventos.length
+  for (let i = 0; i < 20; i++) await ui.redraw()
+  expect(m.tools.slice(t0).filter(t => t.tool === 'ArtifactData' && !['get', 'list', 'query'].includes(t.action))).toEqual([])
+  expect(m.eventos.slice(e0).filter(x => x.e?.path && 'text' in x.e && /ledger/.test(norm(x.e.path)))).toEqual([])
+  await ui.unmount()
+})
+
+const GO_C3 = 'GO C03 inicio 9f8e7d6\nspecs: 9f8e7d6 (relidos)\ndecisoes-novas: d-x um\nmudou: C01 PR #31 abc1234\nspecs-atualizadas: C03-S01 ganhou 1 critério\nbranch: git fetch origin && git switch -c feat/c03-s01-guardas-20261029 --no-track origin/main'
+
+test('C05-S01 A23, A31, R30: a sent GO inicio is kept locally and draws the GO box; two quick GOs both survive', LENTO_8, async ($: any, on: any) => {
+  const m = await orqC5($, on, LEDGER_C5)
+  await Promise.all([
+    $.session.send?.({ to: 'novarc-NOVARC-PLUGIN-MAESTRO-C03', text: GO_C3, origin: { kind: 'model' } }),
+    $.session.send?.({ to: 'novarc-NOVARC-PLUGIN-MAESTRO-C02', text: 'GO C02 inicio 1a2b3c4\nspecs-atualizadas: nenhuma', origin: { kind: 'model' } }),
+  ])
+  await quieto(m)
+  const gos = escrito(m, 'maestroGos')
+  expect(Object.keys(gos).sort()).toEqual(['C02', 'C03'])
+  expect(gos.C03).toMatchObject({ sha: '9f8e7d6', atualizadas: ['C03-S01 ganhou 1 critério'], decisoesNovas: 1, branches: ['git fetch origin && git switch -c feat/c03-s01-guardas-20261029 --no-track origin/main'] })
+  expect(JSON.stringify(m.tools.filter(t => t.tool === 'ArtifactData'))).not.toContain('ganhou 1 critério') // R30
+  for (const surface of SUPERFICIES) {
+    const ui = await $.ui.mount({ ...PAINEL, surface })
+    await ui.press({ key: 't-exec' })
+    expect((await ui.find({ key: 'exk-2' }))?.text).not.toContain('aguardando GO') // C02 and C03 got their GO
+    expect((await ui.find({ key: 'cj-C03' }))?.text).toContain('GO com brief atual')
+    await ui.press({ key: 'sel-C03' })
+    expect(await ui.find({ type: 'Text', text: `Brief entregue no GO · ${new Date(gos.C03.at).toTimeString().slice(0, 5)}` })).toBeDefined()
+    // validation fixes 1 and 2: the commit line names the set it waited for; the decisions line names the merges
+    expect((await ui.find({ type: 'Text', text: 'specs no commit 9f8e7d6, relidas depois que o session-plan aplicou o que o C02 mudou' }))?.props.color).toBe('subtle')
+    expect((await ui.find({ type: 'Text', text: 'DECISIONS.md com 1 decisão nova · merges desde o início: PR #31' }))?.props.color).toBe('subtle')
+    const brf = await ui.find({ key: 'brf' })
+    expect(brf?.props.borderColor).toBe('success')
+    expect(semHex(brf)).toBe(true)
+    if (surface === 'desktop') {
+      const pill = (await ui.findAll({ type: 'Svg' })).find((x: any) => x.props.alt === 'C03-S01 ganhou 1 critério')
+      expect(String(pill?.props.source)).toContain('@media')
+      expect((await ui.find({ type: 'Code' }))?.props.language).toBe('bash')
+    } else {
+      expect(await ui.find({ type: 'Text', text: 'git fetch origin && git switch -c feat/c03-s01-guardas-20261029 --no-track origin/main' })).toBeDefined()
+    }
+    // a GO with no branch line draws the box without a code block
+    await ui.press({ key: 'sel-C02' })
+    expect((await ui.find({ key: 'brf' }))?.props.borderColor).toBe('success')
+    expect(await ui.find({ type: 'Code' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('C05-S01: a GO copy held across /clear never comes back in the next run', async ($: any, on: any) => {
+  const m = await orqC5($, on, LEDGER_C5)
+  let solta: () => void = () => {}
+  m.segurarEstado = (e: any) => (e.key === 'maestroGos' && !('value' in e) ? new Promise<void>(r => (solta = r)) : null)
+  const envio = $.session.send?.({ to: 'novarc-NOVARC-PLUGIN-MAESTRO-C03', text: GO_C3, origin: { kind: 'model' } })
+  await dormir(20)
+  await $.session.end?.({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  solta()
+  m.segurarEstado = null
+  await envio
+  await quieto(m)
+  const escritas = m.eventos.filter(x => x.e?.plugin === 'novarc' && x.e?.key === 'maestroGos' && 'value' in x.e)
+  expect(escritas.length ? escritas[escritas.length - 1]!.e.value : null).toBe(null)
+})
+
+test('C05-S01 R9, A25: a start_session with a D17 short name maps and audits the session under its title', async ($: any, on: any) => {
+  on('tool.call', { tool: 'mcp__ccd_session__start_session' }, async (_$: any, e: any) => ({ result: '', text: `Session started: ${L1} (${e.name})`, isError: false }))
+  const m = montar(on, {}, 'main', true)
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: `orquestrar ${URL}` })
+  await $.tool.call({ tool: 'mcp__ccd_session__start_session', name: 'c02-s01-alertas-locks-es', prompt: SPEC_C5, initiation: 'user_asked', context: 'fresh', use_worktree: true })
+  await quieto(m)
+  expect(escrito(m, 'maestroMapa').specs['C02-S01']).toMatchObject({ nome: 'novarc-NOVARC-PLUGIN-MAESTRO-C02-S01', sessao: L1 })
+  const fila = escrito(m, 'auditoriaPendente') as { doc: any }[]
+  expect(fila.map(f => [f.doc.acao, f.doc.alvo])).toContainEqual(['SESSAO', 'novarc-NOVARC-PLUGIN-MAESTRO-C02-S01'])
+})
+
+test('C05-S01 Task 3b: a set session ledger dir with -<c>-<sid8> gives the audit its runId', async ($: any, on: any) => {
+  const m = montar(on, {}, 'main', true)
+  await iniciar($)
+  await $.tool.call({ tool: 'Skill', skill: BUILD, args: CONJ })
+  await $.tool.call({ tool: 'Bash', command: 'python ledger.py init --dir C:/repo/.novarc/ledger/session-build/20261028-0300-c01-3b2b0f69 --run-id 20261028-0300-c01-3b2b0f69' })
+  await $.session.send?.({ to: 'novarc-NOVARC-PLUGIN-MAESTRO-C01-S01', text: 'HOLD C01 teste', origin: { kind: 'model' } })
+  await quieto(m)
+  const fila = escrito(m, 'auditoriaPendente') as { doc: any }[]
+  expect(fila.map(f => f.doc.runId)).toContain('20261028-0300-c01-3b2b0f69')
+})
+
+test('C05-S01 validation fix 3, R23: a set the plan removed shows the cancelado pill and is not waiting', LENTO_8, async ($: any, on: any) => {
+  const m = await orqC5($, on, LEDGER_C5 + 'NOTE CANCELADO C03 removido do plano  # 2026-10-28T11:00:00Z\n')
+  for (const surface of SUPERFICIES) {
+    const ui = await $.ui.mount({ ...PAINEL, surface })
+    await ui.press({ key: 't-exec' })
+    const c3 = await ui.find({ key: 'cj-C03' })
+    expect(c3?.text).toContain('cancelado · removido do plano')
+    expect(c3?.text).not.toContain('aguardando GO')
+    if (surface === 'desktop') expect(todos(c3).some((x: any) => x?.type === 'Svg' && x.props?.alt === 'cancelado')).toBe(true)
+    else expect(c3?.text).toContain('[cancelado]')
+    expect((await ui.find({ key: 'exk-2' }))?.text).toMatch(/⏳.*1.*aguardando GO/) // C02 only
+    await ui.unmount()
+  }
+  expect(m.eventos.length).toBeGreaterThan(0)
 })

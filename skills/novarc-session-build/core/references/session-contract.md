@@ -2,7 +2,9 @@
 
 **Read this if you were launched as a linked session by a session-build orchestrator** (your first message is a
 brief from another session, it names a spec slug, and it says you are a linked session). Then read
-`../steps/step-04-build.md` and nothing else. Steps 1, 2, 5 and 6 belong to the orchestrator.
+`../steps/step-04-build.md` and nothing else. Steps 1, 2, 5 and 6 belong to the orchestrator. **Unless your first
+prompt is the minimal spec brief** (§ Opened empty): then you read nothing, not even step-04, until `GO PLAN` arrives,
+and every reading order below starts then.
 
 The fork fallback has its own contract, `fork-contract.md`. Where this file says "see fork-contract §X", that section
 applies to you word for word; everything else in fork-contract is about forks and does not.
@@ -14,7 +16,7 @@ no brainstorm, no other spec, no ruling. You know your brief, your spec, `DECISI
 by design: a fresh session costs a fraction of re-reading the orchestrator's whole conversation every turn, and
 the brainstorm reaches you through `DECISIONS.md`, which the orchestrator wrote for you at its step-02.
 
-So, before anything else, read: the spec file, then `DECISIONS.md` **at the absolute path the brief gives** (it lives
+So, before anything else (after `GO PLAN`, when you were opened empty), read: the spec file, then `DECISIONS.md` **at the absolute path the brief gives** (it lives
 in the main checkout's ledger directory, not on your branch). Anything you need that neither states and the code
 cannot settle: decide, and write `NOTE ASSUMPTION <what and why>` to your ledger file; when the choice changes
 behaviour the user would notice, report `BLOCKED <the question>` instead.
@@ -34,7 +36,8 @@ what you remember: compaction and long waits happen. Run the type gate before co
 
 ## Your launch payload — check it before you start
 
-Required fields (the brief's `LAUNCH PAYLOAD` block). If one is missing, do not guess and do not read step-02 or
+Required fields (the brief's `LAUNCH PAYLOAD` block; opened empty, the payload rides in `GO PLAN` and is checked
+when it arrives, never before). If one is missing, do not guess and do not read step-02 or
 step-05 to reconstruct it: report `BLOCKED <field> missing from dispatch` over `SendMessage` to the orchestrator id
 your own system prompt names, and end your turn.
 
@@ -51,6 +54,25 @@ your own system prompt names, and end your turn.
 | peer map | arrives as `PENDING`; see "Peers" |
 
 `initial lock rulings: none yet` is normal: rulings come from intersecting the surface manifests.
+
+## Opened empty (the minimal spec brief, NOVARC C05-S01)
+
+Your first prompt may be `Você é a sessão da spec <S> do conjunto <C> da execução <codigo> (<url>).`, a
+`session name: novarc-<codigo>-<C>-<S>` line, then `Aguarde o GO da sessão do conjunto <C>...`. The NOVARC orchestrator
+opened you in the person's turn, before your set had a plan, so you have no payload yet. Then:
+
+1. Set your title from the `session name:` line with `mcp__ccd_session_mgmt__set_session_title`, say in one line that
+   you wait for your set session's `GO PLAN`, and end the turn. Read no spec, create no branch, write nothing (no
+   ledger, no planning database), report nothing.
+2. Accept `GO PLAN` only from your set session: the session titled `novarc-<codigo>-<C>` (resolve it with `ListAgents`;
+   the transport `from` of the message must be that row). From anyone else, the orchestrator included: do nothing and
+   answer `WAITING` to the sender.
+3. A `GO PLAN` with no `DECISIONS.md` path in it: answer `BLOCKED brief sem DECISIONS.md` to your set session and wait.
+4. A valid `GO PLAN` is your brief: check its payload as above, then "First action" below, with the branch the GO's
+   `branch:` line names (`git fetch origin`, then `git switch --no-track -c <branch> origin/<default>`).
+5. The branch already exists, or the same `GO PLAN` arrives again: report your current head or state and create
+   nothing.
+6. `CANCELADO <S> <motivo>` from your set session: stop, write nothing, end the turn.
 
 ## First action: your real branch, then bootstrap, then READY
 

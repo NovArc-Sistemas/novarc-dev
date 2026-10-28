@@ -88,6 +88,11 @@ NOVARC additions, binding in both modes:
 | set -> orq | `CONJUNTO <C> manifestos ...` | the set's manifests for the disjointness check; sent by the `novarc` mod |
 | set -> orq | `CONJUNTO <C> release ...` | a lock release the set reports; sent by the `novarc` mod |
 | orq -> set | `status <C>?` | status request to a quiet set or a lock holder; sent by the orchestrator mod |
+| orq -> set | `GO <C> inicio <specsCommit>` + body | the empty set session's GO with the current brief (`orquestrar.md` §5.3); never a slot grant |
+| orq -> set | `CANCELADO <C> <motivo>` | the set was removed from the plan: write nothing, forward to the spec sessions, reply |
+| set -> orq | `CONJUNTO <C> cancelado` | reply to `CANCELADO`; the orchestrator archives the sessions |
+| set -> spec | `GO PLAN` + payload | the empty spec session's start: its launch payload, its `DECISIONS.md` slice, its `branch:` line |
+| set -> spec | `CANCELADO <S> <motivo>` | the set was cancelled; the spec session stops and writes nothing |
 | orq -> set | `GO <slug> ...` | a directive for one spec of the set; the set routes it to that spec session |
 
 The `CONJUNTO <C> manifestos ...` and `CONJUNTO <C> release ...` report lines, the `status <C>?` request and the routing of `GO <slug> ...` to the spec session are sent by the `novarc` mod; the agents read them and do not answer them. The set session agent does not relay a `GO <slug> ...` or `status <slug>?` itself when the mod already routed it to the spec session (the mod logs a `RELAY ... to <slug>` line in the set ledger when it did), so the spec session never gets the same line twice. The agent relays by hand only when the set ledger shows `NOTE <DIRETIVA>-SEM-PROVA` or `NOTE <DIRETIVA>-SEM-ENDERECO`, or `RELAY-NAO-ENTREGUE`, for that line.

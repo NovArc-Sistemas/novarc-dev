@@ -188,10 +188,22 @@ export function papelDaBranch(branch: string | null): { papel: 'spec'; conjunto:
 
 const SKILL = String.raw`^\s*\/(?:novarc:)?novarc-session-build`
 
-/** Role announced by a session's first prompt: a skill invocation or the spec brief's `session name:` line. */
-export function papelDoPrompt(texto: string): { papel: 'orquestrador' | 'conjunto' | 'spec'; codigo?: string; conjunto?: string; spec?: string; url?: string } | null {
+// C05-S01: the line right after a minimal brief's `session name:` line starts `Aguarde o GO`
+const ESPERA = /^[^\S\r\n]*session name:[^\r\n]*\r?\n[^\S\r\n]*Aguarde o GO/mi
+
+/**
+ * Role announced by a session's first prompt: a skill invocation, the spec brief's `session name:` line, or a C05-S01
+ * minimal brief (set or spec), which also gives `aguardandoGo` and, for the set, the planning url of its first line.
+ */
+export function papelDoPrompt(texto: string): { papel: 'orquestrador' | 'conjunto' | 'spec'; codigo?: string; conjunto?: string; spec?: string; url?: string; aguardandoGo?: boolean } | null {
+  const espera = ESPERA.test(texto)
   const n = texto.match(/^\s*session name:\s+novarc-(.+)-(C\d{2})-(S\d{2})\s*$/mi)
-  if (n) return { papel: 'spec', codigo: n[1]!, conjunto: n[2]!.toUpperCase(), spec: `${n[2]}-${n[3]}`.toUpperCase() }
+  if (n) return { papel: 'spec', codigo: n[1]!, conjunto: n[2]!.toUpperCase(), spec: `${n[2]}-${n[3]}`.toUpperCase(), ...(espera ? { aguardandoGo: true } : {}) }
+  const v = espera ? texto.match(/^\s*session name:\s+novarc-(.+)-(C\d{2})\s*$/mi) : null
+  if (v) {
+    const url = texto.split(/\r?\n/)[0]!.match(/https:\/\/claude\.ai\/[^\s)]+/)?.[0]?.replace(/[.)]+$/, '')
+    return { papel: 'conjunto', codigo: v[1]!, conjunto: v[2]!.toUpperCase(), ...(url ? { url } : {}), aguardandoGo: true }
+  }
   const o = texto.match(new RegExp(`${SKILL}\\s+orquestrar\\b(?:\\s+(https:\\/\\/claude\\.ai\\/\\S+))?`, 'im'))
   if (o) return o[1] ? { papel: 'orquestrador', url: o[1] } : { papel: 'orquestrador' }
   const c = texto.match(new RegExp(`${SKILL}\\s+conjunto\\s+(\\S+)\\s+(C\\d{2})\\b`, 'im'))
@@ -716,16 +728,20 @@ export function locksDoEspelho(esp: Pick<EspelhoConjunto, 'locks'> | undefined |
 export const MAPA_VAZIO = (): MapaSessoes => ({ conjuntos: {}, specs: {}, orquestrador: null, at: 0 })
 
 /** The map entry of one start_session: null for an `own_initiative` card or a result with no `local_...` id. */
-export function entradaMapa(input: { name?: string; initiation?: string }, resultText: string): { nome: string; sessao: string } | null {
+export function entradaMapa(input: { name?: string; initiation?: string; prompt?: string }, resultText: string): { nome: string; sessao: string } | null {
   if (input.initiation === 'own_initiative') return null
   const sessao = String(resultText).match(/local_[0-9A-Za-z-]+/)?.[0]
-  const nome = String(input.name ?? '').trim()
+  // C05-S01 (D17): the `name` is a short hint; the brief's `session name:` line carries the title
+  const titulo = String(input.prompt ?? '').match(/^\s*session name:\s+(novarc-\S+)/mi)?.[1]
+  const nome = (titulo ?? String(input.name ?? '')).trim()
   return sessao && nome ? { nome, sessao } : null
 }
 
 /** Puts a session named `...-C02` (set) or `...-C02-S01` (spec) into the map; another name leaves it as it was. */
 export function noMapa(mapa: MapaSessoes, e: { nome: string; sessao: string }, at = Date.now()): MapaSessoes {
-  const m = e.nome.match(/-(C\d+)(?:-(S\d+))?$/i)
+  // the title shape `...-C02[-S01]`, else a D17 short name: `c02-s01-<slug>` (spec) or `c02-<codigo>` (set)
+  const curto = e.nome.match(/^(c\d{2})(?:-(s\d{2})(?=-|$))?(?:-[a-z0-9-]*)?$/i)
+  const m = e.nome.match(/-(C\d+)(?:-(S\d+))?$/i) ?? curto
   if (!m) return mapa
   const conjunto = m[1]!.toUpperCase()
   if (!m[2]) return { ...mapa, conjuntos: { ...mapa.conjuntos, [conjunto]: { nome: e.nome, sessao: e.sessao } }, at }
@@ -767,7 +783,8 @@ export function dobrarMapa(mapa: MapaSessoes, texto: string, consumido: number, 
 /** The rule a directive line cites (audit `regra`). */
 export function regraDaDiretiva(linha: string): string {
   const t = linha.trim().split(/\s+/)
-  if (t[0] === 'GO') return t[2] === 'phase' ? 'dispatch-prompts.md:458' : 'step-05 §5.3'
+  if (t[0] === 'GO') return t[2] === 'phase' ? 'dispatch-prompts.md:458' : t[2] === 'inicio' ? 'orquestrar.md §5' : 'step-05 §5.3'
+  if (t[0] === 'CANCELADO') return 'orquestrar.md §5'
   if (t[0] === 'status') return 'dispatch-prompts.md:442'
   if (t[0] === 'FECHA') return 'orquestrar.md §5.1'
   if (t[0] === 'HOLD' || t[0] === 'LIBERA') return 'orquestrar.md'
@@ -958,7 +975,7 @@ export function lerRelay(linha: string): { acao: string; alvo: string; chave: st
 
 /** The main checkout of a set ledger dir (R4-4), forward slashes; null when the dir is not a session-build run dir. */
 export function checkoutPrincipal(ledgerDir: string): string | null {
-  const m = String(ledgerDir).replace(/\\/g, '/').match(/^(.*)\/(?:\.novarc\/ledger|\.superpowers)\/session-build\/\d{8}-\d{4}\/?$/)
+  const m = String(ledgerDir).replace(/\\/g, '/').match(/^(.*)\/(?:\.novarc\/ledger|\.superpowers)\/session-build\/\d{8}-\d{4}(?:-c\d{2}-[0-9a-f]{8})?\/?$/)
   return m ? m[1]! : null
 }
 
@@ -986,4 +1003,128 @@ export function resumoTurno(conjunto: string, feitos: number, total: number, loc
   const s = Math.round(durationMs / 1000)
   const dur = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
   return `${dur} · ${conjunto} ${feitos}/${total}${locks > 0 ? ` · ${locks} lock` : ''}`
+}
+
+// ---- C05-S01: sessions opened empty, the GO with the current brief, the orchestrator's NOTE lines
+
+/** A `GO <C> inicio <sha>` or `GO PLAN` first line: the GO an empty session waits for (R31). */
+export function limpaAguardo(texto: string): boolean {
+  const l = (String(texto).split(/\r?\n/)[0] ?? '').trim()
+  return /^GO C\d{2} inicio \S+/.test(l) || /^GO PLAN\b/.test(l)
+}
+
+export type NotaSessao = { id: string; conjunto: string; spec: string | null; nome: string; sessao: string; vazia: boolean; at: number }
+export type GoLocal = { sha: string; at: number; atualizadas: string[]; decisoesNovas: number; branches: string[]; merges?: string[] }
+export type NotasOrq = {
+  sessoes: NotaSessao[]
+  base: string | null
+  cartoes: { id: string; conjunto: string; fechamento: boolean; at: number }[]
+  gos: Record<string, { sha: string; at: number }>
+  /** `NOTE CANCELADO <C> <motivo>`: the set was removed from the plan after its session opened (R23). */
+  cancelados: Record<string, { motivo: string; at: number }>
+}
+
+const ALVO = /^(C\d{2})(?:-(S\d{2}))?$/
+
+/**
+ * The orchestrator ledger lines this spec adds (dados.md): `NOTE SESSAO <C>[-<S>] <name> <local id> <vazia|brief>`
+ * (a later one for the same id wins), the first `NOTE BASE <sha>`, `NOTE CARTAO <C>[-<S>] <com|sem>-fechamento`, and
+ * `GO <C> inicio <sha>`. Any other NOTE, and a malformed one, adds nothing.
+ */
+export function notasOrq(evs: Evento[]): NotasOrq {
+  const sessoes = new Map<string, NotaSessao>()
+  const out: NotasOrq = { sessoes: [], base: null, cartoes: [], gos: {}, cancelados: {} }
+  for (const e of evs) {
+    const t = e.texto.split(/\s+/)
+    if (e.tipo === 'GO') {
+      if (/^C\d{2}$/.test(t[0] ?? '') && t[1] === 'inicio' && t[2]) out.gos[t[0]!] = { sha: t[2], at: e.at }
+      continue
+    }
+    if (e.tipo !== 'NOTE') continue
+    const a = (t[1] ?? '').match(ALVO)
+    if (t[0] === 'SESSAO' && a && t[2] && /^local_/.test(t[3] ?? '') && (t[4] === 'vazia' || t[4] === 'brief')) {
+      sessoes.delete(t[1]!)
+      sessoes.set(t[1]!, { id: t[1]!, conjunto: a[1]!, spec: a[2] ? t[1]! : null, nome: t[2], sessao: t[3]!, vazia: t[4] === 'vazia', at: e.at })
+    } else if (t[0] === 'BASE' && t[1] && out.base === null) out.base = t[1]
+    else if (t[0] === 'CANCELADO' && /^C\d{2}$/.test(t[1] ?? '')) out.cancelados[t[1]!] = { motivo: t.slice(2).join(' '), at: e.at }
+    else if (t[0] === 'CARTAO' && a && (t[2] === 'com-fechamento' || t[2] === 'sem-fechamento')) {
+      out.cartoes.push({ id: t[1]!, conjunto: a[1]!, fechamento: t[2] === 'com-fechamento', at: e.at })
+    }
+  }
+  out.sessoes = [...sessoes.values()]
+  return out
+}
+
+/** What the pane shows of a GO body (R25): its sha, the `specs-atualizadas` lines, the count of new decisions, the branch lines, the PRs of `mudou`. */
+export function resumoGo(texto: string): { sha: string | null; atualizadas: string[]; decisoesNovas: number; branches: string[]; merges: string[] } {
+  const linhas = String(texto).split(/\r?\n/)
+  const sha = (linhas[0] ?? '').match(/^GO C\d{2} inicio (\S+)/)?.[1] ?? null
+  // a key's values: the text after `key:` plus the indented lines below it, `nenhuma` dropped
+  const valores = (chave: string): string[] => {
+    const out: string[] = []
+    linhas.forEach((l, i) => {
+      if (!l.startsWith(`${chave}:`)) return
+      out.push(l.slice(chave.length + 1).trim())
+      for (let j = i + 1; j < linhas.length && /^\s+\S/.test(linhas[j]!); j++) out.push(linhas[j]!.trim())
+    })
+    return out.filter(v => v && v !== 'nenhuma')
+  }
+  const merges = [...new Set(valores('mudou').flatMap(v => v.match(/PR #\d+/g) ?? []))]
+  return { sha, atualizadas: valores('specs-atualizadas'), decisoesNovas: valores('decisoes-novas').length, branches: valores('branch'), merges }
+}
+
+/**
+ * The orchestrator ledger's sessions into the map, keyed by each note's own id; `nome` keeps a `novarc-` title already
+ * there, else builds `novarc-<codigo>-<id>`, else the note's short name (a short name never overwrites a title).
+ */
+export function mapaDasNotas(mapa: MapaSessoes, sessoes: NotaSessao[], codigo: string | null, at = Date.now()): MapaSessoes {
+  let out = mapa
+  for (const n of sessoes) {
+    const velho = n.spec ? out.specs[n.id]?.nome : out.conjuntos[n.conjunto]?.nome
+    const nome = velho?.startsWith('novarc-') ? velho : codigo ? `novarc-${codigo}-${n.id}` : n.nome
+    if (!n.spec) out = { ...out, conjuntos: { ...out.conjuntos, [n.conjunto]: { nome, sessao: n.sessao } }, at }
+    else {
+      const v = out.specs[n.id]
+      out = { ...out, specs: { ...out.specs, [n.id]: { conjunto: n.conjunto, nome, sessao: n.sessao, slug: v?.slug ?? '', agentId: v?.agentId ?? null } }, at }
+    }
+  }
+  return out
+}
+
+/** A session-build run dir name: `<YYYYMMDD-HHMM>`, or a NOVARC set session's `<YYYYMMDD-HHMM>-<c>-<sid8>`. */
+export const RUN_ID = /^\d{8}-\d{4}(?:-c\d{2}-[0-9a-f]{8})?$/
+
+export function runIdDoDir(dir: string | null): string | null {
+  const b = String(dir ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+  return RUN_ID.test(b) ? b : null
+}
+
+export type ConjuntoDaAba = { id: string; titulo: string; raias: (Raia & { rotulo?: string })[]; estado: 'vazia' | 'go' | 'normal' | 'cancelado'; apos: string[]; motivo?: string }
+
+/**
+ * The set cards of the Execução tab (R24, R25, R32, R35): every set with a live block, a `NOTE SESSAO` or a `NOTE CARTAO`
+ * line, sorted. `vazia` while its session was opened empty (ledger note, or a live registry entry `aguardandoGo`) and no
+ * GO for it was seen (ledger or the local copy); `go` once one was.
+ */
+export function conjuntosDaAba(
+  blocos: { conjunto: string; titulo: string; raias: (Raia & { rotulo?: string })[] }[],
+  notas: NotasOrq,
+  gos: Record<string, GoLocal>,
+  regs: Registro[],
+  dependeDe: Record<string, string[]>,
+  titulos: Record<string, string>,
+  agora: number,
+): ConjuntoDaAba[] {
+  const esperando = new Set([
+    ...notas.sessoes.filter(s => !s.spec && s.vazia).map(s => s.conjunto),
+    ...regs.filter(r => r.papel === 'conjunto' && r.conjunto && r.aguardandoGo && vivo(r, agora)).map(r => r.conjunto!),
+  ])
+  const ids = [...new Set([...blocos.map(b => b.conjunto), ...notas.sessoes.map(s => s.conjunto), ...notas.cartoes.map(c => c.conjunto), ...esperando, ...Object.keys(notas.cancelados)])].sort()
+  return ids.map(id => {
+    const b = blocos.find(x => x.conjunto === id)
+    const go = !!(gos[id] || notas.gos[id])
+    const cancelado = notas.cancelados[id]
+    const estado = cancelado ? 'cancelado' : go ? 'go' : esperando.has(id) ? 'vazia' : 'normal'
+    return { id, titulo: b?.titulo || titulos[id] || '', raias: b?.raias ?? [], estado, apos: dependeDe[id] ?? [], ...(cancelado ? { motivo: cancelado.motivo } : {}) }
+  })
 }

@@ -72,6 +72,8 @@ export type Execucao = {
   spec?: string | null
   nome?: string | null
   conjuntos?: Record<string, { etapa: string; texto: string; at: number }>
+  /** C05-S01: opened with a minimal brief and no GO yet (true), GO received (false), not opened empty (null or absent). */
+  aguardandoGo?: boolean | null
 }
 /** One `auditoria/{id}` document (C03-S01 dados.md), exported again by hooks/maestro/logic.ts: append only, only `estado` is ever updated. */
 export type AuditoriaDoc = {
@@ -111,6 +113,8 @@ export type Registro = {
   codigo?: string | null
   projeto?: string | null
   conjunto?: string | null
+  /** C05-S01: the session holds only its minimal brief and waits for its GO. */
+  aguardandoGo?: boolean | null
   spec?: string | null
   branch?: string | null
   pai?: string | null
@@ -292,6 +296,10 @@ declare module 'claude-code' {
       diretivasFeitas: string[]
       /** C03-S01: orchestrator, the send lifecycle per directive key (at most 200, newest kept). */
       maestroEnvios: Record<string, { acao: string; alvo: string; at: number; estado: 'enviando' | 'enviado' | 'falhou' }>
+      /** C05-S01: orchestrator only, its local copy of each `GO <C> inicio` it sent (never a collection, R30). */
+      maestroGos: Record<string, { sha: string; at: number; atualizadas: string[]; decisoesNovas: number; branches: string[]; merges?: string[] }>
+      /** C05-S01: the set selected in the Execução tab (its detail card). */
+      maestroSelConjunto: string | null
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

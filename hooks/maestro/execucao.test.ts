@@ -312,3 +312,137 @@ test('espelhoParaGravar deletes the lock and spec keys the new espelho lacks, ke
   const h = espelhoParaGravar({ locks: { 'verify b': { spec: 'S2', desde: 'x' } }, specs: {} }, { locks: { 'verify b': { spec: 'S2', desde: 'x', espera: ['S3'] } }, specs: {} })
   expect(h.locks).toEqual({ 'verify b': { espera: { __delete__: true }, spec: 'S2', desde: 'x' } })
 })
+
+// ---- C05-S01: empty sessions, NOTE SESSAO/BASE/CARTAO, the GO brief, D17 names, the set RUN_ID
+
+import {
+  MAPA_VAZIO, checkoutPrincipal, conjuntosDaAba, entradaMapa, limpaAguardo, mapaDasNotas, noMapa, notasOrq, regraDaDiretiva, resumoGo, rotaDaDiretiva,
+  runIdDoDir,
+} from './execucao'
+
+const URL_X = 'https://claude.ai/artifact/X'
+const SET_MIN = `Você é a sessão do conjunto C02 da execução NOVARC-PLUGIN-MAESTRO (${URL_X}).\nsession name: novarc-NOVARC-PLUGIN-MAESTRO-C02\nAguarde o GO do orquestrador. Não leia specs nem crie branch antes dele.`
+const SPEC_MIN = `Você é a sessão da spec S01 do conjunto C02 da execução NOVARC-PLUGIN-MAESTRO (${URL_X}).\nsession name: novarc-NOVARC-PLUGIN-MAESTRO-C02-S01\nAguarde o GO da sessão do conjunto C02. Não leia specs nem crie branch antes dele.`
+const U1 = 'local_11111111-1111-4111-8111-111111111111'
+const U2 = 'local_22222222-2222-4222-8222-222222222222'
+
+test('papelDoPrompt recognises both minimal briefs and flags them aguardandoGo (C05-S01 A29)', () => {
+  expect(papelDoPrompt(SET_MIN)).toEqual({ papel: 'conjunto', codigo: 'NOVARC-PLUGIN-MAESTRO', conjunto: 'C02', url: URL_X, aguardandoGo: true })
+  expect(papelDoPrompt(SPEC_MIN)).toEqual({ papel: 'spec', codigo: 'NOVARC-PLUGIN-MAESTRO', conjunto: 'C02', spec: 'C02-S01', aguardandoGo: true })
+  // a bare set name line, without the wait line, names no role
+  expect(papelDoPrompt('session name: novarc-NOVARC-PLUGIN-MAESTRO-C02\noutra coisa')).toBe(null)
+  // the full implementer payload keeps today's reading: no flag, even with GO PLAN in its body
+  const cheio = 'spec slug: x\nsession name: novarc-NOVARC-PLUGIN-MAESTRO-C01-S01\nstarting state: GO PLAN'
+  expect(papelDoPrompt(cheio)).toEqual({ papel: 'spec', codigo: 'NOVARC-PLUGIN-MAESTRO', conjunto: 'C01', spec: 'C01-S01' })
+})
+
+test('limpaAguardo is true only for a GO inicio or GO PLAN first line (C05-S01 R31)', () => {
+  expect(limpaAguardo('GO C02 inicio 9f8e7d6\nspecs: x')).toBe(true)
+  expect(limpaAguardo('GO PLAN\npayload')).toBe(true)
+  expect(limpaAguardo('GO c02-s01 verify feat/x')).toBe(false)
+  expect(limpaAguardo('prose GO PLAN')).toBe(false)
+})
+
+const NOTAS = lerLedger([
+  `NOTE SESSAO C02-S01 c02-s01-alertas-locks-es ${U1} vazia  # 2026-10-28T10:00:00Z`,
+  `NOTE SESSAO C02 c02-novarc-plugin-maestr ${U2} vazia  # 2026-10-28T10:00:01Z`,
+  'NOTE BASE aaaa111  # 2026-10-28T10:00:02Z',
+  'NOTE BASE bbbb222  # 2026-10-28T10:00:03Z',
+  'NOTE CARTAO C11 sem-fechamento  # 2026-10-28T14:05:00Z',
+  'NOTE CARTAO C12-S01 com-fechamento  # 2026-10-28T14:06:00Z',
+  'NOTE CUT x  # 2026-10-28T14:07:00Z',
+  'NOTE SESSAO bogus  # 2026-10-28T14:08:00Z',
+  'GO C02 inicio 9f8e7d6  # 2026-10-28T15:10:00Z',
+  'GO C03 verify feat/x  # 2026-10-28T15:11:00Z',
+].join('\n') + '\n')
+
+test('notasOrq reads SESSAO, the first BASE, CARTAO and GO inicio; other NOTEs add nothing (C05-S01 A6, A7)', () => {
+  const n = notasOrq(NOTAS)
+  expect(n.sessoes.map(s => [s.id, s.conjunto, s.spec, s.nome, s.sessao, s.vazia])).toEqual([
+    ['C02-S01', 'C02', 'C02-S01', 'c02-s01-alertas-locks-es', U1, true],
+    ['C02', 'C02', null, 'c02-novarc-plugin-maestr', U2, true],
+  ])
+  expect(n.base).toBe('aaaa111')
+  expect(n.cartoes.map(c => [c.id, c.conjunto, c.fechamento])).toEqual([['C11', 'C11', false], ['C12-S01', 'C12', true]])
+  expect(Object.keys(n.gos)).toEqual(['C02'])
+  expect(n.gos.C02!.sha).toBe('9f8e7d6')
+  // a later SESSAO for the same id replaces the earlier one
+  const d = notasOrq(lerLedger(`NOTE SESSAO C02 a ${U1} vazia  # 2026-10-28T10:00:00Z\nNOTE SESSAO C02 b ${U2} brief  # 2026-10-28T10:01:00Z\n`))
+  expect(d.sessoes.map(s => [s.nome, s.vazia])).toEqual([['b', false]])
+  expect(notasOrq([])).toEqual({ sessoes: [], base: null, cartoes: [], gos: {}, cancelados: {} })
+  // validation fix 3: a set removed from the plan after its session opened
+  const c = notasOrq(lerLedger('NOTE CANCELADO C04 removido do plano  # 2026-10-28T10:00:00Z\nNOTE CANCELADO bogus x  # 2026-10-28T10:00:01Z\n'))
+  expect(c.cancelados).toEqual({ C04: { motivo: 'removido do plano', at: Date.parse('2026-10-28T10:00:00Z') } })
+})
+
+test('resumoGo reads specs-atualizadas, decisoes-novas and the branch lines of a GO body (C05-S01 A23)', () => {
+  const g = resumoGo('GO C03 inicio 9f8e7d6\nspecs: 9f8e7d6 (relidos)\nprompt: x\ndecisoes: /d/DECISIONS.md\ndecisoes-novas: d-x título\n  d-y outro\nmudou: C01 PR #31 abc1234\nspecs-atualizadas: C03-S01 ganhou 1 critério\nbranch: git fetch origin && git switch -c feat/c03-s01-a-20261029 --no-track origin/main\nbranch: git fetch origin && git switch -c feat/c03-s02-b-20261029 --no-track origin/main')
+  expect(g).toEqual({
+    sha: '9f8e7d6',
+    atualizadas: ['C03-S01 ganhou 1 critério'],
+    decisoesNovas: 2,
+    branches: ['git fetch origin && git switch -c feat/c03-s01-a-20261029 --no-track origin/main', 'git fetch origin && git switch -c feat/c03-s02-b-20261029 --no-track origin/main'],
+    merges: ['PR #31'],
+  })
+  expect(resumoGo('GO C03 inicio 1a2b3c4\nspecs-atualizadas: nenhuma\ndecisoes-novas: nenhuma')).toEqual({ sha: '1a2b3c4', atualizadas: [], decisoesNovas: 0, branches: [], merges: [] })
+  expect(resumoGo('GO C04 inicio a\nmudou: C01 PR #31 abc1234\n  C02 PR #35 def5678').merges).toEqual(['PR #31', 'PR #35'])
+  expect(resumoGo('prosa').sha).toBe(null)
+})
+
+test('D17 short names land in the map; a prompt title wins; NOTE SESSAO folds in keeping titles (C05-S01 R9)', () => {
+  expect(noMapa(MAPA_VAZIO(), { nome: 'c02-s01-alertas-locks-es', sessao: 'local_a' }).specs['C02-S01']?.sessao).toBe('local_a')
+  expect(noMapa(MAPA_VAZIO(), { nome: 'c02-novarc-plugin-maestr', sessao: 'local_b' }).conjuntos.C02?.sessao).toBe('local_b')
+  expect(noMapa(MAPA_VAZIO(), { nome: 'novarc-X-C02-S01', sessao: 'local_c' }).specs['C02-S01']?.nome).toBe('novarc-X-C02-S01')
+  expect(noMapa(MAPA_VAZIO(), { nome: 'outra-coisa', sessao: 'local_d' }).specs).toEqual({})
+  expect(entradaMapa({ name: 'c02-s01-alertas-locks-es', initiation: 'user_asked', prompt: SPEC_MIN }, `started ${U1}`)).toEqual({ nome: 'novarc-NOVARC-PLUGIN-MAESTRO-C02-S01', sessao: U1 })
+  expect(entradaMapa({ name: 'c02-s01-alertas-locks-es', initiation: 'own_initiative', prompt: SPEC_MIN }, `started ${U1}`)).toBe(null)
+  const s = notasOrq(NOTAS).sessoes
+  const m = mapaDasNotas(MAPA_VAZIO(), s, 'NOVARC-PLUGIN-MAESTRO', 1)
+  expect(m.specs['C02-S01']).toMatchObject({ conjunto: 'C02', nome: 'novarc-NOVARC-PLUGIN-MAESTRO-C02-S01', sessao: U1 })
+  expect(m.conjuntos.C02).toEqual({ nome: 'novarc-NOVARC-PLUGIN-MAESTRO-C02', sessao: U2 })
+  const titulado = noMapa(MAPA_VAZIO(), { nome: 'novarc-OUTRO-C02-S01', sessao: 'local_velho' })
+  expect(mapaDasNotas(titulado, s, null, 1).specs['C02-S01']).toMatchObject({ nome: 'novarc-OUTRO-C02-S01', sessao: U1 })
+  expect(mapaDasNotas(MAPA_VAZIO(), s, null, 1).specs['C02-S01']?.nome).toBe('c02-s01-alertas-locks-es')
+})
+
+test('directive rules for GO inicio and CANCELADO; regression pins (C05-S01 R28, A17)', () => {
+  expect(regraDaDiretiva('GO C02 inicio 9f8e7d6')).toBe('orquestrar.md §5')
+  expect(regraDaDiretiva('CANCELADO C04 removido do plano')).toBe('orquestrar.md §5')
+  expect(regraDaDiretiva('GO c02-s01 verify feat/x')).toBe('step-05 §5.3')
+  // regression pins: green before this spec, kept
+  expect(rotaDaDiretiva(MAPA_VAZIO(), 'C02', 'o', 'o', 'GO C02 inicio 9f8e7d6')).toBe(null)
+  expect(papelDoPrompt('c02-s01-alertas-locks-es')).toBe(null)
+  expect(papelDaBranch('feat/c02-s01-alertas-locks-espelho-20261029')).toEqual({ papel: 'spec', conjunto: 'C02', spec: 'C02-S01' })
+})
+
+test('the set RUN_ID carries the set and the session prefix; checkoutPrincipal follows (C05-S01 Task 3b)', () => {
+  expect(runIdDoDir('C:/r/.novarc/ledger/session-build/20261028-0300-c02-3b2b0f69')).toBe('20261028-0300-c02-3b2b0f69')
+  expect(runIdDoDir('C:/r/.novarc/ledger/session-build/20261028-0300/')).toBe('20261028-0300')
+  expect(runIdDoDir('C:\\r\\.novarc\\ledger\\session-build\\20261028-0300-c02')).toBe(null)
+  expect(runIdDoDir('C:/r/x/20261028-0300-foo')).toBe(null)
+  expect(runIdDoDir(null)).toBe(null)
+  expect(checkoutPrincipal('C:/r/.novarc/ledger/session-build/20261028-0300-c02-3b2b0f69')).toBe('C:/r')
+  expect(checkoutPrincipal('C:/r/.novarc/ledger/session-build/20261028-0300')).toBe('C:/r')
+  expect(checkoutPrincipal('C:/r/.superpowers/session-build/20261028-0300')).toBe('C:/r')
+})
+
+test('conjuntosDaAba unions blocks, SESSAO and CARTAO sets and classifies vazia / go / normal (C05-S01 R24, R25, R32)', () => {
+  const T = Date.parse('2026-10-28T16:00:00Z')
+  const regs = [{ sessao: 's3', cwd: '', titulo: '', papel: 'conjunto', forks: 0, feitos: 0, alerta: null, at: T, conjunto: 'C03', aguardandoGo: true }] as Registro[]
+  const cs = conjuntosDaAba([{ conjunto: 'C01', titulo: 'Base', raias: [] }], notasOrq(NOTAS), {}, regs, { C02: ['C01'], C03: ['C02'] }, { C01: 'Base' }, T)
+  expect(cs.map(c => [c.id, c.titulo, c.estado, c.apos])).toEqual([
+    ['C01', 'Base', 'normal', []],
+    ['C02', '', 'go', ['C01']],
+    ['C03', '', 'vazia', ['C02']],
+    ['C11', '', 'normal', []],
+    ['C12', '', 'normal', []],
+  ])
+  // a GO the local copy saw also ends the wait; a stale registry entry does not start one
+  const sem = notasOrq(lerLedger(`NOTE SESSAO C04 c04-x ${U1} vazia  # 2026-10-28T10:00:00Z\n`))
+  expect(conjuntosDaAba([], sem, {}, [], {}, {}, T)[0]!.estado).toBe('vazia')
+  expect(conjuntosDaAba([], sem, { C04: { sha: 'a', at: T, atualizadas: [], decisoesNovas: 0, branches: [] } }, [], {}, {}, T)[0]!.estado).toBe('go')
+  expect(conjuntosDaAba([], notasOrq([]), {}, [{ ...regs[0]!, at: T - 3 * 3600_000 }], {}, {}, T)).toEqual([])
+  // validation fix 3: a cancelled set is its own state, never waiting
+  const can = notasOrq(lerLedger(`NOTE SESSAO C04 c04-x ${U1} vazia  # 2026-10-28T10:00:00Z\nNOTE CANCELADO C04 removido do plano  # 2026-10-28T11:00:00Z\n`))
+  expect(conjuntosDaAba([], can, {}, [], {}, {}, T).map(c => [c.id, c.estado, c.motivo])).toEqual([['C04', 'cancelado', 'removido do plano']])
+})

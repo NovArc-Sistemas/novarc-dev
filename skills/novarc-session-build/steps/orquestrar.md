@@ -38,32 +38,100 @@ closes a set, and telling the user what can start.
    `situacao !== "parcial"`).
 5. Show the user a pt-BR table: conjunto, título, etapa, status, validação, pode começar (sim / por quê não).
 
-## 3. Dispatch rules (opening a set session)
+## 3. Opening the sessions (C05-S01: every session, in the conducting person's turn)
 
-Three ways, all with the set prompt (`conjuntos[].prompt`) **verbatim**; the only edit ever made is dropping the
-`Fechamento:` line in way 1 when the user did not choose it (that line is the user's authorization):
+The app opens a session only from the words of the person who conducts, in that person's own turn
+(d-trava-abrir-sessao). A turn started by a peer message, by a mod-queued `Maestro (automático):` prompt or by a timer
+is not that turn, and nothing here ever works around a refusal. So every session of the run opens in one turn.
 
-1. **The user asks in this session** ("abre C01", "pode abrir C02 e C03"). The `Fechamento:` line authorizes an
-   automatic close-out only when the user saw it and chose it, so: pass the prompt verbatim when the request asked
-   for it ("abre C01 com fechamento") or answered yes after you quoted the line; otherwise pass it **without** the
-   `Fechamento:` line (the close-out stays manual, the same effect as Willian deleting it from a pasted prompt), and
-   say so in one line. Then open each with
-   `mcp__ccd_session__start_session`, `initiation: "user_asked"`, `context: "fresh"`, `use_worktree: false` (a set
-   session runs on the client repo's main checkout and opens its own spec sessions), `name: "novarc-<codigo>-<C>"`
-   cut to 24 characters, `prompt` = the set prompt.
-2. **A set becomes startable in a turn the user did not write** (a `CONJUNTO <C> merge` message): the app refuses a
-   start there. Propose it with `initiation: "own_initiative"` and the full prompt; the card shows it, `Fechamento:`
-   line included, so the click is the same act as pasting it. Never work around the refusal.
-3. **The user pastes the prompt** into a new session themselves. Still valid.
+**Names (D17), two that never mix.** The `start_session` `name` is a short hint: lower case `[a-z0-9-]`, cut to 24
+characters, `<c>-<codigo>` for a set (`c02-novarc-plugin-maestr`) and `<c>-<s>-<slug>` for a spec
+(`c02-s01-alertas-locks-es`). The title is `novarc-<codigo>-<C>[-<S>]`, and the session sets it itself with
+`mcp__ccd_session_mgmt__set_session_title` (its brief carries the `session name:` line). Detection keys on the title and
+the branch, never on the short name.
 
-Ways 1 and 2 open the set session from this session, so it detects that by itself (`conjunto-load.md` step 1.3)
-and skips the routine step-02 scope confirmation: opening the set here is the user's go-ahead for the plan's scope.
-Never add a marker line to the prompt; the verbatim rule above stands. Way 3 keeps the confirmation. When you open a
-set with N >= 2 specs, tell the user its session will still ask for one `abre` to open the spec sessions.
+### 3.1 The "orquestra" turn
 
-The rules below decide **whether** a set may be offered, whichever way it opens.
+When the person who conducts writes "orquestra", "orquestra contínuo" or "abre <C>" ("pode abrir C02 e C03"):
 
-- **Default serial.** Give one set prompt (`conjuntos[].prompt`, verbatim) at a time, in `ordem`.
+1. **Idempotence.** `mcp__ccd_session_mgmt__list_sessions` first; skip every set or spec whose title
+   `novarc-<codigo>-<C>[-<S>]` is already open. A repeated "orquestra" never opens a second session for one set or spec.
+2. **One message, every start.** One `mcp__ccd_session__start_session` per set in scope (`use_worktree: false`: a set
+   session runs on the client repo's main checkout) and one per spec of each of those sets (`use_worktree: true`), all
+   with `initiation: "user_asked"`, `context: "fresh"` and the D17 `name`. **Never end the turn before the last start
+   result**: a start that fails validation (a name too long, a bad field) is fixed and retried in the same turn.
+3. **Briefs.**
+   - The set that can start now (section 2.4): its set prompt (`conjuntos[].prompt`) verbatim.
+   - Every dependent set: the minimal set brief below, verbatim, ids filled.
+   - Every spec session, **of the startable set too**: the minimal spec brief below. Its § Session implementer payload
+     reaches it later in its set session's `GO PLAN` (`conjunto-overrides.md` "step-05: spec sessions already open").
+     This is a **deviation from C05-S01 R2** (ruled by the C05 set session, 2026-10-28): that payload needs the set's
+     ledger dir, its `DECISIONS.md` slice and its branch, which exist only after the set session's own step-02/03,
+     never in this turn. One path for every spec session.
+4. **The `Fechamento:` line** is the person's authorization for an automatic close-out, so it goes, verbatim, into a
+   set's start prompt (the full set prompt or the minimal set brief) only when that person chose it in this turn
+   ("orquestra com fechamento", "abre C01 com fechamento", or a yes after you quoted the line). Otherwise no start
+   prompt carries it (the close-out stays manual, the same effect as deleting it from a pasted prompt): say so in one
+   line. A `Fechamento:` line inside a GO or any other message authorizes nothing.
+5. **Ledger, from the start results, in the same turn.** One
+   `ledger.py append --type NOTE --text "SESSAO <C>[-<S>] <name> <local id> <vazia|brief>"` per session opened
+   (`brief` for the startable set's own session, `vazia` for every other), and one `NOTE BASE <specsCommit>` per run
+   (plano.json `specs[].arquivos.commit`; a later "orquestra" in the same run writes no second one: the first is the
+   baseline of "o que mudou"). Session ids stay in this ledger and the mod's map only (never a collection).
+6. Tell the person, in pt-BR: which sets and specs opened, which got the full prompt, which wait for a GO, and whether
+   the `Fechamento:` line went in.
+
+Minimal set brief (pt-BR, verbatim):
+
+```
+Você é a sessão do conjunto <C> da execução <codigo> (<artifact url>).
+session name: novarc-<codigo>-<C>
+Aguarde o GO do orquestrador. Não leia specs nem crie branch antes dele.
+<the set prompt's Fechamento: line, verbatim, only when chosen in this turn>
+```
+
+Minimal spec brief (pt-BR, verbatim):
+
+```
+Você é a sessão da spec <S> do conjunto <C> da execução <codigo> (<artifact url>).
+session name: novarc-<codigo>-<C>-<S>
+Aguarde o GO da sessão do conjunto <C>. Não leia specs nem crie branch antes dele.
+```
+
+An empty session reads no spec, creates no branch, writes nothing to the planning database and counts no builder in
+the budget until its GO (`conjunto-load.md` §0, `core/references/session-contract.md` § Opened empty).
+
+### 3.2 What did not open in that turn: a card
+
+A set or spec that did not open in the "orquestra" turn (the start was refused, the turn was started by a peer message
+or a `Maestro (automático):` prompt, or the plan created it later): propose it with `initiation: "own_initiative"` and
+its **full** prompt (set prompt, `Fechamento:` line included when the person chose it), so the click is the same act as
+pasting it. Append `NOTE CARTAO <C>[-<S>] <com-fechamento|sem-fechamento>`; the pane shows it on that set as
+`<hh:mm> cartão proposto: <C> (clique equivale a colar o prompt)`. No timer, no message and no mod prompt ever opens a
+session.
+
+The person may still paste a set prompt into a new session themselves: still valid, and that run keeps the step-02
+confirmation (manual-origin, `conjunto-load.md` step 1.3). A set opened from this session (3.1 or a card click) skips
+it: opening it here was the person's go-ahead for the plan's scope. Never add a marker line to a prompt.
+
+### 3.3 Run-level `DECISIONS.md`
+
+`<main checkout>/.novarc/ledger/novarc-orq/<RUN_ID>/DECISIONS.md`, written only by this session (`Write`), rewritten
+whole after each set merges (it is current state; history stays in the ledger), final values only (a reversed
+decision names the dead value), in four parts:
+
+1. per set and per spec, the decisions the specs do not state (the format of core step-02 §2.6);
+2. cross-set rulings (merge order, shared files);
+3. the branch name per spec, `<execucao.branchPrefixo><spec id lower case>-<slug>-<YYYYMMDD>`;
+4. "Desde o início": merges done (`<C> <merge sha7>`), decisions added since the start, specs re-read with their old
+   and new sha256.
+
+Each set session's step-02 `DECISIONS.md` starts from parts 1 to 3 of this file (`conjunto-overrides.md` step-02).
+
+The rules below decide **whether** a set may start (its full prompt in 3.1, its card in 3.2, or its GO in 5.3); opening
+every session empty in 3.1 starts nothing.
+
+- **Default serial.** One set starts at a time, in `ordem`.
 - **`paraleloCom` is permission, not an instruction.** A second set may run alongside only when one lists the other
   in `paraleloCom`, neither depends on the other, and the builder budget allows it.
 - **Builder budget, default 3, across all set sessions on this machine.** Live units = builders (linked spec
@@ -71,6 +139,8 @@ The rules below decide **whether** a set may be offered, whichever way it opens.
   `<main checkout>/.superpowers/session-build/*/ledger.md` (legacy; count both, sets started before and after a migration coexist) whose
   `fork-<slug>.md` has no `DONE` line, plus one per running N = 1 set session. Before offering a set, live units + its in-scope spec count (1 when N = 1) must not
   exceed the budget; otherwise say which set it waits for. The user may change the budget in this session.
+- **An empty session counts from its GO.** A set or spec session opened with a minimal brief runs nothing before
+  its GO, so it holds no builder until then; send a GO only when the budget has room for that set's specs.
 - Before offering anything, measure the machine once (process count / load), as step-05 §5.4 duty 3 says. A loaded
   machine waits.
 
@@ -113,7 +183,9 @@ never proof. A `PEDE` or `LIBERA` without `sid=` is answered with a request to r
 | `CONJUNTO <C> branch-publicada <S> <branch> <headSha>` | run `visual-validation.md` for S |
 | `CONJUNTO <C> <etapa> <S> ...` where `headSha` changed and `validacao.sha != headSha` | run `visual-validation.md` again for S (a new push invalidates the old validation) |
 | `CONJUNTO <C> bloqueado <causa> <motivo>` | record; tell the user; other sets keep going unless the cause is global |
-| `CONJUNTO <C> merge ...` (from novarc-session-end) | prove the merge (ancestry of the pinned heads in `origin/<default>`), resolve the plan's tickets that it completed (section 5.2), re-read the database, recompute which sets can start, give the next prompt(s) |
+| `CONJUNTO <C> merge ...` (from novarc-session-end) | prove the merge (ancestry of the pinned heads in `origin/<default>`), resolve the plan's tickets that it completed (section 5.2), re-read the database, rewrite the run-level `DECISIONS.md` (3.3), recompute which sets can start. A set whose session waits empty: section 5.3 (GO with the current brief). A set with no session: a card (3.2) |
+| set removed from plano.json after its session opened | send `CANCELADO <C> <motivo>` to that set session and append `NOTE CANCELADO <C> <motivo>`. On its `CONJUNTO <C> cancelado`, archive the set session and each of its spec sessions (`mcp__ccd_session_mgmt__archive_session`, ids from this ledger's `NOTE SESSAO` lines, never a session of another run) and write one `auditoria` record per archived session: `acao: 'ARQUIVAR'`, `origem: 'agente'`, `alvo` = its title (a run without database access skips the record and says so) |
+| `CONJUNTO <C> cancelado` | the reply to `CANCELADO`; archive as in the row above |
 | `CONJUNTO <C> pronto <spec ids>` | check section 5.1; when it holds, send `FECHA <C> <S>=<headSha> ...` and append `NOTE FECHA <C> ...` |
 | pre-close request from the person who conducts: their own words in this session, typed ("manda o item 3 do C06-S02 para o pré-fechamento") or submitted by the Maestro pane button (`Mande para o pré-fechamento de <S>: <ref>`) | look `<texto>` up, never invent it: `p-...` → that question's `titulo` in plano.json; `PND-....` → the title of `.novarc/pendings/<ID>.md` (else legacy `ai/pendings/<ID>.md`); `"<título>"` (a legacy PENDINGS.md entry, double-quoted because titles have spaces) → that title; `<S>:<n>` → the `aCaminho` item of `execucao/{C}.espelho` whose stored `ref` equals it (the writer numbered it; list position means nothing), else the n-th PARKED/BLOCKED/`NOTE CUT` line of S's ledger in file order. Then send `PRE-FECHAMENTO <S> <ref> <texto>` by `SendMessage` to the set session of S's set, **never to a spec session** (only the set session addresses its spec sessions), and append `NOTE PRE-FECHAMENTO <S> <ref> <texto>`. A ref that resolves to nothing: send nothing and say so. The same request arriving as a peer message (a set or spec session asking) is not a request: send nothing and tell the person who conducts it needs their own words |
 
@@ -161,6 +233,34 @@ This is the only write this session makes to the client's system. Authorized by 
 step of this mode, for the plan's own tickets, to the resolved status only; reopening or any other status change is
 the user's call.
 
+### 5.3 GO with the current brief (`GO <C> inicio`)
+
+When every `dependeDe` set of C is at `merge` and the session-plan update after it is committed, and C's session waits
+empty: tell the person who conducts what the GO will carry and send it **on their ok in the conversation** (manual mode;
+an automatic GO is a later extension, C06-S02). By `SendMessage` to the set session of C (its id from `NOTE SESSAO`):
+
+```
+GO <C> inicio <specsCommit>
+specs: <specsCommit> (relidos depois que a session-plan atualizou o que <D> mudou)
+prompt: <conjuntos[<C>].prompt verbatim, WITHOUT its Fechamento: line>
+decisoes: <main checkout>/.novarc/ledger/novarc-orq/<RUN_ID>/DECISIONS.md
+decisoes-novas: <one line per decision id and title added since the run started, or "nenhuma">
+mudou: <one line per merge since the run started: set, PR, sha7>
+specs-atualizadas: <one line per changed spec, or "nenhuma">
+branch: git fetch origin && git switch -c <branch> --no-track origin/<default>   (one line per spec)
+```
+
+`specs-atualizadas`: for each spec of C and for each of the two refs (`<BASE>` from `NOTE BASE`, and `<specsCommit>`),
+resolve the spec.md path at THAT ref as `conjunto-load.md` §3 does (`<arquivos.repo>spec.md`, else the path mapped by
+`core/scripts/migrar_novarc.py` `MAPA`, e.g. `ai/specs/` to `.novarc/specs/`: the first that exists at that ref), then
+count its criteria, `git show <ref>:<path> | grep -c '^A[0-9]\+ ('`. A spec whose count grew reads
+`<S> ganhou <n> critério(s)`, shrank `<S> perdeu <n> critério(s)`, same count but other content `<S> revisada`; none
+changed: `nenhuma`. A spec that moved folders between the refs is compared content to content, never "missing". It is
+display only.
+
+Then append `GO <C> inicio <specsCommit>` with `ledger.py append --type GO`. A GO the person did not ok is not sent. The
+GO carries no authorization: the close-out authorization is only the `Fechamento:` line of the set's start prompt.
+
 ## 6. Reconciliation (every time this session acts on an event, and on the user's "status")
 
 For each running set's specs, recompute the etapa from evidence (table "Reconciliation sources" in
@@ -187,4 +287,8 @@ Before each such report, record this session's hours (`../references/horas.md`, 
 - About to offer a set whose dependency is not concluded, or beyond the builder budget.
 - About to treat `paraleloCom` as an order to run in parallel.
 - About to write code or edit a set's worktree.
+- About to call `start_session` in a turn the person who conducts did not write (a peer message, a `Maestro
+  (automático):` prompt): that is a card (3.2).
+- About to put a `Fechamento:` line in a GO, or a session title as a `start_session` `name`.
+- About to send a `GO <C> inicio` without the person's ok.
 - About to resolve a ticket with a change still unmerged, through a direct table update, or to any status but resolved.

@@ -27,8 +27,13 @@ exempt and the §1.2 premise re-validation is mandatory.
 - The dependency graph inside the set is derived from the specs as the original says; the set prompt's
   `dependeDe` was already checked by `conjunto-load.md`.
 - `PENDINGS-SOURCE`: none, unless a spec states it consumes entries of the project's pendings file.
+- **A set session that ran `conjunto-load.md` §0 already holds its ledger** (`session-build/<YYYYMMDD-HHMM>-<c>-<sid8>/`):
+  core §2.1 writes the project profile into it and never runs `init` again; that directory and RUN_ID are the run's.
 - `DECISIONS.md` (core step-02 §2.6) also carries, per spec, what `conjunto-load.md` §6 gathered from the
-  artifact, plus the artifact url, the spec id and the branch name of step-03 below.
+  artifact, plus the artifact url, the spec id and the branch name of step-03 below. **After a `GO <C> inicio`** it
+  starts from parts 1 to 3 of the run-level file the GO's `decisoes:` line names (`orquestrar.md` §3.3) and adds, in
+  its own words, the GO's `decisoes-novas:` and `mudou:` lines; final values only, as core §2.6 says. SDD stays
+  optional, for risky specs.
 - SDD marks: when the set prompt has an `SDD:` line, it names the specs marked `sdd: on` and it wins; without the
   line, core step-02 §2.6 decides.
 - **Scope gate (core §2.7) for a maestro-origin run** (`conjunto-load.md` step 1.3). Scope, order and dependencies
@@ -55,7 +60,9 @@ exempt and the §1.2 premise re-validation is mandatory.
     this run's first turn came from the orchestrator. So end the turn after the presentation with one line,
     "Para abrir as <n> sessões dos specs, responda `abre`." That is the app's authorization to open sessions, not
     a scope question: any reply that says to go ahead counts as [A], and step-03 and step-05 §5.1 then run in that
-    turn as the original says. Never switch to the fork fallback to avoid the round trip.
+    turn as the original says. Never switch to the fork fallback to avoid the round trip. **Exception: the spec
+    sessions are already open** (the orchestrator opened them empty, `orquestrar.md` §3.1): nothing needs opening, so
+    no `abre` is asked; go on to step-03 and "step-05: spec sessions already open" below in this turn.
 - **After the HALT is answered** with option A, or dispensed as above: for each spec write milestone `iniciado` (procedure in
   `../references/milestones.md`); create or update `execucao/{C}` with `{sessao, iniciadoEm}` (create with `set` when
   missing, else pinned `update`); send `CONJUNTO <C> iniciado <spec ids>` to the orchestrator.
@@ -95,6 +102,25 @@ and skips a reached etapa. Fork events come only from the ledger lines; never as
 `../references/horas.md` (`fase` = the set's `fase`, `branch: null`). A linked spec session records its own at each
 `branch-publicada` and right before its `DONE` (`branch` = its spec branch). Forks record nothing: their time is
 inside the set session's execution hours.
+
+## step-05: spec sessions already open (C05-S01)
+
+When the orchestrator opened this set's spec sessions empty (their titles `novarc-<codigo>-<C>-<S>` in
+`mcp__ccd_session_mgmt__list_sessions {"linked": true}`, or the `PEERS`-style map), **do not call `start_session` for
+them**. Replace core step-05 §5.1's start with one message to each, by `SendMessage` to its id:
+
+```
+GO PLAN
+<the § Session implementer launch payload, with the fields of "step-05: dispatch payload" below>
+DECISIONS.md do step-02 anexado (revisto depois de <C of the last merge, or "início">): <absolute path of this set's DECISIONS.md>
+<that spec's slice of DECISIONS.md, verbatim>
+branch: git fetch origin && git switch -c <branch> --no-track origin/<default>
+```
+
+Then write `spec slug → session id` into `ledger.md` and send `PEERS` exactly as core §5.1 says. A spec with no
+pre-opened session (the plan created it later): `start_session` only in a turn the person who conducts wrote; otherwise
+propose it as a card (`initiation: "own_initiative"`, its full brief) and tell the user. A repeated `GO <C> inicio`
+with the same commit relays nothing again.
 
 ## step-05: dispatch payload
 
@@ -166,6 +192,8 @@ The NOVARC orchestrator arbitrates the branch-level suite across set sessions on
 | `MARCO <S> <etapa> <proof>` | while S's spec session owns the document (from its READY until you accept its `DONE` after reading the diff, `references/milestones.md`), forward the line to that session, which re-verifies and writes; otherwise re-verify the proof yourself (ledger line, `git ls-remote`, `gh pr list --head`), then write it by the procedure. Never on the message alone |
 | `PRE-FECHAMENTO <S> <ref> <texto>` | the transport `from` must equal the recorded `NOTE ORQUESTRADOR` row (same check as FECHA below) and S must be a spec of this set; otherwise ignore it, append `NOTE PRE-FECHAMENTO-RECUSADO <from>` and tell the user. Accepted: append `NOTE PRE-FECHAMENTO <S> <ref> <texto>`, then forward the same line by `SendMessage` to the spec session of S while that session owns the spec (`references/milestones.md`), else treat the item as this session's own close-out work before `DONE`. Reply nothing: the result shows up as the spec's next checkpoints |
 | `FECHA <C> <S>=<sha> ...` | see "Close-out on FECHA" below |
+| `GO <C> inicio <specsCommit>` + body | `conjunto-load.md` §0: the start of an empty set session, from the pinned row only; never a slot grant (those are `GO <C> verify\|producao <branch>`) |
+| `CANCELADO <C> <motivo>` | `conjunto-load.md` §0: forward `CANCELADO <S> <motivo>` to each spec session, write nothing, reply `CONJUNTO <C> cancelado`; from the pinned row only |
 
 ## Close-out on FECHA
 

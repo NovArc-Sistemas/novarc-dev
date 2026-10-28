@@ -12,6 +12,8 @@ import {
   papelDaBranch, papelDoPrompt, papelDoSkill, progresso, proposta, raia, raiasPorConjunto, resumoEspelho, ritmo, ritmoTotal, slotsAbertos,
   slotsPresos, slugDoSpawn, textoCheckpoint, textoLimiares, vivo, type LockAberto, type Raia,
 } from './execucao'
+// C05-S01: sessions opened empty, the GO with the current brief
+import { conjuntosDaAba, limpaAguardo, mapaDasNotas, notasOrq, resumoGo, runIdDoDir, type GoLocal, type NotasOrq } from './execucao'
 import {
   ETAPA_FAIXA,
   aFechar,
@@ -104,6 +106,9 @@ const ROTAS = { plugin: 'novarc', key: 'maestroRotas' } as const
 // C03-S01 Task 7: the orchestrator's directive keys and their send lifecycle, mirrored from the module copies.
 const FEITAS = { plugin: 'novarc', key: 'diretivasFeitas' } as const
 const ENVIOS = { plugin: 'novarc', key: 'maestroEnvios' } as const
+// C05-S01: the orchestrator's local copy of each `GO <C> inicio` it sent (never a collection, R30), and the selected set.
+const GOS = { plugin: 'novarc', key: 'maestroGos' } as const
+const SEL = { plugin: 'novarc', key: 'maestroSelConjunto' } as const
 const NUNCA = 'maestro-nunca'
 
 type Leitura = { at: number | null; falhou: boolean; fonte: 'planejamento' | 'registro' | null; falhas: { planejamento: boolean; registro: boolean } }
@@ -136,6 +141,8 @@ const PADRAO: Record<string, () => unknown> = {
   maestroRotas: () => [],
   diretivasFeitas: () => [],
   maestroEnvios: () => ({}),
+  maestroGos: () => ({}),
+  maestroSelConjunto: () => null,
 }
 const objeto = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -172,6 +179,8 @@ async function cru($: any, k: string): Promise<unknown> {
     case 'maestroRotas': return (await $.state.get(ROTAS)).value
     case 'diretivasFeitas': return (await $.state.get(FEITAS)).value
     case 'maestroEnvios': return (await $.state.get(ENVIOS)).value
+    case 'maestroGos': return (await $.state.get(GOS)).value
+    case 'maestroSelConjunto': return (await $.state.get(SEL)).value
     default: throw new Error(`ler: chave desconhecida ${k}`)
   }
 }
@@ -670,8 +679,7 @@ function armarFlush($: any): void {
 function runIdAtual(ex: Execucao): string | null {
   const r = daBanco<OrquestracaoDoc>(banco?.config?.orquestracao)?.runId
   if (r) return r
-  const b = (ex.ledgerDir ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
-  return /^\d{8}-\d{4}$/.test(b) ? b : null
+  return runIdDoDir(ex.ledgerDir) // C05-S01: a set session's dir may carry `-<c>-<sid8>`
 }
 
 /**
@@ -792,6 +800,25 @@ let mapaTexto = ''
 let espelhoMapa: Promise<unknown> = Promise.resolve()
 
 /** Synchronous read-modify-write of the module copy: no await between the read and the write. */
+// C05-S01: the GO copy, serialized like the map; a write queued before a /clear is dropped by its generation
+let gosAtual: Record<string, GoLocal> = {}
+let gosSemeado = false
+let espelhoGos: Promise<unknown> = Promise.resolve()
+
+async function guardarGo($: any, C: string, texto: string): Promise<void> {
+  const g = geracao
+  if (!gosSemeado) {
+    gosSemeado = true
+    gosAtual = { ...(((await ler($, 'maestroGos')) ?? {}) as Record<string, GoLocal>), ...gosAtual }
+  }
+  if (velho(g)) return
+  const r = resumoGo(texto)
+  gosAtual = { ...gosAtual, [C]: { sha: r.sha ?? '', at: Date.now(), atualizadas: r.atualizadas, decisoesNovas: r.decisoesNovas, branches: r.branches, merges: r.merges } }
+  const copia = gosAtual
+  espelhoGos = espelhoGos.then(() => (velho(g) ? undefined : $.state.set(GOS, copia))).catch(() => {})
+  await espelhoGos
+}
+
 function mudarMapa($: any, f: (m: MapaSessoes) => MapaSessoes): void {
   const novo = f(mapaAtual)
   if (novo === mapaAtual) return
@@ -1925,6 +1952,9 @@ async function lerLedgerOrq($: any, ex: Execucao): Promise<void> {
   cursorOrq = { size: f.size, mtimeMs: f.mtimeMs, consumido: n.consumido }
   semearRelays($, texto.slice(de, n.consumido)) // C03-S01 (R1-3): raw RELAY lines, never lane events
   eventosOrq = [...eventosOrq, ...n.eventos]
+  // C05-S01 (R9): the sessions this orchestrator opened, into the address map under their D17 titles
+  const novas = notasOrq(n.eventos).sessoes
+  if (novas.length) mudarMapa($, m => mapaDasNotas(m, novas, ex.codigo ?? null))
   slotsOrq = slotsAbertos(eventosOrq)
 }
 
@@ -2279,6 +2309,7 @@ async function registrar($: any, run?: Execucao): Promise<void> {
     branch: await lerBranch($),
     pai: null, // ponytail: nothing in this spec knows the parent session; C05-S02 fills `pai`
     artefato: c?.artefato ?? ex.artefato ?? null, ledgerDir: ex.ledgerDir, conjuntos: ex.conjuntos,
+    aguardandoGo: ex.aguardandoGo ?? null,
   }
   const home = await homeDir($)
   if (velho(g)) return
@@ -2686,6 +2717,10 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   espelharRotas($)
   espelharFila($)
   espelhoMapa = espelhoMapa.then(() => $.state.set(MAPA, null)).catch(() => {})
+  gosAtual = {}
+  gosSemeado = false
+  espelhoGos = espelhoGos.then(() => $.state.set(GOS, null)).catch(() => {})
+  await $.state.set(SEL, null)
   await $.state.set(CTX, null)
   await $.state.set(LINHAS, [])
   await $.state.set(FAIXA, null)
@@ -2909,6 +2944,11 @@ type DadosPainel = {
   /** C03-S01: the orchestrator's send lifecycle per key and the session map (R52, R53, R26). */
   envios: Record<string, Envio>
   mapa: MapaSessoes
+  /** C05-S01: the orchestrator ledger's SESSAO/BASE/CARTAO/GO lines, the local GO copy, each set's dependeDe, the selected set. */
+  notas: NotasOrq
+  gos: Record<string, GoLocal>
+  dependeDe: Record<string, string[]>
+  sel: string | null
   /** A planning snapshot exists in memory (the error card only shows with nothing saved, R30). */
   temBanco: boolean
   /** `🔄 tentar de novo` is running: the body is the loading card (R32). */
@@ -2925,6 +2965,7 @@ type DadosPainel = {
     pend: Parameters<typeof abaPendencias>[5]
     abrirAcervo: Acao
     abrirLinha: (url: string) => Acao
+    selConjunto: (C: string) => Acao
   }
 }
 
@@ -3156,39 +3197,45 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
   }
   if (aba === 'locks') return abaLocks(ui, d, k)
   if (aba === 'execucao') {
-    let resta = MAX_RAIAS
-    let fora = 0
-    const corta = (rs: Raia[]) => {
-      const fica = rs.slice(0, Math.max(0, resta))
-      resta -= fica.length
-      fora += rs.length - fica.length
-      return fica
-    }
     // only this session's run: another run's lanes live in that run's own orchestrator session
-    const blocos = orq ? raiasPorConjunto(daMinhaExecucao(d.outras ?? [], d.eu), d.porDir, d.agora, d.titulos).map(b => ({ ...b, raias: corta(b.raias) })) : []
-    const proprias = corta(Object.values(d.ex.forks).map(f => raia(f, d.agora)))
+    const blocos = orq ? raiasPorConjunto(daMinhaExecucao(d.outras ?? [], d.eu), d.porDir, d.agora, d.titulos) : []
+    const proprias = Object.values(d.ex.forks).map(f => raia(f, d.agora))
     const ls = orq ? [] : d.linhas
-    const vazio = resta === MAX_RAIAS && ls.length === 0
+    const c0 = d.ex.conjunto ?? 'esta sessão'
+    const fontes = orq ? blocos : proprias.length ? [{ conjunto: c0, titulo: d.titulos[c0] ?? '', raias: proprias }] : []
+    // C05-S01 (R35): one card per set, the selected set's lanes in one detail card
+    const cs = conjuntosDaAba(fontes, orq ? d.notas : notasOrq([]), orq ? d.gos : {}, orq ? daMinhaExecucao(d.outras ?? [], d.eu) : [], d.dependeDe, d.titulos, d.agora)
+    const todas = cs.flatMap(c => c.raias)
+    const vazio = todas.length === 0 && ls.length === 0 && cs.every(c => c.estado === 'normal')
     if (vazio && d.leitura.falhas.planejamento && !d.temBanco) return [k.cartaoEstado('erro', 'o painel mostra o último estado salvo; nada foi perdido', d.acoes.tentar)]
-    const todas = [...blocos.flatMap(b => b.raias), ...proprias]
     const feitas = todas.filter(r => r.celulas[r.celulas.length - 1] === 'feito').length
     const vivas = daMinhaExecucao(d.outras ?? [], d.eu).filter(r => r.papel === 'spec' && vivo(r, d.agora)).length
+    const nVazias = cs.filter(c => c.estado === 'vazia').length
     // R52: every open alert already chased by the orchestrator
     const cob = cobrancas(d)
     const cobertos = lista.length > 0 && lista.every(a => cob.has(a.chave))
     const nLocks = lista.filter(a => a.chave.startsWith('lock:')).length
     const nOutros = lista.length - nLocks
-    // R26: one row per spec session of the set, from the session map
+    const hhmm = (ms: number) => new Date(ms).toTimeString().slice(0, 5)
+    // R26, R34: one row per spec session of the set from the map, the opened-in-your-turn line, the cards proposed
     const sessoes = (C: string): any[] => {
       const ss = Object.entries(d.mapa.specs).filter(([, s]) => s.conjunto === C && s.nome).sort(([a], [b]) => a.localeCompare(b))
-      return ss.length
-        ? [k.titulo('sessões'), ...ss.map(([id, s]) => <Text key={`ss-${id}`} mono size="footnote">{`🔹 ${s.nome}`}</Text>), <Text key={`ss-fim-${C}`} size="footnote" color="subtle">endereços restaurados após compactação</Text>]
+      const cartoes = d.notas.cartoes.filter(c => c.conjunto === C)
+      return ss.length || cartoes.length
+        ? [
+            k.titulo('sessões'),
+            ...ss.map(([id, s]) => <Text key={`ss-${id}`} mono size="footnote">{`🔹 ${s.nome}`}</Text>),
+            <Text key={`ss-fim-${C}`} size="footnote" color="subtle">abertas no seu turno · endereços restaurados após compactação</Text>,
+            ...cartoes.map((c, i) => (
+              <Text key={`ss-cartao-${C}-${i}`} size="footnote" color="subtle">{`${hhmm(c.at)} cartão proposto: ${c.id} (clique equivale a colar o prompt)${c.fechamento ? ' com fechamento' : ''}`}</Text>
+            )),
+          ]
         : []
     }
     const out: any[] = [
       ...k.filas('exk', [
         k.kpi('exk-1', '🏁', `${feitas}/${todas.length}`, 'specs em DONE'),
-        k.kpi('exk-2', '🧵', String(vivas), 'sessões de spec vivas'),
+        nVazias ? k.kpi('exk-2', '⏳', String(nVazias), 'aguardando GO') : k.kpi('exk-2', '🧵', String(vivas), 'sessões de spec vivas'),
         lista.length ? k.kpi('exk-3', '🚨', String(lista.length), cobertos ? `${nLocks} ${nLocks === 1 ? 'lock órfão' : 'locks órfãos'} e ${nOutros} ${nOutros === 1 ? 'bloqueio' : 'bloqueios'} · já cobrados` : 'pede atenção', 'error') : k.kpi('exk-3', '✅', '0', 'nada exige você agora'),
       ], 18),
     ]
@@ -3227,28 +3274,87 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
             <Box key={`t-${key}-${i}`}>{k.sv(tabelaTrilhasM(largTabela, pedaco.map(r => linhaTabela(r, calado))), alt, largTabela, alturaTabela(pedaco.length), '', true)}</Box>
           ))
         : [rs.length > 0 ? cabecalho : null, ...rs.map(r => lane(r, key))]
-    blocos.forEach((b, i) =>
+    if (cs.length) {
+      const ids = cs.map(c => c.id)
+      const sel = d.sel && ids.includes(d.sel) ? d.sel : ids.includes('C01') ? 'C01' : ids[0]!
+      const ST: Record<string, 'd' | 'w' | 'b' | ''> = { feito: 'd', agora: 'w', travado: 'b', vazio: '' }
+      // card previews: at most MAX_RAIAS progress rows across all cards, in id order
+      let resta = MAX_RAIAS
+      let foraCards = 0
+      const cards = cs.map(c => {
+        const fica = c.raias.slice(0, Math.max(0, resta))
+        resta -= fica.length
+        foraCards += c.raias.length - fica.length
+        const prontas = c.raias.filter(r => r.celulas[r.celulas.length - 1] === 'feito').length
+        const emoji = c.estado === 'cancelado' ? '🚫' : c.estado === 'vazia' ? '⏸️' : c.raias.some(r => r.celulas.includes('travado')) ? '🔴' : c.raias.length && prontas === c.raias.length ? '✅' : c.raias.length || c.estado === 'go' ? '🟠' : '⚪'
+        const etapa = c.estado === 'cancelado' ? `cancelado${c.motivo ? ` · ${c.motivo}` : ''}` : c.estado === 'vazia' ? 'aberta vazia · aguardando GO' : c.estado === 'go' && !c.raias.length ? 'GO com brief atual' : c.raias.length ? `${prontas}/${c.raias.length} specs em DONE` : 'nenhuma sessão de spec vista'
+        return k.quadro(`cj-${c.id}`, [
+          <Box flexDirection="row" gap="sm" alignItems="center">
+            {k.botao({ key: `sel-${c.id}`, primario: c.id === sel, onPress: d.acoes.selConjunto(c.id), children: c.id })}
+            <Box flexGrow={1} width={0}><Text size="footnote" color="subtle" wrap="truncate-end">{c.titulo}</Text></Box>
+            {c.estado === 'cancelado' ? k.chip('cancelado', 'ruim') : null}
+            <Text>{emoji}</Text>
+          </Box>,
+          ...fica.map(r => {
+            const rot = String(r.rotulo ?? r.slug)
+            const curto = rot.match(/S\d{2}$/i)?.[0]?.toUpperCase() ?? rot.slice(0, 8)
+            const st = r.celulas.map(x => ST[x] ?? '')
+            const n = st.filter(x => x === 'd').length
+            return (
+              <Box key={`cj-${c.id}-${r.slug}`} flexDirection="row" gap="sm" alignItems="center">
+                <Box width={4}><Text size="caption" mono color="subtle">{curto}</Text></Box>
+                <Box flexGrow={1} width={0}>{k.sv(barraSegmentosM(st), `${c.id} ${curto} ${n}/${st.length} etapas`, 0, 6, `${'▮'.repeat(n)}${'·'.repeat(st.length - n)}`)}</Box>
+              </Box>
+            )
+          }),
+          <Box flexDirection="row" gap="sm">
+            <Box flexGrow={1} width={0}><Text size="footnote" wrap="truncate-end">{etapa}</Text></Box>
+            {c.estado === 'vazia' && c.apos.length ? <Text size="footnote" mono color="subtle">{`após ${c.apos.join(', ')}`}</Text> : null}
+          </Box>,
+        ], { faixa: COR_CONJ[c.id] ?? 'promptBorder', grow: true })
+      })
+      out.push(k.titulo('conjuntos'), ...k.filas('cj', cards, 18))
+      if (foraCards > 0) out.push(<Text key="mais-cj" size="footnote" color="subtle">{`mais ${foraCards}`}</Text>)
+      // the detail card of the selected set: its own lanes cut on their own, the brief box, the sessões block
+      const c = cs.find(x => x.id === sel)!
+      const det = c.raias.slice(0, MAX_RAIAS)
+      const go = d.gos[c.id]
+      const Code = ui.Code
+      const caixa =
+        c.estado === 'vazia'
+          ? k.quadro('brf', [
+              <Box flexDirection="row" gap="sm" alignItems="center"><Text>⏸️</Text><Text bold>Sessão aberta vazia · aguardando GO</Text></Box>,
+              <Text size="footnote" color="subtle">{`"você é a sessão do conjunto ${c.id} da execução ${d.projeto}; aguarde o GO; não leia specs nem crie branch antes dele"`}</Text>,
+              <Text size="footnote" color="subtle">nada de spec, contexto ou branch carregado, então nada fica velho</Text>,
+            ], { cor: 'promptBorder' })
+          : c.estado === 'go'
+            ? k.quadro('brf', [
+                <Box flexDirection="row" gap="sm" alignItems="center"><Text>📨</Text><Text bold>{`Brief entregue no GO · ${hhmm(go?.at ?? d.notas.gos[c.id]?.at ?? d.agora)}`}</Text></Box>,
+                <Text size="footnote" color="subtle">{`specs no commit ${go?.sha || d.notas.gos[c.id]?.sha || '?'}${c.apos.length ? `, relidas depois que o session-plan aplicou o que o ${c.apos.join(', ')} mudou` : ''}`}</Text>,
+                ...(go?.atualizadas ?? []).map((t, i) => <Box key={`go-p-${i}`}>{k.chip(t, 'ok')}</Box>),
+                go ? <Text size="footnote" color="subtle">{`DECISIONS.md com ${go.decisoesNovas} ${go.decisoesNovas === 1 ? 'decisão nova' : 'decisões novas'}${go.merges?.length ? ` · merges desde o início: ${go.merges.join(', ')}` : ''}`}</Text> : null,
+                ...(go?.branches.length
+                  ? k.temSvg && Code
+                    ? [<Code key="go-branch" source={go.branches.join('\n')} language="bash" />]
+                    : go.branches.map((b, i) => <Text key={`go-b-${i}`} mono size="footnote">{b}</Text>)
+                  : []),
+              ], { cor: 'success' })
+            : null
       out.push(
-        k.quadro(`b-${i}`, [
-          <Text bold>{b.titulo ? `${b.conjunto} · ${b.titulo}` : b.conjunto}</Text>,
-          b.raias.length ? k.titulo('specs · etapas do session-build · passe o mouse nas etapas') : null,
-          ...raias(b.raias, String(i), `etapas das specs de ${b.conjunto}`),
-          ...sessoes(b.conjunto),
-        ], { faixa: COR_CONJ[b.conjunto] ?? 'promptBorder' }),
-      ),
-    )
-    if (proprias.length) {
-      const c = d.ex.conjunto ?? 'esta sessão'
-      out.push(
-        k.quadro('b-p', [
-          <Text bold>{d.titulos[c] ? `${c} · ${d.titulos[c]}` : c}</Text>,
-          k.titulo('specs · etapas do session-build · passe o mouse nas etapas'),
-          ...raias(proprias, 'p', `etapas das specs de ${c}`),
-          ...sessoes(c),
-        ], { faixa: COR_CONJ[c] ?? 'promptBorder' }),
+        k.titulo(`detalhe · ${c.id}`),
+        k.quadro('det', [
+          <Box flexDirection="row" gap="sm" alignItems="center">
+            <Text bold>{c.titulo ? `${c.id} · ${c.titulo}` : c.id}</Text>
+            {c.estado === 'vazia' ? k.chip('aguardando GO', 'neutro') : c.estado === 'cancelado' ? k.chip('cancelado', 'ruim') : null}
+          </Box>,
+          det.length ? k.titulo('specs · etapas do session-build · passe o mouse nas etapas') : null,
+          ...raias(det, 'det', `etapas das specs de ${c.id}`),
+          c.raias.length > det.length ? <Text key="mais-det" size="footnote" color="subtle">{`mais ${c.raias.length - det.length}`}</Text> : null,
+          caixa,
+          ...sessoes(c.id),
+        ], { faixa: COR_CONJ[c.id] ?? 'promptBorder' }),
       )
     }
-    if (fora > 0) out.push(<Text key="mais" size="footnote" color="subtle">{`mais ${fora}`}</Text>)
     if (ls.length) {
       out.push(k.titulo('conjuntos do planejamento'))
       out.push(k.quadro('pl', ls.map(x => <Text>{x}</Text>)))
@@ -3540,6 +3646,8 @@ export const registerMaestro: Register = on => {
       const [token, segundo] = linha.split(/\s+/)
       if (r?.isDelivered && e.origin?.kind === 'model' && !e.agentId && DIRETIVAS.has(token!)) {
         const papel = (await execAtual($)).papel
+        const goInicio = linha.match(/^GO (C\d{2}) inicio \S+/)
+        if (papel === 'orquestrador' && goInicio) await guardarGo($, goInicio[1]!, String(e.text ?? '')) // C05-S01 (R25)
         if (papel === 'orquestrador' || papel === 'conjunto') {
           const alvo = String(segundo ?? '').replace(/\?$/, '')
           const acao = token === 'status' ? 'STATUS-PEDIDO' : token!
@@ -3567,7 +3675,7 @@ export const registerMaestro: Register = on => {
       const papel = (await execAtual($)).papel
       if (papel !== 'orquestrador' && papel !== 'conjunto') return ran
       const x = e as any
-      const ent = entradaMapa({ name: x.name ?? x.input?.name, initiation: x.initiation ?? x.input?.initiation }, String(ran?.text ?? ''))
+      const ent = entradaMapa({ name: x.name ?? x.input?.name, initiation: x.initiation ?? x.input?.initiation, prompt: x.prompt ?? x.input?.prompt }, String(ran?.text ?? ''))
       if (!ent) return ran
       mudarMapa($, m => noMapa(m, ent))
       void auditar($, { acao: 'SESSAO', alvo: ent.nome, motivo: 'Sessão aberta pelo agente', regra: 'd-trava-abrir-sessao', linha: null, origem: 'agente' }).catch(() => {})
@@ -3587,7 +3695,12 @@ export const registerMaestro: Register = on => {
     if (papelConhecido) return next(e)
     try {
       const p = doUsuario && !(await exec($)).papel ? papelDoPrompt(e.text) : null
-      if (p) {
+      if (p?.aguardandoGo) {
+        // C05-S01: a minimal brief: role and wait only, no plan read before the GO (R10)
+        await ligar($, p.papel, null, { codigo: p.codigo, conjunto: p.conjunto, spec: p.spec, artefato: p.url })
+        await gravarExec($, { ...(await exec($)), aguardandoGo: true })
+        await registrar($)
+      } else if (p) {
         await ligar($, p.papel, null, { codigo: p.codigo, conjunto: p.conjunto, spec: p.spec, artefato: p.url })
         if (p.url && (p.papel === 'orquestrador' || (await $.tool.list()).some((t: { name: string }) => t.name === 'ArtifactData'))) {
           await carregar($, p.url, p.papel === 'orquestrador' ? 'orquestrador' : 'conjunto', p.conjunto ?? null)
@@ -3605,8 +3718,13 @@ export const registerMaestro: Register = on => {
     try {
       await garantirSessao($)
       if (e.origin.kind === 'peer' || e.origin.kind === 'peer-send-message') {
-        const ex = await exec($)
+        let ex = await exec($)
         const texto = String(e.text ?? '').trim()
+        if ((ex.papel === 'conjunto' || ex.papel === 'spec') && ex.aguardandoGo && limpaAguardo(texto)) {
+          ex = { ...ex, aguardandoGo: false } // C05-S01 (R31); the writes below start from it
+          await gravarExec($, ex)
+          await registrar($)
+        }
         // R37: a received directive refreshes the db reads at once (Task 8); the routing runs off the hook path
         if ((ex.papel === 'conjunto' || ex.papel === 'spec') && /^(GO|HOLD|LIBERA|LOCK|RELEASE)\b/.test(texto)) void refrescarBanco($).catch(() => {})
         if (ex.papel === 'conjunto' && /^(GO|status) /.test(texto)) void encaminhar($, texto, 0).catch(() => {})
@@ -3824,6 +3942,10 @@ export const registerMaestro: Register = on => {
         sino: contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf),
         envios,
         mapa,
+        notas: notasOrq(ex.papel === 'orquestrador' ? eventosOrq : []),
+        gos: ((await ler($, 'maestroGos')) ?? {}) as Record<string, GoLocal>,
+        dependeDe: Object.fromEntries((plano?.conjuntos ?? []).map(cj => [cj.id, cj.dependeDe ?? []])),
+        sel: ((await ler($, 'maestroSelConjunto')) ?? null) as string | null,
         temBanco: !!banco && !banco.parcial,
         tentando,
         acervoSync,
@@ -3835,6 +3957,7 @@ export const registerMaestro: Register = on => {
             if (!(await abre(u)) && u !== acervoSync.url) await abre(acervoSync.url)
           },
           abrirLinha: url => async () => { await abre(url) },
+          selConjunto: C => async () => { await $.state.set(SEL, C) },
           aba: a => async () => {
             await garantirSessao($)
             await $.state.set(ABA, a)

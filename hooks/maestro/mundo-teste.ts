@@ -57,6 +57,8 @@ export type Mundo = {
   git: { toplevel: string; origemHead: string } | null
   /** C03-S01 Task 7: answers a `$.session.send` (the delivery result) in place of the default `{ isDelivered: true }`. */
   entrega: ((e: any) => any) | null
+  /** C05-S01: the plan every plano.json read serves, in place of PLANO. */
+  plano?: unknown
   /** C03-S01 Task 7: makes one `$.process.run` exit 1 (a `ledger.py append` that failed). */
   falharRun: ((argv: string[]) => boolean) | null
   /** C03-S01 final fix 4: extra environment variables `$.env.get` answers (TEMP, TMPDIR...). */
@@ -156,7 +158,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     const p = norm(e.path)
     m.lidos.push(p)
     if (m.falhar?.(p)) throw new Error('EBUSY')
-    if (p.endsWith('plano.json')) return { value: JSON.stringify(PLANO) }
+    if (p.endsWith('plano.json')) return { value: JSON.stringify(m.plano ?? PLANO) }
     if (p.endsWith('/HEAD')) return { value: m.head ?? `ref: refs/heads/${m.branch}\n` }
     return { value: m.arquivos[p]?.text ?? '' }
   })

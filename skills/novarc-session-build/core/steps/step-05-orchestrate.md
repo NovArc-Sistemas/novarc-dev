@@ -19,6 +19,10 @@ Four rules, each with its incident in `../references/orchestration-deadlocks.md#
 
 ### Linked sessions (the default)
 
+Under a NOVARC run, `../../steps/conjunto-overrides.md` "step-05: spec sessions already open" wins over this section:
+the NOVARC orchestrator opened the spec sessions empty in the person's turn (D17 short `name`, title set by each
+session), and the set session sends each one `GO PLAN` instead of a start.
+
 In the **same turn as the step-02 HALT answer**, and after step-03 initialized the ledger files and recorded your own id: one `mcp__ccd_session__start_session` per spec, **all in one message**, with `initiation: "user_asked"`, `context: "fresh"`, `use_worktree: true`, `name` = the spec slug cut to `[a-z0-9-]`, at most 24 characters, the § Session implementer brief from [dispatch-prompts.md](../dispatch-prompts.md) as `prompt`, and its fixed `background` sentence. Starting state `GO PLAN`, or `GO PLAN; HOLD-IMPL <reason>` for an unmet **total** dependency (it plans, codex-reviews, sends SURFACES, then waits; its phase-4 `GO` carries `MERGE <A-branch> BEFORE implementation`). An **ordered** dependency starts with `GO PLAN`.
 
 Then, still in the same turn: write `spec slug → session id` into `ledger.md` from each result, and send every session one message `PEERS <slug>=<local_id> ...` (a session opened first cannot know the ids issued after it).

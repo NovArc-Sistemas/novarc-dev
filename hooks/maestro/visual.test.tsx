@@ -613,14 +613,14 @@ test('24 lanes in one block draw 3 tables of at most 10 lanes, each under 131072
   await ui.unmount()
 })
 
-test('20 redraws with unchanged state: median under 30 ms, the 3 lane tables unchanged (A45)', async ($: any, on: any) => {
+test('20 redraws with unchanged state: median under 30 ms, the selected set lane table unchanged (A45, C05-S01 R35)', async ($: any, on: any) => {
   const m = montar(on, {})
   m.servirEstado = { ...grande(), maestroAba: 'execucao' }
   await iniciar($)
   const ui = await painel($, 'desktop')
   const fontes = async () => (await svgs(ui)).filter((s: any) => String(s.alt).startsWith('etapas das specs de ')).map((s: any) => s.source)
   const antes = await fontes()
-  expect(antes.length).toBe(3)
+  expect(antes.length).toBe(1) // C05-S01: only the selected set's (C01, 7 lanes) table is drawn
   const tempos: number[] = []
   for (let i = 0; i < 20; i++) {
     const t0 = performance.now()
@@ -749,21 +749,29 @@ test('Locks: each unconfirmed directive is one error card, so the bell lands on 
   }
 })
 
-test('Execução: each set card ends with its sessões block and the restored-addresses line (A33)', async ($: any, on: any) => {
+test('Execução: the selected set detail card ends with its sessões block and the restored-addresses line (A33, C05-S01 R34, R35)', async ($: any, on: any) => {
   const m = montar(on, {})
-  m.servirEstado = {
+  const v: Record<string, unknown> = {
     ...grande(), maestroAba: 'execucao',
     maestroMapa: MAPA_T({ 'C02-S01': SPEC_T('C02-S01'), 'C02-S02': SPEC_T('C02-S02') }),
   }
+  m.servirEstado = v
   await iniciar($)
-  const ui = await painel($, 'terminal')
-  const c2 = await ui.find({ key: 'b-1' })
-  expect(c2?.text.endsWith('endereços restaurados após compactação')).toBe(true)
-  expect(c2?.text).toContain('SESSÕES')
+  let ui = await painel($, 'terminal')
+  // C01 is selected by default: it has no spec session in the map, so its detail card has no sessões block
+  expect((await ui.find({ key: 'det' }))?.text).not.toContain('SESSÕES')
+  await ui.press({ key: 'sel-C02' })
+  await ui.unmount()
+  v.maestroSelConjunto = escrito(m, 'maestroSelConjunto')
+  expect(v.maestroSelConjunto).toBe('C02')
+  ui = await painel($, 'terminal')
+  const det = await ui.find({ key: 'det' })
+  expect(det?.text.endsWith('abertas no seu turno · endereços restaurados após compactação')).toBe(true)
+  expect(det?.text).toContain('SESSÕES')
   const linhas = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.mono && String(t.text).startsWith('🔹')).map((t: any) => t.text)
   expect(linhas).toEqual(['🔹 novarc-NOVARC-PLUGIN-MAESTRO-C02-S01', '🔹 novarc-NOVARC-PLUGIN-MAESTRO-C02-S02'])
-  expect((await ui.find({ key: 'b-0' }))?.text).not.toContain('SESSÕES')
-  expect((await ui.find({ type: 'Text', text: 'endereços restaurados após compactação' }))?.props.color).toBe('subtle')
+  for (const C of ['C01', 'C02', 'C03']) expect((await ui.find({ key: `cj-${C}` }))?.text).not.toContain('SESSÕES')
+  expect((await ui.find({ type: 'Text', text: 'abertas no seu turno · endereços restaurados após compactação' }))?.props.color).toBe('subtle')
   await ui.unmount()
 })
 
