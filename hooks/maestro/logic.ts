@@ -320,10 +320,10 @@ export function porId(texto: string): Record<string, DbDoc> {
   return Object.fromEntries(lerDocs(texto).map(d => [d.id, d]))
 }
 
-/** The client's folder in the partners' catalogue: `Clientes/<cliente>` (trimmed segments), '' without a client. */
+/** The client's folder in the partners' catalogue: the client name at the root, as the partners file it (trimmed segments), '' without a client. */
 export function pastaDoCliente(cliente: string | null | undefined): string {
   const c = String(cliente ?? '').split('/').map(s => s.trim()).filter(Boolean).join('/')
-  return c ? `Clientes/${c}` : ''
+  return c
 }
 
 /** A folder path's slug, the catalogue page's own rule (no marks, lowercase, runs of other chars become '-'). */

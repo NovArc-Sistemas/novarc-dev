@@ -170,8 +170,8 @@ test('review: combined short flags with d are a delete push', () => {
 })
 
 test('pastaDoCliente and slugPasta: the client folder and its page slug', () => {
-  expect(pastaDoCliente('Kidsy')).toBe('Clientes/Kidsy')
-  expect(pastaDoCliente(' Kidsy ')).toBe('Clientes/Kidsy')
+  expect(pastaDoCliente('Kidsy')).toBe('Kidsy')
+  expect(pastaDoCliente(' Kidsy ')).toBe('Kidsy')
   expect(pastaDoCliente('')).toBe('')
   expect(pastaDoCliente(undefined)).toBe('')
   expect(slugPasta('Clientes/Kidsy')).toBe('clientes-kidsy')

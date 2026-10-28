@@ -809,10 +809,10 @@ const TREZE = (() => {
   d.setHours(13, 0, 0, 0)
   return d.toISOString()
 })()
-const LINHA_A = (i: number, pasta = 'Clientes/Kidsy') => ({ id: `Art${i}`, url: `https://claude.ai/artifact/Art${i}`, titulo: `Artefato ${i}`, pasta, at: TREZE })
+const LINHA_A = (i: number, pasta = 'Kidsy') => ({ id: `Art${i}`, url: `https://claude.ai/artifact/Art${i}`, titulo: `Artefato ${i}`, pasta, at: TREZE })
 const SYNC_A = (o: Record<string, unknown> = {}) => ({
   url: ACERVO_T, ultimo: TREZE, erro: null, reconciliacao: { at: TREZE, renomeados: 1, criados: 1 },
-  recentes: [LINHA_A(99, 'Clientes/Outro'), ...Array.from({ length: 12 }, (_, i) => LINHA_A(i))], pendentes: [], ...o,
+  recentes: [LINHA_A(99, 'Outro'), ...Array.from({ length: 12 }, (_, i) => LINHA_A(i))], pendentes: [], ...o,
 })
 
 /** The orchestrator pane on Inteligência with `sync` in the store (undefined: no key). */
@@ -906,10 +906,10 @@ test('A16, A17: abrir Acervo opens the client folder, falls back to the bare url
   const { m, ui } = await inteligencia($, on, SYNC_A())
   const abertos = () => m.tools.filter((t: any) => t.tool === 'Artifact' && t.action === 'open').map((t: any) => t.url)
   await ui.press({ key: 'abrir-acervo' })
-  expect(abertos()).toEqual([`${ACERVO_T}#clientes-kidsy`])
+  expect(abertos()).toEqual([`${ACERVO_T}#kidsy`])
   m.falharTool = e => e.tool === 'Artifact' && e.action === 'open' && String(e.url).includes('#') && 'fragment refused'
   await ui.press({ key: 'abrir-acervo' })
-  expect(abertos()).toEqual([`${ACERVO_T}#clientes-kidsy`, `${ACERVO_T}#clientes-kidsy`, ACERVO_T])
+  expect(abertos()).toEqual([`${ACERVO_T}#kidsy`, `${ACERVO_T}#kidsy`, ACERVO_T])
   expect(await ui.find({ key: 'estado-erro' })).toBeUndefined()
   await ui.press({ key: 'abrir-Art3' })
   expect(abertos().pop()).toBe('https://claude.ai/artifact/Art3')
