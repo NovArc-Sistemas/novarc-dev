@@ -1,5 +1,7 @@
 // The world beneath the mod for the Maestro tests, in memory (moved out of olhos.test.ts by C11-S01 so the visual
 // tests share it): files, git, the store, held clock periods, an in-memory planning db and every $ call the mod makes.
+import { NOVARC_MD } from './regras'
+
 export const PLANO = {
   conjuntos: [{ id: 'C01', titulo: 'Base', specs: ['C01-S01'] }],
   specs: [{ id: 'C01-S01', conjunto: 'C01', slug: 'olhos' }],
@@ -51,6 +53,8 @@ export type Mundo = {
   segurarEstado: ((e: any) => Promise<void> | null) | null
   /** Makes one plugin state write (`$.state.set`) throw. */
   falharEstado: ((e: any) => boolean) | null
+  /** C06-S01: makes one plugin state read fail (a throwing hook is skipped by the engine, so the read answers null). */
+  falharLeituraEstado: ((e: any) => boolean) | null
   /** C11-S01: answers plugin state reads by key with a prepared value (the drawing tests); undefined passes the read on. */
   servirEstado: Record<string, unknown> | null
   /** C03-S01: what `git rev-parse --show-toplevel` and `git symbolic-ref ... origin/HEAD` answer; null keeps the old answer (the branch). */
@@ -69,6 +73,8 @@ export type Mundo = {
   textoBash?: string
   /** C05-S02: the app's `list_sessions` answer (the tool is listed only when set); a string is answered as is. */
   listSessions?: unknown[] | string
+  /** C06-S01: makes one `$.fs.write` (path) or `$.store.set` (`store:<key>`) throw EACCES before anything is recorded. */
+  falharEscrita: ((path: string) => boolean) | null
 }
 export const norm = (p: unknown) => String(p).replace(/\\/g, '/')
 export let seq = 0
@@ -131,8 +137,12 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   const m: Mundo = {
     branch, head: null, gitDir: '.git', id: 'sess-1', home: 'C:/Users/t', arquivos: {}, store: {},
     runs: [], lidos: [], listados: [], logs: [], tools: [], timers: [], eventos: [], segurar: null, falhar: null, abertos: [], semBanco: false,
-    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, dbPorUrl: null, gitNome: null, avanco: 0, segurarEstado: null, falharEstado: null, servirEstado: null, git: null, entrega: null, falharRun: null, env: {},
+    segurarTool: null, falharTool: null, sweep: null, sweepAtraso: 0, sweepFalha: false, toasts: [], db: null, dbPorUrl: null, gitNome: null, avanco: 0, segurarEstado: null, falharEstado: null, falharLeituraEstado: null, servirEstado: null, git: null, entrega: null, falharRun: null, env: {}, falharEscrita: null,
   }
+  // C06-S01: the fake home starts with the NOVARC rules installed, so a session start writes and toasts nothing
+  // (regras.test.ts clears both for a first install)
+  gravar(m, 'C:/Users/t/.claude/NOVARC.md', NOVARC_MD, 1)
+  m.store['maestro-regras-instaladas'] = true
   gravar(m, 'C:/repo/ai/ledger/fork-c02-s01.md', 'READY c02-s01  # 2026-10-15T12:00:00Z\nPLAN p.md TASKS 3  # 2026-10-15T12:05:00Z\n', 1)
   on('*', async ($: any, e: any, next: any) => {
     m.eventos.push({ at: performance.now(), e })
@@ -166,17 +176,22 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     if (m.falhar?.(p)) throw new Error('EBUSY')
     if (p.endsWith('plano.json')) return { value: JSON.stringify(m.plano ?? PLANO) }
     if (p.endsWith('/HEAD')) return { value: m.head ?? `ref: refs/heads/${m.branch}\n` }
+    // C06-S01: a missing file under the fake home's .claude rejects, as the host does; elsewhere '' as before
+    if (m.home && p.startsWith(`${norm(m.home)}/.claude/`) && !(p in m.arquivos)) throw new Error('ENOENT: no such file')
     return { value: m.arquivos[p]?.text ?? '' }
   })
+  on('fs.exists', async ($: any, e: any) => ({ value: norm(e.path) in m.arquivos }))
   on('fs.write', async ($: any, e: any) => {
     const espera = m.segurar?.(norm(e.path))
     if (espera) await espera
+    if (m.falharEscrita?.(norm(e.path))) throw new Error('EACCES')
     escritos[e.path] = e.text
     gravar(m, e.path, e.text)
     return { value: undefined }
   })
   on('store.get', async ($: any, e: any) => ({ value: m.store[e.key] }))
   on('store.set', async ($: any, e: any) => {
+    if (m.falharEscrita?.(`store:${e.key}`)) throw new Error('EACCES')
     m.store[e.key] = e.value
     return { value: undefined }
   })
@@ -205,6 +220,7 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
   on('state.get', async ($: any, e: any, next: any) => {
     const espera = m.segurarEstado?.(e)
     if (espera) await espera
+    if (m.falharLeituraEstado?.(e)) return { value: null }
     if (m.servirEstado && e.plugin === 'novarc' && e.key in m.servirEstado) return { value: { value: m.servirEstado[e.key] } }
     return next(e)
   })
@@ -249,9 +265,11 @@ export function montar(on: any, escritos: Record<string, string>, branch = 'main
     if (e.tool === 'mcp__ccd_session_mgmt__list_sessions' && m.listSessions !== undefined)
       return { result: '', text: typeof m.listSessions === 'string' ? m.listSessions : JSON.stringify(m.listSessions), isError: false }
     if (e.tool === 'Bash' && m.textoBash) return { result: '', text: m.textoBash, isError: false }
+    // the engine hands on the caller's shape: top-level or under `input`
+    const q = e.input && typeof e.input === 'object' ? { ...e, ...e.input } : e
     if (e.tool === 'ArtifactData' && m.semBanco) return { result: '', text: 'offline', isError: true }
-    if (e.tool === 'ArtifactData' && m.dbPorUrl?.[e.url]) return banco(m.dbPorUrl[e.url]!, e)
-    if (e.tool === 'ArtifactData' && m.db) return banco(m.db, e)
+    if (e.tool === 'ArtifactData' && m.dbPorUrl?.[q.url]) return banco(m.dbPorUrl[q.url]!, q)
+    if (e.tool === 'ArtifactData' && m.db) return banco(m.db, q)
     return e.tool === 'Artifact' ? { result: '', text: 'File saved: "C:/tmp/plano.json" (1 bytes)', isError: false } : { result: '', text: 'ok', isError: false }
   })
   on('agent.spawn', async () => ({ model: 'm', agentId: 'ag-1' }))

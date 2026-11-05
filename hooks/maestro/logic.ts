@@ -25,11 +25,11 @@ export const ETAPA_FAIXA: Record<Etapa, string> = {
 }
 
 export type PlanoSpec = { id: string; conjunto: string; slug: string; mudancas?: string[] }
-export type PlanoConjunto = { id: string; titulo: string; specs: string[]; dependeDe?: string[]; prompt?: string }
+export type PlanoConjunto = { id: string; titulo: string; specs: string[]; dependeDe?: string[]; prompt?: string; fase?: string }
 export type Plano = {
   conjuntos?: PlanoConjunto[]
   specs?: PlanoSpec[]
-  execucao?: { orquestrador?: string }
+  execucao?: { orquestrador?: string; perfil?: Perfil }
   projeto?: { cliente?: string; nomeCurto?: string; codigo?: string }
 }
 
@@ -40,7 +40,7 @@ export function projetoDoPlano(p: Plano): { codigo: string | null; projeto: stri
 }
 export type SpecDoc = {
   etapa?: Etapa | null
-  bloqueios?: Record<string, { motivo?: string }>
+  bloqueios?: Record<string, { motivo?: string; at?: string }>
   validacao?: { resultado?: string; sha?: string }
   headSha?: string
   branch?: string
@@ -58,7 +58,7 @@ export type EspelhoConjunto = {
   aCaminho?: ACaminho[]
   at: string
 }
-export type ConjuntoDoc = { sessao?: string; iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string }>; espelho?: EspelhoConjunto }
+export type ConjuntoDoc = { sessao?: string; iniciadoEm?: string; bloqueios?: Record<string, { motivo?: string; at?: string }>; espelho?: EspelhoConjunto }
 export type Limiares = { calado: number; lockOrfao: number; fonte: 'padrao' | 'medido'; at: string }
 export type Proposta = { calado: number; lockOrfao: number; amostras: number; at: string }
 /** `config/orquestracao`: the orchestrator mod's singleton (run, slots, thresholds). */
@@ -381,3 +381,211 @@ export function pastaDoCliente(cliente: string | null | undefined): string {
 
 /** A folder path's slug, the catalogue page's own rule (no marks, lowercase, runs of other chars become '-'). */
 export const slugPasta = (s: string) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+// ---- C06-S01: project profile, continuous-mode authorization and mode
+
+export type CampoPerfil = 'stack' | 'gate' | 'porAcao' | 'hostGit' | 'merge' | 'base' | 'migracao' | 'migracaoProducao' | 'deploy' | 'janelaDeploy'
+export type Perfil = {
+  hostGit?: 'github' | 'gitlab' | 'bitbucket'; mergePath?: 'pr' | 'local-merge'
+  formato?: 'app' | 'docs-only' | 'infra-no-suite' | 'library'
+  gate?: { comandos?: string[]; expect?: string | null }
+  migracao?: { ferramenta?: string | null; aplicaNoMerge?: boolean; ordem?: string }
+  deploys?: { alvo: string; dispara: 'merge' | 'manual' | 'comando'; comando?: string | null }[]
+  merge?: { quem?: 'novarc' | 'cliente'; clique?: boolean }
+  teto?: { ate?: 'pr-aberto' | 'merge' | 'deploy'; migracaoProducao?: boolean; deploy?: boolean; porAcao?: boolean }
+  stack?: string; base?: string; janelaDeploy?: string; fontes?: Partial<Record<CampoPerfil, string>>; geradoEm?: string
+}
+export type ModoContinuo = 'manual' | 'continuo' | 'pausado'
+export type AcaoContinuo = 'go' | 'hold' | 'fecha' | 'merge' | 'migracao' | 'deploy'
+export type EscopoContinuo = { conjuntos: string[]; fases: string[]; merge: boolean; migracoes: boolean; deploys: boolean; ate: string | null }
+export type AutorizacaoContinuo = { by: string; at: string; escopo: EscopoContinuo; teto: NonNullable<Perfil['teto']> | null; continuoHabilitado: boolean }
+export type ContinuoDoc = { runId: string; modo: ModoContinuo; modoBy: string; modoAt: string; autorizacao: AutorizacaoContinuo | null }
+
+const SEM_TETO = 'o perfil não descreve o teto do contínuo: o orquestrador pergunta'
+const POR_ACAO = 'o CLAUDE.md do cliente exige autorização por ação'
+const dois = (n: number) => String(n).padStart(2, '0')
+const hhmm = (t: number) => `${dois(new Date(t).getHours())}:${dois(new Date(t).getMinutes())}`
+
+/** Why the grant in `autorizacao` cannot act now, '' when it can: run, @NOVARC-CONTINUO.md, mode, ceiling presence, owner and clock. */
+function liberacaoViva(i: { autorizacao: ContinuoDoc | null; runId: string | null; perfil: Perfil | null | undefined; agora: number; dono?: string | null; modo?: ModoContinuo }): string {
+  const d = i.autorizacao
+  const a = d?.autorizacao
+  if (!d || !a) return 'sem liberação do contínuo nesta execução'
+  if (d.runId !== i.runId) return 'liberação de outra execução'
+  if (a.continuoHabilitado !== true) return 'liberação sem @NOVARC-CONTINUO.md de quem liberou'
+  const modo = i.modo ?? d.modo
+  if (modo !== 'continuo') return `modo ${modo}`
+  const teto = i.perfil?.teto
+  if (!teto) return SEM_TETO
+  if (teto.porAcao) return POR_ACAO
+  if (i.dono && i.dono !== a.by) return `liberação de ${a.by}; quem conduz agora é ${i.dono}: libere de novo`
+  if (a.escopo.ate && i.agora >= Date.parse(a.escopo.ate)) return `liberação vencida às ${hhmm(Date.parse(a.escopo.ate))}`
+  return ''
+}
+
+/** Whether the orchestrator may take `acao` for `conjunto` now, by the grant of this run and the live profile's ceiling. */
+export function autorizado(i: { autorizacao: ContinuoDoc | null; runId: string | null; perfil: Perfil | null | undefined; acao: AcaoContinuo; conjunto: string; fase?: string | null; agora: number; dono?: string | null; modo?: ModoContinuo }): { ok: boolean; motivo: string } {
+  const no = (motivo: string) => ({ ok: false, motivo })
+  const viva = liberacaoViva(i)
+  if (viva) return no(viva)
+  const e = i.autorizacao!.autorizacao!.escopo
+  if (!e.conjuntos.includes(i.conjunto)) return no(`${i.conjunto} fora do escopo liberado`)
+  if (i.fase && e.fases.length && !e.fases.includes(i.fase)) return no(`fase ${i.fase} fora do escopo liberado`)
+  const campo: Partial<Record<AcaoContinuo, boolean>> = { merge: e.merge, migracao: e.migracoes, deploy: e.deploys }
+  if (i.acao in campo && !campo[i.acao]) return no(`${i.acao} fora do escopo liberado`)
+  const t = i.perfil!.teto!
+  const acima = i.acao === 'merge' ? t.ate !== 'merge' && t.ate !== 'deploy' : i.acao === 'migracao' ? !t.migracaoProducao : i.acao === 'deploy' ? !(t.deploy && t.ate === 'deploy') : false
+  return acima ? no(`${i.acao} acima do teto do perfil`) : { ok: true, motivo: '' }
+}
+
+/** The first scope offered to the person: every set and phase, extras only as far as the profile allows. */
+export function escopoSugerido(perfil: Perfil | null | undefined, plano: Plano, agora: number = Date.now(), conjuntos?: string[]): EscopoContinuo {
+  const t = perfil?.teto
+  if (t?.porAcao) return { conjuntos: [], fases: [], merge: false, migracoes: false, deploys: false, ate: null }
+  const todos = plano.conjuntos ?? []
+  const ids = conjuntos ?? todos.map(c => c.id)
+  const fases = [...new Set(todos.filter(c => ids.includes(c.id) && c.fase).map(c => c.fase!))]
+  const d = new Date(agora)
+  const ate = d.getHours() < 17 ? new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18, 0, 0, 0) : new Date(agora + 60 * 60_000)
+  return {
+    conjuntos: ids, fases,
+    merge: t?.ate === 'merge' || t?.ate === 'deploy',
+    migracoes: !!t?.migracaoProducao && !!perfil?.migracao,
+    deploys: !!t?.deploy && t.ate === 'deploy' && !!perfil?.deploys?.length,
+    ate: ate.toISOString(),
+  }
+}
+
+/** The first way `escopo` goes above the ceiling `teto`, null when it fits. */
+export function acimaDoTeto(escopo: EscopoContinuo, teto: Perfil['teto'] | null | undefined): string | null {
+  if (!teto) return SEM_TETO
+  if (teto.porAcao) return POR_ACAO
+  if (escopo.merge && teto.ate !== 'merge' && teto.ate !== 'deploy') return 'merge acima do teto do perfil'
+  if (escopo.migracoes && !teto.migracaoProducao) return 'migrações acima do teto do perfil'
+  if (escopo.deploys && !(teto.deploy && teto.ate === 'deploy')) return 'deploy acima do teto do perfil'
+  return null
+}
+
+/** The grant document and its audit row for a continuous-mode authorization; no ids or e-mails (R36). `projeto` (default 'projeto') only words the audit summary. */
+export function registroLiberacao(i: { by: string; at: string; escopo: EscopoContinuo; perfil: Perfil | null | undefined; runId: string; continuoHabilitado: boolean; modoAntes: ModoContinuo; projeto?: string }): { ok: true; doc: ContinuoDoc; auditoria: { acao: 'LIBERACAO'; antes: string; depois: string; regra: 'p-excecao-claude-md' } } | { ok: false; motivo: string } {
+  if (!i.continuoHabilitado) return { ok: false, motivo: 'sem @NOVARC-CONTINUO.md no seu CLAUDE.md; quem pode liberar roda /maestro continuo habilitar' }
+  const acima = acimaDoTeto(i.escopo, i.perfil?.teto)
+  if (acima) return { ok: false, motivo: acima }
+  return {
+    ok: true,
+    doc: { runId: i.runId, modo: 'continuo', modoBy: i.by, modoAt: i.at, autorizacao: { by: i.by, at: i.at, escopo: i.escopo, teto: i.perfil!.teto!, continuoHabilitado: true } },
+    auditoria: { acao: 'LIBERACAO', antes: i.modoAntes, depois: resumoEscopo(i.escopo, i.projeto ?? 'projeto'), regra: 'p-excecao-claude-md' },
+  }
+}
+
+/** The mode of this run: a document of another run counts as manual (R14). */
+export function modoDe(doc: ContinuoDoc | null | undefined, runId: string | null): ModoContinuo {
+  // a doc with no runId is no other run's: its mode counts
+  return doc && (!doc.runId || (runId && doc.runId === runId)) ? doc.modo : 'manual'
+}
+
+const SEM_LIBERACAO = 'Retomar exige a liberação desta execução: libere de novo no turno do orquestrador.'
+
+/** The fields a pause, resume or return to manual writes, with the line the person reads. */
+export function mudarModo(doc: ContinuoDoc | null, pedido: 'pausar' | 'retomar' | 'manual', i: { by: string; agora: number; runId: string | null; perfil: Perfil | null | undefined; dono?: string | null }): { ok: true; campos: { modo: ModoContinuo; modoBy: string; modoAt: string }; antes: ModoContinuo; texto: string } | { ok: false; texto: string } {
+  const antes = modoDe(doc, i.runId)
+  const ok = (modo: ModoContinuo, texto: string) => ({ ok: true as const, campos: { modo, modoBy: i.by, modoAt: new Date(i.agora).toISOString() }, antes, texto })
+  if (pedido === 'manual') return ok('manual', 'Modo manual: o orquestrador age quando você fala com ele.')
+  if (pedido === 'pausar') return ok('pausado', 'Modo contínuo pausado. Nada sai sozinho até retomar.')
+  if (liberacaoViva({ autorizacao: doc, runId: i.runId, perfil: i.perfil, agora: i.agora, dono: i.dono, modo: 'continuo' })) return { ok: false, texto: SEM_LIBERACAO }
+  return ok('continuo', 'Modo contínuo retomado com o escopo de antes.')
+}
+
+/** R14: a new run starts manual with no grant. */
+export function camposReinicio(runId: string, by: string, agora: number): ContinuoDoc {
+  return { runId, modo: 'manual', modoBy: by, modoAt: new Date(agora).toISOString(), autorizacao: null }
+}
+
+/** One line of what a grant covers, e.g. `GO, HOLD e FECHA no Maestro v2 · até 18:00`. */
+export function resumoEscopo(e: EscopoContinuo, projeto: string): string {
+  const itens = ['GO', 'HOLD', 'FECHA', ...(e.merge ? ['merge'] : []), ...(e.migracoes ? ['migrações'] : []), ...(e.deploys ? ['deploy'] : [])]
+  return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]} no ${projeto}${e.ate ? ` · até ${hhmm(Date.parse(e.ate))}` : ''}`
+}
+
+/** `C06 a C09` for a run of sets, the lone id, or `nenhum conjunto`. */
+export function faixaDeConjuntos(ids: string[]): string {
+  return ids.length === 0 ? 'nenhum conjunto' : ids.length === 1 ? ids[0] : `${ids[0]} a ${ids[ids.length - 1]}`
+}
+
+/** Profile name of a plan: `<cliente>-<nomeCurto>` slug, else the lowercase project code. */
+export function nomePerfil(plano: Plano): string {
+  const { cliente, nomeCurto, codigo } = plano.projeto ?? {}
+  return cliente && nomeCurto ? slugPasta(`${cliente} ${nomeCurto}`) : codigo ? codigo.toLowerCase() : 'projeto'
+}
+
+/** The mode pill of the strip: on the orchestrator it states the mode, on a unit it says where it was set. */
+export function seloModo(modo: ModoContinuo, unidade: boolean): { texto: string; tom: 'neutro' | 'ok' | 'ruim' } {
+  if (modo === 'continuo') return { texto: unidade ? 'contínuo · liberado na orquestradora' : 'modo contínuo', tom: 'ok' }
+  if (modo === 'pausado') return { texto: unidade ? 'pausado · liberado na orquestradora' : 'pausado', tom: 'ruim' }
+  return { texto: unidade ? 'manual · definido na orquestradora' : 'modo manual', tom: 'neutro' }
+}
+
+const AUTO = (e: EscopoContinuo) => (e.merge && e.deploys ? 'merge e deploy automáticos' : e.merge ? 'merge automático' : 'sem merge automático')
+
+/** The scope line of the authorization card. */
+export function linhaEscopoCartao(e: EscopoContinuo, nome: string): string {
+  return `Esta execução · ${faixaDeConjuntos(e.conjuntos)} · ${AUTO(e)} · teto do perfil ${nome}`
+}
+
+/** One checked row per thing the grant lets the orchestrator do alone; `agora` only decides "de hoje". */
+export function itensCartao(e: EscopoContinuo, agora: number = Date.now()): string[] {
+  const fim = e.ate ? Date.parse(e.ate) : null
+  const dia = (t: number) => new Date(t).toDateString()
+  const quando = fim === null ? 'sem hora para acabar' : dia(fim) === dia(agora) ? `vale até ${hhmm(fim)} de hoje` : `vale até ${dois(new Date(fim).getDate())}/${dois(new Date(fim).getMonth() + 1)} ${hhmm(fim)}`
+  return ['GO, HOLD e FECHA sem perguntar', ...(e.merge ? [e.deploys ? 'merge e deploy na ordem da fila' : 'merge na ordem da fila'] : []), `${quando}; pausar a qualquer momento`]
+}
+
+const DIA = 24 * 60 * 60_000
+const lista = (xs: string[]) => JSON.stringify([...xs].sort())
+/** The written scope is the confirmed one: same sets, phases and extras; `ate` within ±10 min. */
+function mesmoEscopo(e: EscopoContinuo, c: EscopoContinuo): boolean {
+  const ate = (x: string | null) => (x === null ? NaN : Date.parse(x))
+  return lista(e.conjuntos) === lista(c.conjuntos) && lista(e.fases) === lista(c.fases) && e.merge === c.merge && e.migracoes === c.migracoes && e.deploys === c.deploys
+    && (c.ate === null ? e.ate === null : Math.abs(ate(e.ate) - ate(c.ate)) <= 10 * 60_000)
+}
+// sorted-key JSON, undefined keys dropped: the copied ceiling must equal the live one
+const chaveTeto = (t: unknown) => JSON.stringify(Object.entries((t && typeof t === 'object' ? t : {}) as Record<string, unknown>).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)))
+
+/**
+ * R12 (fail closed): the agent's grant write checked whole against the live run, plan and ceiling; the normalized
+ * document is the one stored. Refuses with the first motivo. `confirmado`: the scope the person confirmed on the
+ * card; the written scope must equal it (`ate` within ±10 min).
+ */
+export function validarConcessao(data: unknown, i: { runId: string | null; perfil: Perfil | null | undefined; plano: Plano | null; agora: number; confirmado?: EscopoContinuo }): { ok: true; doc: ContinuoDoc } | { ok: false; motivo: string } {
+  const no = (motivo: string) => ({ ok: false as const, motivo })
+  const d = (data && typeof data === 'object' ? data : null) as Record<string, any> | null
+  const a = d?.autorizacao && typeof d.autorizacao === 'object' ? (d.autorizacao as Record<string, any>) : null
+  if (!d || !a) return no('pedido sem liberação')
+  if (!i.runId || d.runId !== i.runId) return no('liberação de outra execução')
+  if (d.modo !== 'continuo') return no('a liberação grava o modo contínuo')
+  if (a.continuoHabilitado !== true) return no('liberação sem @NOVARC-CONTINUO.md de quem liberou')
+  const by = typeof a.by === 'string' ? a.by.trim() : ''
+  if (!by || /@|local_/.test(by)) return no('quem liberou vai pelo nome, nunca id ou e-mail')
+  const at = typeof a.at === 'string' && !Number.isNaN(Date.parse(a.at)) ? a.at : null
+  if (!at) return no('liberação sem hora')
+  if (Math.abs(Date.parse(at) - i.agora) > 10 * 60_000) return no('hora da liberação fora do turno')
+  const e = (a.escopo && typeof a.escopo === 'object' ? a.escopo : {}) as Record<string, any>
+  const conjuntos = Array.isArray(e.conjuntos) ? e.conjuntos.map(String) : []
+  const fases = Array.isArray(e.fases) ? e.fases.map(String) : []
+  const doPlano = i.plano?.conjuntos ?? []
+  if (!conjuntos.length) return no('escopo sem conjunto')
+  const fora = conjuntos.find(c => !doPlano.some(p => p.id === c))
+  if (fora) return no(`${fora} fora do planejamento`)
+  const faseFora = fases.find(f => !doPlano.some(p => p.fase === f))
+  if (faseFora) return no(`fase ${faseFora} fora do planejamento`)
+  const fim = typeof e.ate === 'string' ? Date.parse(e.ate) : NaN
+  if (Number.isNaN(fim)) return no('liberação sem hora para acabar')
+  if (fim <= i.agora) return no('liberação já vencida')
+  if (fim - i.agora > DIA) return no('liberação acima de 24 h')
+  const escopo: EscopoContinuo = { conjuntos, fases, merge: e.merge === true, migracoes: e.migracoes === true, deploys: e.deploys === true, ate: e.ate }
+  const acima = acimaDoTeto(escopo, i.perfil?.teto)
+  if (acima) return no(acima)
+  if (chaveTeto(a.teto) !== chaveTeto(i.perfil!.teto)) return no('teto copiado diferente do perfil')
+  if (i.confirmado && !mesmoEscopo(escopo, i.confirmado)) return no('escopo diferente do confirmado no cartão')
+  return { ok: true, doc: { runId: i.runId, modo: 'continuo', modoBy: by, modoAt: at, autorizacao: { by, at, escopo, teto: i.perfil!.teto!, continuoHabilitado: true } } }
+}

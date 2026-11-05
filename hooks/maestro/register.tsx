@@ -77,6 +77,12 @@ import {
 // C05-S02: milestone ownership by phase and the session family
 import { NOTAS_DOBRADAS, aceitos, chaveDe, emWip, familia, type LinhaFamilia, type SessaoApp } from './execucao'
 import { decidirMarco, posseDaSpec } from './logic'
+// C06-S01: run mode (Manual, Contínuo, Pausado) of config/continuo
+import { acimaDoTeto, autorizado, camposReinicio, escopoSugerido, linhaEscopoCartao, modoDe, mudarModo, nomePerfil, resumoEscopo, seloModo, validarConcessao, type ContinuoDoc, type EscopoContinuo, type ModoContinuo } from './logic'
+import { ATALHOS, cartaoLiberacao, cartaoRecado, cartoesParada, faixaModo } from './continuo-ui'
+import { episodiosParada, paradaObrigatoria, type Parada, type TipoParada } from './execucao'
+import { abaConfiguracao } from './configuracao-aba'
+import { NOVARC_CONTINUO_MD, NOVARC_MD, comImport, importsRegras, regrasNoInicio, semImports } from './regras'
 
 const PANE = 'novarc-maestro'
 const CTX = { plugin: 'novarc', key: 'ctx' } as const
@@ -114,7 +120,13 @@ const FAMILIA = { plugin: 'novarc', key: 'maestroFamilia' } as const
 // C05-S01: the orchestrator's local copy of each `GO <C> inicio` it sent (never a collection, R30), and the selected set.
 const GOS = { plugin: 'novarc', key: 'maestroGos' } as const
 const SEL = { plugin: 'novarc', key: 'maestroSelConjunto' } as const
+// C06-S01: the config/continuo cache (R42), the pane's own card/recado flags, and the stops (Task 18)
+const CONTINUO = { plugin: 'novarc', key: 'maestroContinuo' } as const
+const CONTINUO_UI = { plugin: 'novarc', key: 'maestroContinuoUi' } as const
+const PARADAS = { plugin: 'novarc', key: 'maestroParadas' } as const
 const NUNCA = 'maestro-nunca'
+// C06-S01: set only after a first install wrote NOVARC.md and the import line (R24: an interrupted install retries)
+const REGRAS_INSTALADAS = 'maestro-regras-instaladas'
 
 type Leitura = { at: number | null; falhou: boolean; fonte: 'planejamento' | 'registro' | null; falhas: { planejamento: boolean; registro: boolean } }
 const LEITURA_PADRAO = (): Leitura => ({ at: null, falhou: false, fonte: null, falhas: { planejamento: false, registro: false } })
@@ -149,6 +161,9 @@ const PADRAO: Record<string, () => unknown> = {
   maestroFamilia: () => null,
   maestroGos: () => ({}),
   maestroSelConjunto: () => null,
+  maestroContinuo: () => ({ doc: null, versao: null, at: null }),
+  maestroContinuoUi: () => ({ cartao: false, erro: null, recado: false, pedidoEm: null }),
+  maestroParadas: () => ({ abertas: [], tratadas: {}, pendentes: {}, pausaPendente: null }),
 }
 const objeto = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -188,6 +203,9 @@ async function cru($: any, k: string): Promise<unknown> {
     case 'maestroFamilia': return (await $.state.get(FAMILIA)).value
     case 'maestroGos': return (await $.state.get(GOS)).value
     case 'maestroSelConjunto': return (await $.state.get(SEL)).value
+    case 'maestroContinuo': return (await $.state.get(CONTINUO)).value
+    case 'maestroContinuoUi': return (await $.state.get(CONTINUO_UI)).value
+    case 'maestroParadas': return (await $.state.get(PARADAS)).value
     default: throw new Error(`ler: chave desconhecida ${k}`)
   }
 }
@@ -198,6 +216,17 @@ export function mesclar(chave: string, lido: unknown): any {
   if (lido === null || lido === undefined) return def
   if (chave === 'maestroOutras') return Array.isArray(lido) ? lido : null
   if (chave === 'maestroPendencias') return objeto(lido) ? { ...lido, falhas: { plano: false, repo: false, ledger: false, ...(lido as any).falhas } } : null
+  // R56: each stop field only in its own shape
+  if (chave === 'maestroParadas') {
+    const d = def as Record<string, any>
+    if (!objeto(lido)) return d
+    return {
+      abertas: Array.isArray(lido.abertas) ? lido.abertas : d.abertas,
+      tratadas: objeto(lido.tratadas) ? lido.tratadas : d.tratadas,
+      pendentes: objeto(lido.pendentes) ? lido.pendentes : d.pendentes,
+      pausaPendente: objeto(lido.pausaPendente) || lido.pausaPendente === null ? lido.pausaPendente : d.pausaPendente,
+    }
+  }
   if (def === null) return lido
   if (Array.isArray(def)) return Array.isArray(lido) ? lido : def
   if (objeto(def)) {
@@ -226,9 +255,9 @@ export async function aoFecharPainel($: any, origem: string): Promise<void> {
 }
 
 /** The bell count (R25, R53): this session's alerts plus, in the orchestrator, divergences, the pending counter and `nEnvios` unconfirmed directives. */
-export function contaSino(papel: string | null, al: Pick<Alertas, 'lista'> | null, pend: EstadoPendencias | null, nEnvios = 0): number {
+export function contaSino(papel: string | null, al: Pick<Alertas, 'lista'> | null, pend: EstadoPendencias | null, nEnvios = 0, nParadas = 0): number {
   const n = al?.lista.length ?? 0
-  return papel === 'orquestrador' ? n + nEnvios + (pend ? pend.divergencias.length + (pend.contador?.n ?? 0) : 0) : n
+  return papel === 'orquestrador' ? n + nEnvios + nParadas + (pend ? pend.divergencias.length + (pend.contador?.n ?? 0) : 0) : n
 }
 
 /** A send still `enviando` after this long has lost its answer (a poll tick is 60 s; a send itself takes seconds). */
@@ -257,6 +286,9 @@ const LIMITE_CHAMADA_MS = 20_000
 
 /** One planning tool call; a call with no answer in 20 s throws, so a hung call never wedges `refrescando` or the nudge. */
 export async function chamar($: any, input: Record<string, unknown>): Promise<string> {
+  // C06-S01: the grant guard lets through a config/continuo write only when it is this call's own payload
+  const propria = input.collection === 'config' && input.doc_id === 'continuo' && input.data !== undefined ? JSON.stringify(input.data) : null
+  if (propria !== null) escritasProprias.set(propria, (escritasProprias.get(propria) ?? 0) + 1)
   let timer: { cancel: () => void } | null = null
   const limite = new Promise<never>((_, falha) => {
     try {
@@ -271,8 +303,16 @@ export async function chamar($: any, input: Record<string, unknown>): Promise<st
     return String(r.text ?? '')
   } finally {
     ;(timer as { cancel: () => void } | null)?.cancel()
+    if (propria !== null) {
+      const n = (escritasProprias.get(propria) ?? 1) - 1
+      if (n > 0) escritasProprias.set(propria, n)
+      else escritasProprias.delete(propria)
+    }
   }
 }
+
+// C06-S01: JSON of the mod's own config/continuo payloads in flight (a count per payload)
+const escritasProprias = new Map<string, number>()
 
 /**
  * Reads the artifact url from <base>/<codigo>/artefato.txt under the session cwd, .novarc/specs first and the legacy
@@ -526,6 +566,13 @@ async function atualizar($: any, doTimer = false): Promise<void> {
         await logarUmaVez($, 'orquestracao', err)
       }
     }
+    if (!velho(g) && ultimoExec?.papel === 'orquestrador') {
+      try {
+        await olharParadas($, true) // C06-S01: the stops of this read; a PARADA row past its 3 tick retries goes once per poll
+      } catch (err) {
+        await logarUmaVez($, 'paradas', err)
+      }
+    }
     if (!velho(g)) {
       try {
         await refrescarPendencias($, g)
@@ -582,7 +629,11 @@ async function refrescar($: any, g: number): Promise<void> {
     const dExec = await lerColecao($, c.artefato, 'execucao')
     // R44 (R3-5): a set or spec session reads no `config` here; it keeps the last one (refrescarBanco reads it)
     const dConfig = c.papel === 'orquestrador' ? await lerColecao($, c.artefato, 'config') : (banco?.config ?? {})
-    if (!velho(g)) banco = { specs: dSpecs, execucao: dExec, config: dConfig, at: Date.now() }
+    if (!velho(g)) {
+      if (c.papel === 'orquestrador') lidoContinuo(dConfig)
+      banco = { specs: dSpecs, execucao: dExec, config: dConfig, at: Date.now() }
+      await espelharContinuo($)
+    }
     if (!velho(g)) await marcarLeitura($, 'planejamento', true)
     const dados = (d: Record<string, DbDoc>) => Object.fromEntries(Object.entries(d).map(([id, x]) => [id, x.data]))
     const specs = dados(dSpecs) as Record<string, SpecDoc>
@@ -1244,7 +1295,9 @@ async function refrescarBanco($: any): Promise<void> {
     }
     if (velho(g)) return
     // no poll has read `specs` yet: an empty map marked parcial, so the pendencias counter does not read it as "no specs"
+    lidoContinuo(config)
     banco = banco ? { ...banco, execucao, config, at: Date.now() } : { specs: {}, execucao, config, at: Date.now(), parcial: true }
+    await espelharContinuo($)
     if ((await exec($)).papel === 'conjunto' && !velho(g)) await $.state.set(ALERTAS, { ...(await alertas($)), limiares: limiaresDoBanco() })
   } catch {
     // the next directive or restart tries again
@@ -1324,6 +1377,10 @@ async function consultarAuditoria($: any, url: string): Promise<boolean> {
     const t = String(r.text ?? '')
     for (const d of lerDocs(t)) {
       const x = d.data as Partial<AuditoriaDoc>
+      // C06-S01: a PARADA row (estado null) marks its stop episode handled
+      const tipo = x.acao === 'PARADA' ? String(x.motivo ?? '').match(/^parada:(\S+)/)?.[1] : undefined
+      const t = Date.parse(String(x.at ?? ''))
+      if (tipo && x.alvo && Number.isFinite(t)) paradasSeed[`${x.alvo}|${tipo}`] = Math.max(paradasSeed[`${x.alvo}|${tipo}`] ?? t, t)
       if (!x.estado) continue
       diretivasFeitas.add(d.id)
       envios[d.id] ??= { acao: String(x.acao ?? ''), alvo: String(x.alvo ?? ''), at: Date.parse(String(x.at ?? '')) || 0, estado: x.estado }
@@ -1654,6 +1711,10 @@ async function umNudge($: any): Promise<void> {
   const g = geracao
   const ex = ultimoExec ?? (await exec($))
   if (ex.papel !== 'orquestrador') return
+  await restaurarParadas($, runIdParadas(ex)) // C06-S01: a stop pause left pending by the last process shuts the gate first
+  // a stop being handled now pauses before this nudge reads the gate (a report wake-up can land mid-handling)
+  if (paradasEmCurso) await paradasEmCurso.catch(() => {})
+  if (velho(g)) return
   // R18: Pausado (C06-S01) sends nothing. With an artifact and no config read yet (a reload before the first poll),
   // one `config` list decides; a failed read sends nothing (stricter). Reports stay on disk and wait.
   // That read is the gate's alone (`configGate`): `banco` stays the poll's, so no other reader sees a partial db.
@@ -1667,7 +1728,8 @@ async function umNudge($: any): Promise<void> {
       return
     }
   }
-  if (daBanco<{ modo?: string }>((banco?.config ?? configGate)?.continuo)?.modo === 'pausado') return
+  // C06-S01 Task 11: a pause whose write has not reached the db still shuts the gate
+  if (pausado()) return
   // ponytail: no read-only gate for a hand-over yet; C10-S01 defines `config/dono` and adds it here
   const runId = runIdAtual(ex)
   if (!runId) return
@@ -1702,8 +1764,12 @@ async function umNudge($: any): Promise<void> {
     }
   }
   pedidosDeSlot($, agora, al.limiares.lockOrfao)
-  for (const p of todas) if (!velho(g) && !diretivasFeitas.has(p.chave)) await enviar($, p, agora)
+  // a stop or a Pausado press that landed while this nudge awaited the seed, the ledger or the disk sends nothing
+  for (const p of todas) if (!velho(g) && !pausado() && !diretivasFeitas.has(p.chave)) await enviar($, p, agora)
 }
+
+/** The R18/R29 gate: a local pause, or the cached config/continuo reading Pausado. */
+const pausado = () => !!pausaLocal || daBanco<{ modo?: string }>((banco?.config ?? configGate)?.continuo)?.modo === 'pausado'
 
 /**
  * A request waiting in the orchestrator's own slot queue with no grant of its kind, past the orphan threshold (R14,
@@ -2120,9 +2186,440 @@ async function gravarOrquestracao($: any, g: number): Promise<void> {
   }
   const semHora = (o: ReturnType<typeof campos>) => JSON.stringify({ ...o, at: null, iniciadaEm: null, proposta: o.proposta ? { ...o.proposta, at: null } : null })
   const hash = semHora(campos(atual))
-  if (hash === hashOrq || velho(g)) return
-  const r = await gravarFixado($, c.artefato, 'config', 'orquestracao', campos, { versao: atual?.version ?? null, doc: atual })
-  if (!velho(g) && r.r !== 'falhou') hashOrq = hash
+  if (hash !== hashOrq && !velho(g)) {
+    const r = await gravarFixado($, c.artefato, 'config', 'orquestracao', campos, { versao: atual?.version ?? null, doc: atual })
+    if (!velho(g) && r.r !== 'falhou') {
+      hashOrq = hash
+      // runIdAtual reads this: the new run id holds at once, not after the next refrescar
+      if (banco) banco.config = { ...banco.config, orquestracao: { id: 'orquestracao', version: r.versao ?? (atual?.version ?? 0) + 1, data: campos(atual) } }
+    }
+  }
+  // R14: a config/continuo of another run goes back to manual with no grant (the hash gate above does not apply, so a
+  // failed reset is retried on the next poll); an absent document is never created here
+  const cont = banco?.config?.continuo
+  // a doc with no runId is no other run's (it keeps its mode, modoDe)
+  const doRun = daBanco<ContinuoDoc>(cont)?.runId
+  if (!cont || velho(g) || !doRun || doRun === runId) return
+  // a pause still latched (its write failed) stays a pause: the reset is the mod's write, never the person's
+  const novo: ContinuoDoc = pausaLocal
+    ? { ...camposReinicio(runId, quem ?? 'Maestro', pausaLocal.at), modo: 'pausado' }
+    : camposReinicio(runId, 'Maestro', Date.now())
+  const r = await gravarFixado($, c.artefato, 'config', 'continuo', () => ({ ...novo }), { versao: cont.version, doc: cont, aceita: d => !!d.data.runId && d.data.runId !== runId })
+  if (velho(g) || (r.r !== 'gravado' && r.r !== 'criado')) return
+  guardarContinuo(novo, r.versao)
+  await espelharContinuo($)
+}
+
+// ---- C06-S01: the run mode. `banco.config.continuo` is the mode the gate and the drawing read; the mod's own writes
+// update it at once (guardarContinuo). A pause is local first: `pausaLocal` keeps the gate shut until the db shows it.
+
+export type MaestroContinuo = { doc: ContinuoDoc | null; versao: number | null; at: number | null }
+export type MaestroContinuoUi = { cartao: boolean; erro: string | null; recado: boolean; pedidoEm: number | null }
+
+let pausaLocal: { at: number } | null = null
+// R12: the ONE-SHOT grant token, armed only by the card's liberar press (R9: the card is the confirmation).
+// Cleared by every other submitted turn (person, mod or plugin), any received message, the session end, the first
+// grant write attempt and 10 min.
+// `texto`: the card's own submit, the one prompt.submit that keeps it (whenever the host dispatches it)
+// `escopo`: the scope the card showed and the person confirmed (I2: the write must equal it)
+let concessao: { origem: 'cartao'; at: number; texto: string; escopo: EscopoContinuo } | null = null
+const VALIDADE_CONCESSAO = 10 * 60_000
+// the token's clock is $.clock (tests step it)
+const relogio = async ($: any): Promise<number> => Number(await $.clock.now()) || Date.now()
+const GRANT = /\borquestra\s+cont[ií]nuo\b/i
+// JSON of the last value copied to maestroContinuo
+let continuoChave: string | null = null
+
+/** The snapshot of config/continuo after one of the mod's own writes (or before a pause write). */
+function guardarContinuo(doc: ContinuoDoc, versao: number | null): void {
+  const velhoDoc = (banco?.config ?? configGate)?.continuo
+  const d: DbDoc = { id: 'continuo', data: doc as unknown as Record<string, unknown>, version: versao ?? velhoDoc?.version ?? 0 }
+  // banco stays the poll's (no partial banco is made here): without one the gate's own config holds it
+  if (banco) banco.config = { ...banco.config, continuo: d }
+  else configGate = { ...(configGate ?? {}), continuo: d }
+}
+
+/** A fresh db read of config/continuo: a pause the db now holds releases the local latch. */
+function lidoContinuo(config: Record<string, DbDoc>): void {
+  const d = daBanco<ContinuoDoc>(config.continuo)
+  if (pausaLocal && d?.modo === 'pausado' && Date.parse(d.modoAt) >= pausaLocal.at) pausaLocal = null
+}
+
+/** Copies the cached config/continuo (data + version) into `maestroContinuo` when it changed; no tool call (R42). */
+async function espelharContinuo($: any): Promise<void> {
+  const d = (banco?.config ?? configGate)?.continuo
+  let doc = daBanco<ContinuoDoc>(d)
+  if (pausaLocal) {
+    const modoAt = new Date(pausaLocal.at).toISOString()
+    doc = doc ? { ...doc, modo: 'pausado' } : { runId: runIdAtual(ultimoExec ?? VAZIA) ?? '', modo: 'pausado', modoBy: quem ?? '', modoAt, autorizacao: null }
+  }
+  const versao = d?.version ?? null
+  const chave = JSON.stringify([doc, versao])
+  if (chave === continuoChave) return
+  continuoChave = chave
+  await $.state.set(CONTINUO, { doc, versao, at: Date.now() })
+  // R10: the grant of this run is recorded: the authorization card closes
+  if (doc?.autorizacao && doc.modo === 'continuo' && doc.runId === runIdAtual(ultimoExec ?? (await exec($)))) {
+    const ui = (await ler($, 'maestroContinuoUi')) as MaestroContinuoUi
+    if (ui.cartao || ui.pedidoEm !== null) await $.state.set(CONTINUO_UI, { ...ui, cartao: false, erro: null, pedidoEm: null })
+  }
+}
+
+// The prompt section novarc:maestro-modo, memoized on the cached doc
+let modoTextoChave: string | null = null
+let modoTexto = ''
+
+/** The line of the novarc:maestro-modo section (R41). */
+export function textoModo(modo: ModoContinuo, escopo: EscopoContinuo | null, projeto: string): string {
+  if (modo === 'continuo') return escopo ? `Maestro: modo contínuo · escopo ${resumoEscopo(escopo, projeto)}` : 'Maestro: modo contínuo'
+  if (modo === 'pausado') return 'Maestro: modo pausado · nada sai sozinho · retomar volta ao escopo de antes'
+  return 'Maestro: modo manual · o orquestrador age quando você fala com ele na conversa'
+}
+
+/**
+ * R12: why the agent's grant write is refused (the motivo), else the validated document to store. Order: role,
+ * subagent, the person's turn (token), @NOVARC-CONTINUO.md on this machine, a whole document, `validarConcessao`.
+ */
+async function recusaConcessao($: any, x: any, tok: typeof concessao): Promise<string | ContinuoDoc> {
+  const ex = await exec($)
+  if (ex.papel !== 'orquestrador') return 'só na sessão orquestradora'
+  if (x.agentId) return 'só no turno principal de quem conduz'
+  if (!tok || (await relogio($)) - tok.at > VALIDADE_CONCESSAO) return 'a liberação só vale no turno de quem conduz'
+  if (!(await lerRegrasLocais($)).continuo) return 'sem @NOVARC-CONTINUO.md no seu CLAUDE.md; quem pode liberar roda /maestro continuo habilitar'
+  const d = x.data
+  const a = d.autorizacao
+  const inteira = (o: any, ks: string[]) => !!o && typeof o === 'object' && ks.every(k => k in o)
+  if (x.action === 'update' && !(inteira(d, ['runId', 'modo']) && inteira(a, ['by', 'at', 'escopo', 'teto', 'continuoHabilitado']) && inteira(a.escopo, ['conjuntos', 'fases', 'merge', 'migracoes', 'deploys', 'ate'])))
+    return 'grave a liberação inteira'
+  const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+  // I1: a set over an existing doc is pinned to the version read, so it never overwrites a pause that landed since
+  if (x.action === 'set' && x.if_version == null) {
+    if (!banco?.config && !configGate && c?.artefato) {
+      configGate = await lerColecao($, c.artefato, 'config')
+      lidoContinuo(configGate)
+    }
+    if ((banco?.config ?? configGate)?.continuo) return 'grave com if_version da versão lida'
+  }
+  const plano = (c?.plano ?? null) as Plano | null
+  // I2: the written scope is the one the card showed when the person pressed liberar
+  const v = validarConcessao(d, { runId: runIdAtual(ex), perfil: plano?.execucao?.perfil, plano, agora: Date.now(), confirmado: tok.escopo })
+  return v.ok ? v.doc : v.motivo
+}
+
+const FORA_PAUSAR = 'Pausar só na sessão orquestradora.'
+const MODO_DO_MAESTRO = 'Modo contínuo não liberado: o modo é do Maestro; use os botões ou /maestro pausar|retomar.'
+const FORA_RETOMAR = 'Retomar só na sessão orquestradora.'
+
+// I5: the claude-artifacts connector writes the same db: the mod never uses it, so any write of config/continuo by it
+// is refused (db_write `ops[].path`, db_str_replace `path`; either shape, collection/doc_id read too)
+async function pelaConexao($: any, e: any, next: any): Promise<any> {
+  const x = e as any
+  const doc = (o: any) => {
+    const p = typeof o?.path === 'string' ? o.path.replace(/^\/+|\/+$/g, '') : ''
+    return p === 'config/continuo' || (o?.collection === 'config' && (o?.doc_id ?? o?.id) === 'continuo')
+  }
+  // either view may be the one the tool runs (a stray `input` beside the flat fields included)
+  const nomeia = (o: any) => !!o && typeof o === 'object' && (doc(o) || (Array.isArray(o.ops) && o.ops.some(doc)))
+  return nomeia(x) || nomeia(x.input) ? { deny: MODO_DO_MAESTRO } : next(e)
+}
+
+/**
+ * `/maestro pausar|retomar` and the mode Buttons (R28, R37-R40): one pinned write of modo/modoBy/modoAt on
+ * config/continuo and one MODO audit row; returns the reply. A pause shuts the local gate before the write.
+ */
+async function mudarModoAgora($: any, pedido: 'pausar' | 'retomar' | 'manual'): Promise<string> {
+  const ex = await exec($)
+  if (ex.papel !== 'orquestrador') return pedido === 'retomar' ? FORA_RETOMAR : FORA_PAUSAR
+  const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+  if (!c?.artefato) return 'Sem planejamento: o modo fica manual.'
+  quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
+  const runId = runIdAtual(ex)
+  // before the first poll (a reload): one config read, the gate's own, as umNudge does
+  if (!banco?.config && !configGate) {
+    try {
+      configGate = await lerColecao($, c.artefato, 'config')
+      lidoContinuo(configGate)
+    } catch {
+      // unread: the write below re-reads the document
+    }
+  }
+  const agora = Date.now()
+  const atual = (banco?.config ?? configGate)?.continuo ?? null
+  const doc = daBanco<ContinuoDoc>(atual ?? undefined)
+  const r = mudarModo(doc, pedido, { by: quem, agora, runId, perfil: (c.plano as Plano | null)?.execucao?.perfil })
+  if (!r.ok) return r.texto
+  const daRun = !!doc && doc.runId === runId
+  // another run's document never keeps its grant under this run's id
+  const local: ContinuoDoc = daRun ? { ...doc!, ...r.campos } : { ...camposReinicio(runId ?? '', quem, agora), ...r.campos }
+  const auditarModo = () => auditar($, { acao: 'MODO', alvo: 'continuo', motivo: `${pedido} pela pessoa`, regra: 'd-continuo-por-orquestrador', linha: null, origem: 'maestro', antes: r.antes, depois: r.campos.modo })
+  if (pedido === 'pausar') {
+    pausaLocal = { at: agora }
+    guardarContinuo(local, atual?.version ?? null)
+    await espelharParadas($, runIdParadas(ex)) // the latch survives a restart (Task 18)
+    await espelharContinuo($)
+    await prepararFaixa($, ex)
+  }
+  let g: Gravacao
+  // what the db holds after the write, for the snapshot (the cached grant only when the write kept it)
+  let gravado: ContinuoDoc = local
+  try {
+    // `local` is the snapshot only: a create or another run's doc gets a grant-less document, never the cached grant
+    const by = quem
+    g = await gravarFixado($, c.artefato, 'config', 'continuo', d => {
+      const dd = daBanco<ContinuoDoc>(d ?? undefined)
+      gravado = dd?.runId === runId ? { ...dd, ...r.campos } : { ...camposReinicio(runId ?? '', by, agora), ...r.campos }
+      return dd?.runId === runId ? { ...r.campos } : { ...gravado }
+    }, { versao: atual?.version ?? null, doc: atual })
+  } catch (err) {
+    g = { r: 'falhou', versao: null, erro: (err as Error)?.message ?? String(err) }
+  }
+  if (g.r === 'falhou') {
+    if (pedido !== 'pausar') return `Não consegui gravar o modo no planejamento: ${g.erro}`
+    await auditarModo() // the mode did change here: the gate is shut
+    return `Pausado nesta sessão; não consegui gravar no planejamento: ${g.erro}`
+  }
+  if (pedido !== 'pausar') pausaLocal = null
+  // the person's own mode write supersedes a stop pause still pending
+  paradas = { ...paradas, pausaPendente: null }
+  await espelharParadas($, runIdParadas(ex))
+  guardarContinuo(gravado, g.versao)
+  await espelharContinuo($)
+  await prepararFaixa($, ex)
+  await auditarModo()
+  return r.texto
+}
+
+// ---- C06-S01 Task 17-18: the mandatory stops (stop-alerts). The module copy is the single writer of maestroParadas;
+// {abertas, tratadas, pendentes, pausaPendente, pausaLocal} is mirrored to the machine store, which outlives the session.
+
+type ParadaAberta = Parada & { pausou: boolean }
+type EstadoParadas = { abertas: ParadaAberta[]; tratadas: Record<string, number>; pendentes: Record<string, { doc: AuditoriaDoc; falhas: number }>; pausaPendente: { at: number; modoAt: string } | null }
+const PARADAS_VAZIAS = (): EstadoParadas => ({ abertas: [], tratadas: {}, pendentes: {}, pausaPendente: null })
+// the stop lines received since the last db read taken after them (Task 17)
+let paradasRecebidas: { conjunto: string; tipo: TipoParada; motivo: string; at: string }[] = []
+let paradas: EstadoParadas = PARADAS_VAZIAS()
+let paradasRestauro: { runId: string; p: Promise<void> } | null = null
+// `${C}|${tipo}` → handled time, from the PARADA rows of auditoria (consultarAuditoria)
+let paradasSeed: Record<string, number> = {}
+let paradasEspelho: string | null = null
+let paradasEmCurso: Promise<void> | null = null
+let paradasDeNovo = false
+let paradasPorPoll = false
+const chaveStoreParadas = (runId: string) => `maestro-paradas-${runId}`
+const maxPorChave = (...rs: Record<string, number>[]) => {
+  const out: Record<string, number> = {}
+  for (const r of rs) for (const [k, v] of Object.entries(r)) if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.max(out[k] ?? v, v)
+  return out
+}
+
+/** Once per orchestrator session, before any gate: state and the store mirror merge into the module copy; a pending pause shuts the gate. */
+function restaurarParadas($: any, runId: string | null): Promise<void> {
+  if (!runId) return Promise.resolve()
+  // one restore per run id, shared: a second caller waits for the first one's pausaLocal. Another run's id drops the
+  // old run's copy (never mirrored under the new key) and restores the new key alone.
+  if (paradasRestauro?.runId !== runId) {
+    const troca = paradasRestauro !== null
+    if (troca) {
+      paradas = PARADAS_VAZIAS()
+      paradasEspelho = null
+      paradasSeed = {}
+    }
+    const p = restaurarAgora($, runId, troca)
+    paradasRestauro = { runId, p }
+    // a failed restore is not kept: the next caller retries instead of rethrowing for the whole session
+    p.catch(() => {
+      if (paradasRestauro?.p === p) paradasRestauro = null
+    })
+  }
+  return paradasRestauro.p
+}
+
+/** The run id the stops are kept under: the orchestrator's run dir, else the config/orquestracao this session read. */
+function runIdParadas(ex: Execucao): string | null {
+  return runIdDoDir(ex.ledgerDir) ?? (banco?.config?.orquestracao ? runIdAtual(ex) : null)
+}
+
+async function restaurarAgora($: any, runId: string, troca: boolean): Promise<void> {
+  // after a run switch the session state still holds the old run: only the new key counts
+  const st = troca ? PARADAS_VAZIAS() : (mesclar('maestroParadas', await cru($, 'maestroParadas')) as EstadoParadas)
+  let bruto: any = null
+  try {
+    bruto = await $.store.get(chaveStoreParadas(runId))
+  } catch {
+    // no mirror: state alone
+  }
+  const sto = mesclar('maestroParadas', bruto) as EstadoParadas
+  paradas = {
+    abertas: paradas.abertas.length ? paradas.abertas : st.abertas.length ? st.abertas : sto.abertas,
+    tratadas: maxPorChave(sto.tratadas, st.tratadas, paradas.tratadas),
+    pendentes: { ...sto.pendentes, ...st.pendentes, ...paradas.pendentes },
+    pausaPendente: paradas.pausaPendente ?? st.pausaPendente ?? sto.pausaPendente,
+  }
+  const pl = objeto(bruto) && objeto(bruto.pausaLocal) && typeof bruto.pausaLocal.at === 'number' ? { at: bruto.pausaLocal.at as number } : null
+  pausaLocal ??= paradas.pausaPendente ? { at: paradas.pausaPendente.at } : pl
+}
+
+/** Writes the module copy to state and the store mirror when it changed; restores first, so a write never drops the mirror. */
+async function espelharParadas($: any, runId: string | null): Promise<void> {
+  await restaurarParadas($, runId)
+  const v: EstadoParadas = { ...paradas }
+  const s = JSON.stringify({ ...v, pausaLocal })
+  if (s === paradasEspelho) return
+  paradasEspelho = s
+  await $.state.set(PARADAS, v)
+  if (!runId) return
+  try {
+    await $.store.set(chaveStoreParadas(runId), JSON.parse(s))
+  } catch {
+    // the state copy holds until the next write
+  }
+}
+
+/** The stop pause (R31): pinned modo/modoBy/modoAt on this run's Contínuo document; written, already left, or kept pending. */
+async function gravarPausaParada($: any, url: string, runId: string, pp: { at: number; modoAt: string }): Promise<void> {
+  const campos = { modo: 'pausado' as const, modoBy: 'Maestro', modoAt: pp.modoAt }
+  let r: Gravacao
+  try {
+    // no cached doc: the snapshot already reads pausado, so the first attempt reads the stored one
+    r = await gravarFixado($, url, 'config', 'continuo', () => ({ ...campos }), {
+      criar: { ...camposReinicio(runId, 'Maestro', pp.at), ...campos },
+      aceita: d => (!d.data.runId || d.data.runId === runId) && d.data.modo === 'continuo',
+    })
+  } catch (err) {
+    r = { r: 'falhou', versao: null, erro: String(err) }
+  }
+  if (r.r === 'falhou') return
+  paradas = { ...paradas, pausaPendente: null }
+  const cur = daBanco<ContinuoDoc>((banco?.config ?? configGate)?.continuo)
+  if (r.r !== 'ja-estava' && cur) guardarContinuo({ ...cur, ...campos }, r.versao)
+}
+
+/** The PARADA rows waiting for their write (R31, R34): each tick below 3 failures, every one on a poll; never abandoned. */
+async function gravarLinhasParada($: any, url: string, porPoll: boolean): Promise<void> {
+  for (const [id, x] of Object.entries(paradas.pendentes)) {
+    if (!porPoll && x.falhas >= 3) continue
+    let r: any = null
+    try {
+      r = await $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection: 'auditoria', doc_id: id, data: x.doc })
+    } catch {
+      // a failed call: counted below
+    }
+    const { [id]: _feito, ...resto } = paradas.pendentes
+    if ((r && r.deny === undefined && !r.isError) || existe(String(r?.deny ?? r?.text ?? ''))) {
+      paradas = { ...paradas, pendentes: resto }
+      continue
+    }
+    const falhas = x.falhas + 1
+    paradas = { ...paradas, pendentes: { ...resto, [id]: { ...x, falhas } } }
+    if (falhas === 3) await logarUmaVez($, `linha PARADA ${id} (tenta de novo a cada leitura)`, String(r?.deny ?? r?.text ?? 'falhou'))
+  }
+}
+
+/**
+ * stop-alerts (jobs.md, R31-R35): every new stop episode, from a received line or a `parada:*` db key, handled once with
+ * no agent turn: (1) in Contínuo the pause, local first and never waiting on the audit; (2) the handled mark and one
+ * toast; (3) the PARADA row. Nothing leaves this session and nothing is reverted.
+ */
+async function alertasDeParada($: any, porPoll: boolean): Promise<void> {
+  const g = geracao
+  const ex = ultimoExec ?? (await exec($))
+  if (ex.papel !== 'orquestrador') return
+  const runId = runIdParadas(ex)
+  await restaurarParadas($, runId)
+  const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+  const url = c?.artefato ?? null
+  if (url) await semearDiretivas($).catch(() => false) // the PARADA rows of auditoria seed the handled episodes
+  if (velho(g)) return
+  // C1: whether a stop pauses depends on the mode: with nothing cached, the gate's own config read first; a failed
+  // read leaves every new stop for the next run (none is consumed as Manual)
+  if (url && !banco?.config && !configGate) {
+    try {
+      const config = await lerColecao($, url, 'config')
+      if (velho(g)) return
+      configGate = config
+      lidoContinuo(config)
+    } catch {
+      return
+    }
+  }
+  paradas = { ...paradas, tratadas: maxPorChave(paradas.tratadas, paradasSeed) }
+  if (paradas.pausaPendente && url && runId) await gravarPausaParada($, url, runId, paradas.pausaPendente)
+  const dados = (d: Record<string, DbDoc> | undefined) => Object.fromEntries(Object.entries(d ?? {}).map(([id, x]) => [id, x.data])) as Record<string, any>
+  const ep = episodiosParada({ recebidas: paradasRecebidas, execucao: dados(banco?.execucao), specs: dados(banco?.specs), tratadas: paradas.tratadas, bancoAt: banco?.at ?? null })
+  const plano = (c?.plano ?? null) as Plano | null
+  const projeto = plano?.projeto?.nomeCurto ?? (cwdSessao.split(/[\\/]/).filter(Boolean).pop() || 'Maestro')
+  const pausouAgora = new Map<string, boolean>()
+  quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
+  for (const p of [...ep.novas].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+    if (velho(g)) return
+    const agora = Date.now()
+    // the ruling's wall-clock time for an at-less db row; the episode's own at otherwise
+    const tratadoEm = Date.parse(p.at) || agora
+    const motivo = `parada:${p.tipo} ${p.motivo}`
+    const cache = (banco?.config ?? configGate)?.continuo
+    const doc = daBanco<ContinuoDoc>(cache)
+    const pausou = !pausaLocal && modoDe(doc, runId) === 'continuo'
+    if (pausou && doc) {
+      // (1) the gate shuts this tick, before the write; a failed write stays pending and is retried every tick
+      const modoAt = new Date(agora).toISOString()
+      pausaLocal = { at: agora }
+      guardarContinuo({ ...doc, modo: 'pausado', modoBy: 'Maestro', modoAt }, cache?.version ?? null)
+      paradas = { ...paradas, pausaPendente: { at: agora, modoAt } }
+      await espelharParadas($, runId)
+      if (url && runId) await gravarPausaParada($, url, runId, paradas.pausaPendente!)
+      await auditar($, { acao: 'MODO', alvo: 'continuo', motivo, regra: 'm-paradas', linha: null, origem: 'maestro', antes: 'continuo', depois: 'pausado' })
+      await espelharContinuo($)
+    }
+    // (2) handled once: the mark, then the toast
+    pausouAgora.set(`${p.conjunto}|${p.tipo}`, pausou)
+    paradas = { ...paradas, tratadas: { ...paradas.tratadas, [`${p.conjunto}|${p.tipo}`]: tratadoEm } }
+    try {
+      $.ui.toast(pausou ? `Maestro pausou o ${projeto}: ${p.motivo}` : `Parada em ${p.conjunto}: ${p.motivo}`)
+    } catch {
+      // the band and the card still show it
+    }
+    // (3) the PARADA row, keyed by the episode (an "already exists" answer is done)
+    if (url) {
+      const linha = p.fonte === 'mensagem' ? `CONJUNTO ${p.conjunto} bloqueado ${motivo}` : null
+      const row = entradaAuditoria({ acao: 'PARADA', alvo: p.conjunto, motivo, regra: 'm-paradas', linha, origem: 'maestro' }, { at: new Date(tratadoEm), runId, sessao: nomeDaSessao(ex), papel: 'orquestrador', by: quem })
+      paradas = { ...paradas, pendentes: { ...paradas.pendentes, [p.chave]: { doc: row, falhas: 0 } } }
+    }
+  }
+  if (url) await gravarLinhasParada($, url, porPoll)
+  if (velho(g)) return
+  const antes = paradas.abertas
+  const abertas = ep.abertas.map(p => {
+    const k = `${p.conjunto}|${p.tipo}`
+    return { ...p, pausou: pausouAgora.get(k) ?? antes.some(a => a.conjunto === p.conjunto && a.tipo === p.tipo && a.pausou) }
+  })
+  paradas = { ...paradas, abertas }
+  // a received line is kept until a db read taken after it (its card stays open meanwhile)
+  const lidoEm = banco?.at ?? null
+  paradasRecebidas = paradasRecebidas.filter(r => lidoEm === null || Date.parse(r.at) > lidoEm)
+  const mudou = JSON.stringify(antes) !== JSON.stringify(abertas)
+  await espelharParadas($, runId)
+  if (mudou && !velho(g)) await prepararFaixa($, ex)
+}
+
+/** stop-alerts, one at a time: a call during a run makes it run once more, and every caller waits for that run. */
+function olharParadas($: any, porPoll = false): Promise<void> {
+  paradasDeNovo = true
+  paradasPorPoll ||= porPoll
+  if (paradasEmCurso) return paradasEmCurso
+  const corrida = (async () => {
+    try {
+      while (paradasDeNovo) {
+        paradasDeNovo = false
+        const pp = paradasPorPoll
+        paradasPorPoll = false
+        await alertasDeParada($, pp)
+      }
+    } finally {
+      if (paradasEmCurso === corrida) paradasEmCurso = null
+    }
+  })()
+  paradasEmCurso = corrida
+  return corrida
 }
 
 /**
@@ -2416,6 +2913,92 @@ async function homeDir($: any): Promise<string | null> {
   return (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? null
 }
 
+// C06-S01: this machine's CLAUDE.md import lines, as last read or written (the pane reads it)
+let regrasLocais: { novarc: boolean; continuo: boolean } | null = null
+const erroDe = (x: unknown) => (x as Error)?.message ?? String(x)
+
+async function lerSeExiste($: any, path: string): Promise<string | null> {
+  return (await $.fs.exists(path)) ? String(await $.fs.read(path)) : null
+}
+
+async function lerRegrasLocais($: any): Promise<{ novarc: boolean; continuo: boolean }> {
+  const home = await homeDir($)
+  let t: string | null = null
+  try {
+    if (home) t = await lerSeExiste($, `${home}/.claude/CLAUDE.md`)
+  } catch {
+    // unreadable: no import seen
+  }
+  return (regrasLocais = importsRegras(t))
+}
+
+/**
+ * R19, R20, R23, R24: the rules files at session start. Writes NOVARC.md, then CLAUDE.md (last, so a failure never
+ * leaves it changed), then the store flag; installed = NOVARC.md and the flag, and then CLAUDE.md is never read.
+ */
+async function regrasAoIniciar($: any): Promise<void> {
+  const home = await homeDir($)
+  if (!home) return
+  const dir = `${home}/.claude`
+  let toast: string | null = null
+  try {
+    const novarc = await lerSeExiste($, `${dir}/NOVARC.md`)
+    const continuo = await lerSeExiste($, `${dir}/NOVARC-CONTINUO.md`)
+    const instalado = novarc !== null && (await $.store.get(REGRAS_INSTALADAS)) === true
+    const claude = instalado ? null : await lerSeExiste($, `${dir}/CLAUDE.md`)
+    const r = regrasNoInicio({ novarc, continuo, claude, instalado })
+    for (const w of r.escrever) await $.fs.write(`${dir}/${w.arquivo}`, w.texto)
+    if (!instalado) {
+      regrasLocais = importsRegras(r.escrever.find(w => w.arquivo === 'CLAUDE.md')?.texto ?? claude)
+      try {
+        await $.store.set(REGRAS_INSTALADAS, true)
+      } catch {
+        // flag unset: the next start repeats the first install, which finds the line and writes no CLAUDE.md
+      }
+    }
+    // not installed: "incluídas" only when the import line was added, "atualizadas" only over an older rules file
+    const velho = r.escrever.some(w => (w.arquivo === 'NOVARC.md' && novarc !== null) || w.arquivo === 'NOVARC-CONTINUO.md')
+    toast = instalado ? r.toast : r.escrever.some(w => w.arquivo === 'CLAUDE.md') ? r.toast : velho ? 'regras NOVARC atualizadas' : null
+  } catch (x) {
+    toast = `Regras NOVARC não incluídas: ${erroDe(x)}`
+  }
+  if (toast) await $.ui.toast(toast)
+}
+
+/** R21: after either command a session start never re-adds the import: NOVARC.md present and the flag set. */
+async function marcarInstalado($: any, dir: string): Promise<void> {
+  if (!(await $.fs.exists(`${dir}/NOVARC.md`))) await $.fs.write(`${dir}/NOVARC.md`, NOVARC_MD)
+  await $.store.set(REGRAS_INSTALADAS, true)
+}
+
+/** R21, R22: `/maestro regras remover` and `/maestro continuo habilitar` (typed only), one CLAUDE.md write each. */
+async function regrasPorComando($: any, acao: 'remover' | 'habilitar'): Promise<string> {
+  try {
+    const home = await homeDir($)
+    if (!home) throw new Error('sem home')
+    const dir = `${home}/.claude`
+    const claude = await lerSeExiste($, `${dir}/CLAUDE.md`)
+    // R24: the installed marker first, CLAUDE.md last: a failure leaves CLAUDE.md as it was
+    await marcarInstalado($, dir)
+    if (acao === 'remover') {
+      if (claude !== null) {
+        const novo = semImports(claude)
+        if (novo !== claude) await $.fs.write(`${dir}/CLAUDE.md`, novo)
+      }
+      regrasLocais = { novarc: false, continuo: false }
+      return 'Regras NOVARC removidas do seu CLAUDE.md.'
+    }
+    // the import never points at a missing file: the rules files are written before CLAUDE.md
+    await $.fs.write(`${dir}/NOVARC-CONTINUO.md`, NOVARC_CONTINUO_MD)
+    const novo = comImport(comImport(claude ?? '', '@NOVARC.md'), '@NOVARC-CONTINUO.md')
+    if (novo !== claude) await $.fs.write(`${dir}/CLAUDE.md`, novo)
+    regrasLocais = importsRegras(novo)
+    return 'Exceção do modo contínuo incluída no seu CLAUDE.md. Só quem pode liberar o contínuo (sócio ou dev interno da NovArc) deve mantê-la.'
+  } catch (x) {
+    return `Regras NOVARC não incluídas: ${erroDe(x)}`
+  }
+}
+
 /** This session's registry entry: one file per session under ~/.claude/maestro/sessoes, else one $.store key. */
 async function registrar($: any, run?: Execucao): Promise<void> {
   if (!sessao) return
@@ -2592,6 +3175,12 @@ async function olharAgora($: any, doTimer = false): Promise<void> {
       if (!velho(g) && (ex.papel === 'orquestrador' || ex.papel === 'conjunto')) await alertasAgora($, ex)
     } catch (err) {
       await logarUmaVez($, 'alertas', err)
+    }
+    try {
+      // C06-S01 stop-alerts: before the nudge, so a db-only stop pauses the run before any send of this tick
+      if (!velho(g) && ex.papel === 'orquestrador') await olharParadas($)
+    } catch (err) {
+      await logarUmaVez($, 'paradas', err)
     }
     try {
       // C03-S01 (Task 7): directive-nudge after the alert scan, orchestrator only
@@ -2838,6 +3427,16 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   provasConj = {}
   provasVelhas.clear()
   configGate = null
+  pausaLocal = null
+  continuoChave = null
+  paradasRecebidas = []
+  paradas = PARADAS_VAZIAS()
+  paradasRestauro = null
+  paradasSeed = {}
+  paradasEspelho = null
+  paradasEmCurso = null
+  paradasDeNovo = false
+  paradasPorPoll = false
   espelharDiretivas($)
   espelharRotas($)
   espelharFila($)
@@ -2861,6 +3460,9 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   await $.state.set(PEND, null)
   await $.state.set(PEND_VISTA, null)
   await $.state.set(LEITURA, null) // maestroPainelAberto stays: a reload must find it
+  await $.state.set(CONTINUO, null)
+  await $.state.set(CONTINUO_UI, null)
+  await $.state.set(PARADAS, null)
 }
 
 async function nunca($: any): Promise<string[]> {
@@ -2893,6 +3495,10 @@ export type FaixaDados = {
   /** Where `ver` and the bell go. */
   abaAlerta: 'locks' | 'pendencias' | null
   nOutras: number
+  /** C06-S01: the run mode of this run (the orchestrator's band seal). */
+  modo: ModoContinuo
+  /** C06-S01 (R31): the newest open stop, drawn before the alerts; `pausado` when it paused the run. */
+  parada?: { titulo: 'pausado' | 'parada'; motivo: string } | null
 }
 
 const SEGMENTO: Record<string, 'd' | 'w' | 'b'> = { success: 'd', claude: 'w', error: 'b' }
@@ -2912,6 +3518,8 @@ export function dadosFaixa(
   verdes: { conjunto: string; n: number }[] = [],
   pendencias: EstadoPendencias | null = null,
   semConf: Envio[] = [],
+  modo: ModoContinuo = 'manual',
+  paradas: ParadaAberta[] = [],
 ): FaixaDados {
   const minhas = Object.values(ex.forks).map(f => raia(f, agora))
   let titulo = 'NOVARC'
@@ -2921,7 +3529,9 @@ export function dadosFaixa(
   // R53: an unconfirmed directive leads the orchestrator's alerts, in the same `error` line 2
   const dirs = ex.papel === 'orquestrador' ? semConf.map(e => `diretiva sem confirmação: ${e.acao} ${e.alvo}`) : []
   const als = comAlertas ? [...dirs, ...alertas.map(a => a.texto)].slice(0, 2) : []
-  const v = ex.papel === 'orquestrador' && !als.length ? verdes[0] : undefined
+  const ps = ex.papel === 'orquestrador' ? paradas : []
+  const ultima = [...ps].sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0]
+  const v = ex.papel === 'orquestrador' && !als.length && !ultima ? verdes[0] : undefined
   if (ex.papel === 'orquestrador') {
     // before this session's own registry entry is read back, its run is empty: `0 conjuntos vivos` until the look
     // that follows (it writes the entry, then reads the registry)
@@ -2951,9 +3561,11 @@ export function dadosFaixa(
     segmentos,
     feitos: ex.papel === 'conjunto' && segmentos.length ? { n: segmentos.filter(s => s === 'd').length, total: segmentos.length } : null,
     verde: v ? { titulo: 'pronto para fechar', texto: `${v.conjunto} com as ${v.n} specs em DONE, sem lock aberto`, dica: 'peça o FECHA na conversa' } : null,
-    nAlertas: contaSino(ex.papel, comAlertas ? { lista: alertas } : null, ex.papel === 'orquestrador' ? pendencias : null, dirs.length),
+    nAlertas: contaSino(ex.papel, comAlertas ? { lista: alertas } : null, ex.papel === 'orquestrador' ? pendencias : null, dirs.length, ps.length),
     abaAlerta: als.length ? 'locks' : ex.papel === 'orquestrador' && (pendencias?.divergencias.length || pendencias?.contador) ? 'pendencias' : null,
     nOutras: outras.filter(r => r.sessao !== eu).length,
+    modo,
+    parada: ultima ? { titulo: ultima.pausou ? 'pausado' : 'parada', motivo: ultima.motivo } : null,
   }
 }
 
@@ -2973,11 +3585,13 @@ async function prepararFaixa($: any, ex?: Execucao): Promise<void> {
       run.papel === 'orquestrador' ? prontos : [],
       run.papel === 'orquestrador' ? ((await ler($, 'maestroPendencias')) as EstadoPendencias | null) : null,
       run.papel === 'orquestrador' ? semConfirmacao(envios, Date.now()) : [],
+      modoDe(((await ler($, 'maestroContinuo')) as MaestroContinuo).doc, runIdAtual(run)),
+      run.papel === 'orquestrador' ? ((await ler($, 'maestroParadas')) as EstadoParadas).abertas : [],
     ),
   )
 }
 
-const SEM_FAIXA: FaixaDados = { papel: null, txt: null, titulo: 'NOVARC', status: 'ativo', alertas: [], pend: null, segmentos: [], feitos: null, verde: null, nAlertas: 0, abaAlerta: null, nOutras: 0 }
+const SEM_FAIXA: FaixaDados = { papel: null, txt: null, titulo: 'NOVARC', status: 'ativo', alertas: [], pend: null, segmentos: [], feitos: null, verde: null, nAlertas: 0, abaAlerta: null, nOutras: 0, modo: 'manual', parada: null }
 
 /**
  * The band above the prompt in three fixed columns (R19): the short logo; title and status on line 1, alerts, a hint
@@ -3013,10 +3627,14 @@ function faixaArvore(ui: any, superficie: string, modo: 'auto' | 'on' | 'off', f
     })
   }
   const orq = f.papel === 'orquestrador'
-  // Manual is the only mode before C06-S01: a constant seal in the orchestrator, none in a set or spec band
-  const selo = orq ? [k.chip('modo manual', 'neutro')] : []
-  if (orq && f.verde) return faixa({ ok: true, titulo: f.verde.titulo, status: f.verde.texto, segunda: [<Text size="footnote" color="subtle" wrap="truncate-end">{f.verde.dica}</Text>], direita: selo })
+  // R25: the orchestrator band shows the mode only as its seal, never a mode Button; none in a set or spec band
+  const sm = seloModo(f.modo ?? 'manual', false)
+  const selo = orq ? [k.chip(sm.texto, sm.tom)] : []
+  if (orq && f.verde && !f.parada) return faixa({ ok: true, titulo: f.verde.titulo, status: f.verde.texto, segunda: [<Text size="footnote" color="subtle" wrap="truncate-end">{f.verde.dica}</Text>], direita: selo })
   const segunda: any[] = []
+  // R31: the open stop leads line 2, in error, before the alerts
+  const pa = orq ? f.parada ?? null : null
+  if (pa) segunda.push(linha2('parada', pa.titulo === 'pausado' ? pa.motivo : `parada: ${pa.motivo}`, 'error'))
   f.alertas.forEach((a, i) =>
     segunda.push(i === 0 && k.temClient ? <Client key="pulso" module="./pulse.tsx" props={{ label: a }} /> : linha2(`al-${i}`, a, 'error')),
   )
@@ -3043,7 +3661,7 @@ function faixaArvore(ui: any, superficie: string, modo: 'auto' | 'on' | 'off', f
     : f.pend
       ? k.botao({ key: 'ver-pend', primario: true, hotkey: '1', onPress: acoes.verPend, children: 'ver' })
       : k.botao({ key: 'painel', hotkey: '1', onPress: acoes.painel, children: 'painel' })
-  return faixa({ titulo: f.titulo, status: f.status, segunda, direita: [...selo, botao] })
+  return faixa({ titulo: pa?.titulo ?? f.titulo, status: pa?.motivo ?? f.status, segunda, direita: [...selo, botao] })
 }
 
 type DadosPainel = {
@@ -3085,6 +3703,13 @@ type DadosPainel = {
   familia?: Familia | null
   /** C05-S02 (R16): set session, per spec of its lanes, the phase row of `quem grava specs/<spec> agora`. */
   posse?: { spec: string; titulo: string; fase: 'antes' | 'carga' | 'build' | 'fechamento' }[]
+  /** C06-S01: the run mode of this run, the cached config/continuo and the pane's card/recado flags. */
+  continuo: { modo: ModoContinuo; doc: ContinuoDoc | null; ui: MaestroContinuoUi; podeLiberar: boolean }
+  /** C06-S01: the plan held in memory and this run's id (the Configuração tab). */
+  plano: Plano | null
+  runId: string | null
+  /** C06-S01 (R57): the open stops, their cards first in every tab. */
+  paradas: ParadaAberta[]
   acoes: {
     aba: (a: string) => Acao
     abrir: Acao
@@ -3095,6 +3720,11 @@ type DadosPainel = {
     abrirAcervo: Acao
     abrirLinha: (url: string) => Acao
     selConjunto: (C: string) => Acao
+    modo: (m: 'manual' | 'continuo' | 'pausado') => Acao
+    intervir: Acao
+    recado: Parameters<typeof cartaoRecado>[2]['acoes']
+    cancelarCartao: Acao
+    liberar: (escopo: EscopoContinuo) => Acao
   }
 }
 
@@ -3245,21 +3875,18 @@ function painelArvore(ui: any, d: DadosPainel): any {
     { k: 'locks', rotulo: '🔒 Locks e filas', tecla: 3, conta: (d.alertas?.vista?.locks ?? []).filter(l => l.orfao).length },
     ...(orq ? [{ k: 'pendencias', rotulo: '📌 Pendências', tecla: 4, conta: rotuloAba(d.pendencias) }] : []),
     ...(orq ? [{ k: 'inteligencia', rotulo: '📊 Inteligência', tecla: 5 }] : []),
+    // C06-S01 (R43): every session of a run, read-only outside the orchestrator
+    { k: 'configuracao', rotulo: '⚙️ Configuração', tecla: 6 },
   ]
   // a stored tab this role does not draw (Pendências in a set session) draws Agora
   const aba = ABAS.some(a => a.k === d.aba) ? d.aba : 'agora'
   const foco = papel === 'conjunto' ? `foco: conjunto ${d.ex.conjunto ?? '?'}` : papel === 'spec' ? `foco: spec ${d.ex.spec ?? '?'}` : `${d.projeto} · toda a execução`
   const sino = d.sino
-  const rotuloSino = unidade ? `🔔 ${sino}` : sino === 0 ? '🔔 sem alertas' : `🔔 ${sino} ${sino === 1 ? 'alerta' : 'alertas'}`
-  const faixaModo = (
-    <Box key="modo" flexDirection="row" gap="sm" alignItems="center" paddingX="md" paddingY="sm">
-      <Text size="caption" color="subtle">MODO</Text>
-      <Text color="promptBorder">│</Text>
-      {k.chip(unidade ? 'manual · definido na orquestradora' : 'modo manual', 'neutro')}
-      <Box flexGrow={1} />
-      {k.botao({ key: 'sino', primario: sino > 0, onPress: d.acoes.sino, children: rotuloSino })}
-    </Box>
-  )
+  const escopo = d.continuo.doc?.autorizacao?.escopo
+  const modo = faixaModo(ui, k, {
+    papel, modo: d.continuo.modo, escopo: escopo ? resumoEscopo(escopo, d.projeto) : null, sino, recadoAberto: d.continuo.ui.recado,
+    acoes: { modo: d.acoes.modo, sino: d.acoes.sino, intervir: d.acoes.intervir },
+  })
   const rotuloAtual = ABAS.find(a => a.k === aba)!.rotulo
   const trilha = `${d.projeto} › ${rotuloAtual}${aba === 'execucao' && unidade && d.ex.conjunto ? ` › ${d.ex.conjunto}` : ''}`
   const l = d.leitura
@@ -3271,11 +3898,32 @@ function painelArvore(ui: any, d: DadosPainel): any {
       : l.at === null
         ? '⏳ lendo…'
         : `ao vivo · atualizado há ${haQuanto(d.agora - l.at)}`
-  const corpo = d.tentando ? [k.cartaoEstado('carregando', 'lendo o planejamento…')] : corpoAba(ui, k, d, aba)
+  const corpo = [...cartoesParada(ui, k, orq ? d.paradas : [], d.projeto), ...(d.tentando && aba !== 'configuracao' ? [k.cartaoEstado('carregando', 'lendo o planejamento…')] : corpoAba(ui, k, d, aba))]
+  // R9: the authorization card under the strip, orchestrator only, while open
+  const escopoCartao = orq && d.continuo.ui.cartao && d.plano ? escopoSugerido(d.plano.execucao?.perfil, d.plano, d.agora) : null
+  const cartao = escopoCartao
+    ? cartaoLiberacao(ui, k, {
+        escopo: escopoCartao, linhaEscopo: linhaEscopoCartao(escopoCartao, nomePerfil(d.plano!)), podeLiberar: d.continuo.podeLiberar, erro: d.continuo.ui.erro,
+        bloqueio: acimaDoTeto(escopoCartao, d.plano!.execucao?.perfil?.teto),
+        aguardando: d.continuo.ui.pedidoEm !== null && !d.continuo.ui.erro && d.agora - d.continuo.ui.pedidoEm < VALIDADE_CONCESSAO,
+        acoes: { cancelar: d.acoes.cancelarCartao, liberar: d.acoes.liberar(escopoCartao) },
+      })
+    : null
+  // R27: the recado card under the strip, set and spec sessions only, while open; the spec session's goes to its set
+  const codigo = d.ex.codigo ?? d.plano?.projeto?.codigo ?? '?'
+  const recado = unidade && d.continuo.ui.recado
+    ? cartaoRecado(ui, k, {
+        destino: papel === 'spec' ? `sessão do conjunto novarc-${codigo}-${d.ex.conjunto ?? '?'}` : 'orquestradora',
+        temInput: !!ui.Input && d.superficie !== 'mobile',
+        acoes: d.acoes.recado,
+      })
+    : null
   return (
     <Box flexDirection="column">
       {k.cabecalho(foco, sino)}
-      {faixaModo}
+      {modo}
+      {cartao}
+      {recado}
       {k.secao('d1', '🧭 seções', `1 a ${ABAS[ABAS.length - 1]!.tecla} trocam de aba com o painel em foco`)}
       <Box key="linha-abas" paddingX="md" paddingY="sm">{k.abas(ABAS, aba, d.acoes.aba)}</Box>
       {k.secao('d2', trilha, direita, aoVivo)}
@@ -3325,6 +3973,12 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
     }
   }
   if (aba === 'locks') return abaLocks(ui, d, k)
+  if (aba === 'configuracao') {
+    const estado = d.tentando || (d.temArtefato && !d.plano && d.leitura.at === null) ? 'carregando' : d.leitura.falhas.planejamento && !d.plano ? 'erro' : 'normal'
+    return abaConfiguracao(ui, k, {
+      orq, perfil: d.plano?.execucao?.perfil, nome: d.plano ? nomePerfil(d.plano) : 'projeto', continuo: d.continuo.doc, runId: d.runId, agora: d.agora, plano: d.plano, estado, tentar: d.acoes.tentar,
+    })
+  }
   if (aba === 'execucao') {
     // only this session's run: another run's lanes live in that run's own orchestrator session
     const blocos = orq ? raiasPorConjunto(daMinhaExecucao(d.outras ?? [], d.eu), d.porDir, d.agora, d.titulos) : []
@@ -3593,6 +4247,11 @@ export const registerMaestro: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     try {
+      await regrasAoIniciar($)
+    } catch {
+      // the rules never hold up the run detection below
+    }
+    try {
       await $.command.register({ name: 'maestro', description: 'Painel de execução NOVARC ("orquestrar" na sessão orquestradora; "ativar" ou "desativar" a faixa)' })
     } catch {
       // no /maestro command: the band and the hooks still work
@@ -3634,6 +4293,7 @@ export const registerMaestro: Register = on => {
     // a /clear fires no session.start: a cwd in the never-list keeps the band off for the next session
     let modo: 'auto' | 'off' = 'auto'
     encerrando = true // before the cancel: a poll check in flight arms nothing until zerarSessao bumped the generation
+    concessao = null
     try {
       cancelarLoops()
       if (sessao) {
@@ -3658,8 +4318,21 @@ export const registerMaestro: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'maestro' }, async ($, e) => {
-    await garantirSessao($)
     const args = e.args.trim()
+    if (args === 'regras remover') return { text: await regrasPorComando($, 'remover') }
+    if (args === 'continuo habilitar') {
+      // R23: only the person's own keys (composer, or remote control) add the exception; an sdk program is refused
+      if (!['composer', 'bridge'].includes(e.origin?.kind)) return { text: 'Exceção do modo contínuo só por /maestro continuo habilitar digitado por você.' }
+      return { text: await regrasPorComando($, 'habilitar') }
+    }
+    await garantirSessao($)
+    // C06-S01 (R28, R38): no refresh after a mode change: the write result is the cache
+    if (args === 'pausar') return { text: await mudarModoAgora($, 'pausar') }
+    // retomar undoes a safety pause: typed only, as habilitar (pausar stays open)
+    if (args === 'retomar') {
+      if (!['composer', 'bridge'].includes(e.origin?.kind)) return { text: 'Retomar só por /maestro retomar digitado por você.' }
+      return { text: await mudarModoAgora($, 'retomar') }
+    }
     if (args === 'desativar') {
       await $.state.set(MODO, 'off')
       cancelarLoops()
@@ -3888,6 +4561,81 @@ export const registerMaestro: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
+  // C06-S01 (R12, R16): the agent's grant write to config/continuo, fail closed; every other ArtifactData call passes untouched
+  on('tool.call', { tool: 'ArtifactData' }, async ($, e, next) => {
+    // the engine hands on the caller's shape: top-level or under `input` (as the Bash, Skill and start_session guards)
+    const x = e as any
+    const continuo = (o: any) => o?.collection === 'config' && o?.doc_id === 'continuo'
+    // fail closed: on config/continuo only reads pass untouched; any other action, known or not, is checked
+    const LEITURAS = ['get', 'list', 'query']
+    const nomeia = (o: any) => !!o && typeof o === 'object' && ((continuo(o) && !LEITURAS.includes(o.action)) || (o.action === 'batch' && Array.isArray(o.writes) && o.writes.some(continuo)))
+    // either view may be the one the tool runs: the guarded one is the view that names config/continuo
+    const emCima = nomeia(x)
+    const aninhado = nomeia(x.input)
+    if (!emCima && !aninhado) return next(e)
+    if (emCima && aninhado) {
+      concessao = null
+      return { deny: 'Modo contínuo não liberado: grave a liberação inteira.' }
+    }
+    const w = aninhado ? x.input : x
+    const lote: any[] = w.action === 'batch' && Array.isArray(w.writes) ? w.writes.filter(continuo) : []
+    const propria = (o: any) => o.data !== undefined && escritasProprias.has(JSON.stringify(o.data))
+    // fail closed: a grant only goes through a plain set/update with inline data; a file or a batch entry is refused
+    const desviado = lote.length ? lote.some(o => o.data?.autorizacao != null || o.file_path) : !!w.file_path
+    // a refusal after a liberar press is a grant that was not saved: the card shows it and gets its Button back
+    const recusar = async (motivo: string) => {
+      try {
+        const ui = (await ler($, 'maestroContinuoUi')) as MaestroContinuoUi
+        if (ui.pedidoEm !== null) await $.state.set(CONTINUO_UI, { ...ui, erro: motivo, pedidoEm: null })
+      } catch {
+        // the refusal stands without the card
+      }
+      return { deny: `Modo contínuo não liberado: ${motivo}.` }
+    }
+    if (desviado) {
+      concessao = null
+      return recusar('grave a liberação inteira')
+    }
+    // the mode is the Maestro's: only its own payloads change config/continuo without a grant
+    // a grant goes only through set or update: every other action is the mode's
+    if (lote.length || !['set', 'update'].includes(w.action) || w.data?.autorizacao == null) {
+      if (lote.length ? lote.every(propria) : w.action !== 'str_replace' && propria(w)) return next(e)
+      return { deny: MODO_DO_MAESTRO }
+    }
+    const tok = concessao
+    concessao = null // one token, one attempt: passed, refused or failed
+    let r: string | ContinuoDoc
+    try {
+      r = await recusaConcessao($, { ...w, agentId: x.agentId ?? w.agentId }, tok)
+    } catch (err) {
+      r = erroDe(err) // fail closed: an unreadable state never lets a grant through
+    }
+    if (typeof r === 'string') return recusar(r)
+    // the stored document is exactly the validated one: an update is forwarded as a whole set, same pin
+    const ran = await next(aninhado ? { ...e, input: { ...w, action: 'set', data: r } } : { ...e, action: 'set', data: r })
+    try {
+      if (ran?.deny !== undefined || ran?.isError) {
+        const ui = (await ler($, 'maestroContinuoUi')) as MaestroContinuoUi
+        await $.state.set(CONTINUO_UI, { ...ui, cartao: true, erro: String(ran?.text ?? ran?.deny ?? 'erro'), pedidoEm: null })
+        return ran
+      }
+      const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+      if (c?.artefato) {
+        const cfg = await lerColecao($, c.artefato, 'config')
+        lidoContinuo(cfg)
+        if (cfg.continuo) guardarContinuo(cfg.continuo.data as unknown as ContinuoDoc, cfg.continuo.version)
+        await espelharContinuo($)
+        await prepararFaixa($)
+      }
+    } catch {
+      // the write already happened; the next poll reads it
+    }
+    return ran
+  }).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: 'mcp__claude-artifacts__db_write' }, pelaConexao).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'mcp__claude-artifacts__db_str_replace' }, pelaConexao).catch(($, e, next) => next(e))
+
   // The spec brief's `session name:` line, or a session-build invocation, typed or sent by a person, names the role.
   // Only user-turn origins count (R4/R5): a peer message, a meta prompt or a plugin never sets it.
   on('prompt.submit', async ($, e, next) => {
@@ -3895,6 +4643,21 @@ export const registerMaestro: Register = on => {
     const doUsuario = !e.isMeta && ['composer', 'bridge', 'sdk'].includes(e.origin?.kind)
     // R6: `/novarc-session-end` typed by the person lets the close-out's PR, merge and deletion through
     if (doUsuario && String(e.command?.name ?? '').endsWith('novarc-session-end')) sessionEndAtivo = true
+    // R12: every turn but the card's own submit clears the token; R9: the person saying "orquestra contínuo" in the
+    // orchestrator opens the card, whose liberar press is the confirmation
+    const texto = String(e.text ?? '')
+    if (concessao?.texto !== texto) concessao = null
+    // typed only (composer, or remote control), as habilitar: an sdk program never opens the card
+    if (doUsuario && ['composer', 'bridge'].includes(e.origin?.kind) && !texto.trimStart().startsWith('Maestro (automático):') && GRANT.test(texto)) {
+      try {
+        if ((await exec($)).papel === 'orquestrador') {
+          await $.state.set(CONTINUO_UI, { ...((await ler($, 'maestroContinuoUi')) as MaestroContinuoUi), cartao: true, erro: null, pedidoEm: null })
+          await lerRegrasLocais($)
+        }
+      } catch {
+        // the card stays as it was; the Contínuo Button opens it too
+      }
+    }
     if (papelConhecido) return next(e)
     try {
       const p = doUsuario && !(await exec($)).papel ? papelDoPrompt(e.text) : null
@@ -3918,6 +4681,7 @@ export const registerMaestro: Register = on => {
 
   // Peer lines: a set session's lanes move by the spec ids in the text; the orchestrator keeps each set's last report.
   on('session.receive', async ($, e, next) => {
+    concessao = null // R12: a received line is never the person's grant turn
     try {
       await garantirSessao($)
       if (e.origin.kind === 'peer' || e.origin.kind === 'peer-send-message') {
@@ -3946,6 +4710,13 @@ export const registerMaestro: Register = on => {
           const slug = go?.[1]!.toLowerCase() ?? ''
           if (go && meu && (slug === meu || slug.startsWith(`${meu}-`)) && KINDS_LOCK.has(go[2]!)) locksConcedidos.add(go[2]!)
         } else if (ex.papel === 'orquestrador') {
+          // C06-S01 Task 17: a mandatory stop of a set of this run goes to stop-alerts, with no agent turn
+          const pa = paradaObrigatoria(texto)
+          const ids = (((((await ler($, 'ctx')) ?? null) as Contexto | null)?.plano ?? null) as Plano | null)?.conjuntos?.map(cj => cj.id) ?? []
+          if (pa && (ids.length ? ids.includes(pa.conjunto) : /^C\d\d$/.test(pa.conjunto))) {
+            paradasRecebidas.push({ ...pa, at: new Date().toISOString() })
+            void olharParadas($).catch(err => logarUmaVez($, 'paradas', err))
+          }
           const lc = linhaConjunto(e.text)
           if (lc) {
             // C03-S01: a report keeps the set's stage (it is no stage) and only moves its quiet clock; it goes to the nudge
@@ -4043,7 +4814,20 @@ export const registerMaestro: Register = on => {
       mapaTextoChave = chave
       mapaTexto = secaoMapa(mapaAtual)
     }
-    return { sections: [...r.sections, { id: 'novarc:maestro-mapa', scope: 'session' as const, text: mapaTexto }] }
+    const mapa = { id: 'novarc:maestro-mapa', scope: 'session' as const, text: mapaTexto }
+    // R41: the run mode and its scope only (no ids), where a run is recognised; before the map, which stays last (A31)
+    const ex = await execAtual($)
+    const runId = runIdAtual(ex)
+    if (!runId) return { sections: [...r.sections, mapa] }
+    const doc = ((await ler($, 'maestroContinuo')) as MaestroContinuo).doc
+    const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+    const projeto = (c?.plano as Plano | undefined)?.projeto?.nomeCurto ?? 'projeto'
+    const chaveModo = JSON.stringify([doc, runId, projeto])
+    if (chaveModo !== modoTextoChave) {
+      modoTextoChave = chaveModo
+      modoTexto = textoModo(modoDe(doc, runId), doc?.autorizacao?.escopo ?? null, projeto)
+    }
+    return { sections: [...r.sections, { id: 'novarc:maestro-modo', scope: 'session' as const, text: modoTexto }, mapa] }
   }).catch(($, e, next) => next(e))
 
   // R27 on the terminal surface (the only one 2.1.308 raises TurnDuration on): duration, set progress, open locks.
@@ -4111,9 +4895,14 @@ export const registerMaestro: Register = on => {
       const envios = ((await ler($, 'maestroEnvios')) ?? {}) as Record<string, Envio>
       const mapa = (await ler($, 'maestroMapa')) as MapaSessoes
       const nSemConf = ex.papel === 'orquestrador' ? semConfirmacao(envios, Date.now()).length : 0
+      const abertas = ex.papel === 'orquestrador' ? ((await ler($, 'maestroParadas')) as EstadoParadas).abertas : []
       // desempenho.md: the store is read only while the tab that draws it is open
       const acervoSync = aba === 'inteligencia' ? (((await $.store.get('acervo-sync-v1')) ?? null) as AcervoSync | null) : null
       const cliente = String(plano?.projeto?.cliente ?? '').trim()
+      const cont = (await ler($, 'maestroContinuo')) as MaestroContinuo
+      const contUi = (await ler($, 'maestroContinuoUi')) as MaestroContinuoUi
+      const runId = runIdAtual(ex)
+      const modo = modoDe(cont.doc, runId)
       // Review Focus 3: an open refused with the folder fragment retries once on the bare url
       const abre = async (url: string) => {
         try {
@@ -4142,7 +4931,7 @@ export const registerMaestro: Register = on => {
         leitura: (await ler($, 'maestroLeitura')) as Leitura,
         // R9: the plan's short name, else the run's project, else the cwd folder
         projeto: plano?.projeto?.nomeCurto ?? (ex as any).projeto ?? (cwdSessao.split(/[\\/]/).filter(Boolean).pop() || 'Maestro'),
-        sino: contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf),
+        sino: contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf, abertas.length),
         envios,
         mapa,
         notas: notasOrq(ex.papel === 'orquestrador' ? eventosOrq : []),
@@ -4155,7 +4944,60 @@ export const registerMaestro: Register = on => {
         cliente,
         familia: ex.papel === 'orquestrador' ? (((await ler($, 'maestroFamilia')) ?? null) as Familia | null) : undefined,
         posse: ex.papel === 'conjunto' ? posseDoConjunto(ex) : undefined,
+        // the card's liberar Button only with @NOVARC-CONTINUO.md, read fresh while the card is open
+        continuo: { modo, doc: cont.doc, ui: contUi, podeLiberar: ex.papel === 'orquestrador' && contUi.cartao ? (await lerRegrasLocais($)).continuo : false },
+        plano: plano ?? null,
+        runId,
+        paradas: abertas,
         acoes: {
+          cancelarCartao: async () => { await $.state.set(CONTINUO_UI, { ...((await ler($, 'maestroContinuoUi')) as MaestroContinuoUi), cartao: false, erro: null, pedidoEm: null }) },
+          // R12: the press is the person's grant turn: the token first, then their words to the orchestrator agent
+          liberar: escopo => async () => {
+            await garantirSessao($)
+            if ((await exec($)).papel !== 'orquestrador') return
+            await $.state.set(CONTINUO_UI, { ...((await ler($, 'maestroContinuoUi')) as MaestroContinuoUi), cartao: true, erro: null, pedidoEm: Date.now() })
+            // the exact scope rides verbatim after the summary: the agent copies it into autorizacao.escopo (I2)
+            const exato = { conjuntos: escopo.conjuntos, fases: escopo.fases, merge: escopo.merge, migracoes: escopo.migracoes, deploys: escopo.deploys, ate: escopo.ate }
+            const texto = `Libero o modo contínuo com o escopo: ${resumoEscopo(escopo, plano?.projeto?.nomeCurto ?? 'projeto')}\nescopo: ${JSON.stringify(exato)}`
+            concessao = { origem: 'cartao', at: await relogio($), texto, escopo }
+            await $.prompt.submit({ text: texto, asUser: true })
+          },
+          // R28, R38: a mode Button replies by toast; Contínuo resumes a live grant, else opens the card (R55: never $.ui.ask)
+          modo: m => async () => {
+            await garantirSessao($)
+            if (m === modo) return // the selected mode: nothing to write
+            const doc = cont.doc
+            const conjunto = doc?.autorizacao?.escopo.conjuntos[0] ?? plano?.conjuntos?.[0]?.id ?? ''
+            const vivo = autorizado({ autorizacao: doc, runId, perfil: plano?.execucao?.perfil, acao: 'go', conjunto, agora: Date.now(), modo: 'continuo' }).ok
+            if (m === 'continuo' && !vivo) {
+              await $.state.set(CONTINUO_UI, { ...contUi, cartao: true, erro: null })
+              await lerRegrasLocais($)
+              return
+            }
+            $.ui.toast(await mudarModoAgora($, m === 'pausado' ? 'pausar' : m === 'manual' ? 'manual' : 'retomar'))
+          },
+          intervir: async () => {
+            const u = (await ler($, 'maestroContinuoUi')) as MaestroContinuoUi
+            await $.state.set(CONTINUO_UI, { ...u, recado: !u.recado })
+          },
+          // R27, R48, R49: the person's message in this session, addressed to the set session (spec) or the orchestrator (set)
+          recado: (() => {
+            const fechar = async () => { await $.state.set(CONTINUO_UI, { ...((await ler($, 'maestroContinuoUi')) as MaestroContinuoUi), recado: false }) }
+            const mandar = async (texto: string) => {
+              const cod = ex.codigo ?? plano?.projeto?.codigo ?? '?'
+              const alvo = ex.papel === 'spec' ? `a sessão do conjunto novarc-${cod}-${ex.conjunto ?? '?'}` : `a orquestradora novarc-orq-${cod}`
+              await $.prompt.submit({ text: `Mande este recado por SendMessage para ${alvo}: ${texto}`, asUser: true })
+              await fechar()
+            }
+            return {
+              enviar: async (texto: string) => {
+                const t = String(texto ?? '').trim()
+                if (t) await mandar(t)
+              },
+              atalho: (t: keyof typeof ATALHOS) => () => mandar(ATALHOS[t][1]),
+              cancelar: fechar,
+            }
+          })(),
           abrirAcervo: async () => {
             if (!acervoSync) return
             const u = cliente ? `${acervoSync.url}#${slugPasta(pastaDoCliente(cliente))}` : acervoSync.url
@@ -4172,7 +5014,7 @@ export const registerMaestro: Register = on => {
           usarMedido: async () => { await garantirSessao($); await usarMedido($) },
           // R27: the alerts' tab, else the pendings; nothing to show raises a toast
           sino: async () => {
-            const n = contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf)
+            const n = contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf, abertas.length)
             if (n > 0) await $.state.set(ABA, al.lista.length || nSemConf ? 'locks' : 'pendencias')
             else $.ui.toast('nenhum alerta agora')
           },

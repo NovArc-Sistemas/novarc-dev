@@ -13,7 +13,8 @@ exempt and the §1.2 premise re-validation is mandatory.
 
 ## step-01
 
-- §1.1 (freshness, project profile): unchanged. The project profile comes from the client's CLAUDE.md, as always.
+- §1.1 (freshness, project profile): unchanged, except the profile is read from `plano.execucao.perfil` first; the
+  client's CLAUDE.md still wins where they disagree; a step the profile does not describe stops and asks (D5).
 - §1.2: re-read every premise each spec asserts about existing code (its `reaproveitamento.md` `arquivo:linha`
   entries, the models in `dados.md`, the routes in `contratos.md`) out of the live tree. A falsified premise is a
   plan contradiction: escalate (see "Escalations" below).
@@ -236,6 +237,21 @@ On `FECHA <C> <S>=<sha> ...`:
 On any escalation of the original (human gate 3): write `bloqueios["escalacao:<n>"] = {motivo: <the escalation
 line>, at}` on `execucao/{C}` when it stops the set, or on `specs/{S}` when local to one spec; send
 `CONJUNTO <C> bloqueado escalacao:<n> <motivo>`. Clear that key only after the user answers escalation n.
+
+**Mandatory stops (C06-S01).** Six causes stop the set in the same pattern as `escalacao:<n>`: write
+`bloqueios["parada:<tipo>"] = {motivo, at}` on `execucao/{C}` when it stops the set, or on the owner spec's
+`specs/{S}` when local to one spec, and send `CONJUNTO <C> bloqueado parada:<tipo> <motivo>` to the orchestrator.
+
+| Key | Trigger |
+|---|---|
+| `parada:gate-vermelho` | a red gate triaged into the `regression` lane (core step-04 §4.6) |
+| `parada:conflito-merge` | a semantic merge conflict (session-end step-07) |
+| `parada:colisao-superficie` | the orchestrator's `HOLD <C> parada=colisao-superficie <motivo>`; the set writes the key |
+| `parada:pendencia-cliente` | a client pending question holds a spec (`conjunto-load.md` §5) |
+| `parada:codex-travado` | three consecutive `CODEX STALL ROUND <n>` lines with the same objection in one spec's fork ledger; two do not count; the spec build keeps going (core step-05 unchanged: only the continuous cycle pauses) |
+| `parada:falha-deploy` | any failed production item: a migration applied in production or a function deploy (as C08-S02 R15 maps it) |
+
+Clear a `parada:` key only after its cause is re-checked. Never revert a merge, migration or deploy because of a stop.
 
 ## step-06
 

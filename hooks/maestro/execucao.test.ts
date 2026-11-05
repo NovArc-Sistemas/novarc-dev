@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Execucao, Registro } from '../../types'
 import {
   NOTAS_DOBRADAS, VAZIA, aceitos, alerta, alertaRaias, anotar, chaveDe, emWip, familia, lerRelay, linhaRelay, type SessaoApp, cartoesAgora, chamadaLedger, checkpoint, ehBuild, faixaConjuntoRaias, laneDaMensagem, lerLedger, linhaConjunto,
+  TIPOS_PARADA, chaveParada, codexTravado, episodiosParada, paradaObrigatoria,
   espelhoParaGravar, novasLinhas, papelDaBranch, papelDoPrompt, papelDoSkill, progresso, raia, raiasPorConjunto, resumoEspelho, ritmo, slugDoSpawn, vivo,
 } from './execucao'
 import { ETAPA_FAIXA, idDaBranch, projetoDoPlano, quadrados } from './logic'
@@ -576,4 +577,141 @@ test('familia: without the app list the tree comes from the registry alone; no e
 test('familia: a waiting registry entry reads aguardando GO', () => {
   const ls = familia({ ...mundoFamilia(), aguardando: r => r.sessao === 'local_s02' })
   expect(ls[3]!.estado).toBe('⚪ aguardando GO')
+})
+
+// ---- C06-S01 stops
+
+const sel = (t: string) => `${t}  # 2026-10-28T12:00:00Z`
+
+test('paradaObrigatoria reads the six stop kinds from the first line only', () => {
+  expect(paradaObrigatoria('CONJUNTO C06 bloqueado parada:conflito-merge Conflito em hooks/maestro/logic.ts entre C06-S01 e C06-S02.')).toEqual({ conjunto: 'C06', tipo: 'conflito-merge', motivo: 'Conflito em hooks/maestro/logic.ts entre C06-S01 e C06-S02.' })
+  for (const tipo of TIPOS_PARADA) expect(paradaObrigatoria(`CONJUNTO C07 bloqueado parada:${tipo} x`)?.tipo).toBe(tipo)
+  expect(paradaObrigatoria('CONJUNTO C06 bloqueado parada:outra x')).toBe(null)
+  expect(paradaObrigatoria('CONJUNTO C06 bloqueado escalacao:2 x')).toBe(null)
+  expect(paradaObrigatoria('CONJUNTO C06 bloqueado parada:falha-deploy primeira\nCONJUNTO C07 bloqueado parada:gate-vermelho segunda')).toEqual({ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'primeira' })
+})
+
+test('codexTravado: A29 three equal stalls in a row', () => {
+  const stall = (n: number, o: string) => sel(`CODEX STALL ROUND ${n} ${o}`)
+  expect(codexTravado([stall(3, 'missing test'), stall(4, 'missing test')])).toBe(null)
+  expect(codexTravado([stall(3, 'missing test'), stall(4, 'missing test'), stall(5, 'missing test')])).toBe('missing test')
+  expect(codexTravado([stall(3, 'missing test'), stall(4, 'other'), stall(5, 'missing test')])).toBe(null)
+  expect(codexTravado([stall(1, 'missing test'), stall(2, 'missing test'), sel('CODEX APPROVED ROUNDS 3'), stall(4, 'missing test'), stall(5, 'missing test')])).toBe(null)
+  expect(codexTravado([sel('TASK 1/3'), stall(3, 'a'), stall(4, 'a'), sel('TASK 2/3'), stall(5, 'a')])).toBe('a')
+})
+
+test('chaveParada keeps only [A-Za-z0-9._-]', () => {
+  expect(chaveParada('conflito-merge', 'C06', '2026-10-28T12:00:00.000Z')).toBe('parada-conflito-merge-C06-2026-10-28T12-00-00.000Z')
+})
+
+const P0 = '2026-10-28T12:00:00.000Z'
+const P1 = '2026-10-28T12:05:00.000Z'
+const P2 = '2026-10-28T14:00:00.000Z'
+const ep = (o: Partial<Parameters<typeof episodiosParada>[0]> = {}): Parameters<typeof episodiosParada>[0] => ({ recebidas: [], execucao: {}, specs: {}, tratadas: {}, bancoAt: null, ...o })
+
+test('episodiosParada: A32 db only, in the set or in one of its specs', () => {
+  const r = episodiosParada(ep({
+    execucao: { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: P0 }, 'escalacao:1': { motivo: 'x', at: P0 }, hold: { motivo: 'y', at: P0 } } } },
+    specs: { 'C06-S02': { bloqueios: { 'parada:gate-vermelho': { motivo: 'g', at: P0 } } } },
+  }))
+  expect(r.novas.map(p => [p.conjunto, p.tipo, p.fonte, p.at])).toEqual([['C06', 'falha-deploy', 'banco', P0], ['C06', 'gate-vermelho', 'banco', P0]])
+  expect(r.abertas).toEqual(r.novas)
+})
+
+test('episodiosParada: R34 message then db is one episode', () => {
+  const r = episodiosParada(ep({
+    recebidas: [{ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'm', at: P1 }],
+    execucao: { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: P0 } } } },
+    tratadas: { 'C06|falha-deploy': Date.parse(P1) },
+    bancoAt: Date.parse(P1),
+  }))
+  expect(r.novas).toEqual([])
+  expect(r.abertas.length).toBe(1)
+})
+
+test('episodiosParada: a message and a db row of the same moment are one new episode', () => {
+  const r = episodiosParada(ep({
+    recebidas: [{ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'm', at: P1 }],
+    execucao: { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: P0 } } } },
+  }))
+  expect(r.novas.map(p => p.fonte)).toEqual(['banco'])
+})
+
+test('episodiosParada: a re-raised stop is new', () => {
+  const r = episodiosParada(ep({
+    execucao: { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: P2 } } } },
+    tratadas: { 'C06|falha-deploy': Date.parse(P0) },
+  }))
+  expect(r.novas.map(p => p.at)).toEqual([P2])
+})
+
+test('episodiosParada: a db row 30 s after a handled episode is the same one; 11 min after is new', () => {
+  const tratadas = { 'C06|falha-deploy': Date.parse(P0) }
+  const banco = (at: string) => ep({ tratadas, execucao: { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at } } } } })
+  const perto = episodiosParada(banco('2026-10-28T12:00:30.000Z'))
+  expect(perto.novas).toEqual([])
+  expect(perto.abertas.length).toBe(1)
+  expect(episodiosParada(banco('2026-10-28T12:11:00.000Z')).novas.length).toBe(1)
+})
+
+test('episodiosParada: a db row without at is one episode however often it is polled', () => {
+  const execucao = { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm' } } } }
+  const um = episodiosParada(ep({ execucao, bancoAt: Date.parse(P0) }))
+  expect(um.novas.length).toBe(1)
+  const tratadas = { 'C06|falha-deploy': Date.parse(um.novas[0]!.at) }
+  const dois = episodiosParada(ep({ execucao, tratadas, bancoAt: Date.parse(P2) }))
+  expect(dois.novas).toEqual([])
+  expect(dois.abertas.length).toBe(1)
+  expect(dois.abertas[0]!.chave).toBe(um.novas[0]!.chave)
+})
+
+test('episodiosParada: an at-less db row and a message of the same stop are one nova, the message', () => {
+  const execucao = { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm' } } } }
+  const recebidas = [{ conjunto: 'C06', tipo: 'falha-deploy' as const, motivo: 'm', at: P1 }]
+  const r = episodiosParada(ep({ execucao, recebidas }))
+  expect(r.novas.map(p => p.fonte)).toEqual(['mensagem'])
+  expect(r.abertas.map(p => p.fonte)).toEqual(['banco'])
+})
+
+test('episodiosParada: at empty string behaves as missing', () => {
+  const execucao = { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: '' } } } }
+  const um = episodiosParada(ep({ execucao, bancoAt: Date.parse(P0) }))
+  expect(um.novas.length).toBe(1)
+  const dois = episodiosParada(ep({ execucao, tratadas: { 'C06|falha-deploy': Date.parse(um.novas[0]!.at) }, bancoAt: Date.parse(P2) }))
+  expect(dois.novas).toEqual([])
+  expect(dois.abertas[0]!.chave).toBe(um.novas[0]!.chave)
+  const msg = episodiosParada(ep({ execucao, recebidas: [{ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'm', at: P1 }] }))
+  expect(msg.novas.map(p => p.fonte)).toEqual(['mensagem'])
+})
+
+test('episodiosParada: a repeated message within ten minutes is not new', () => {
+  const recebidas = [{ conjunto: 'C06', tipo: 'falha-deploy' as const, motivo: 'm', at: P1 }]
+  expect(episodiosParada(ep({ recebidas, tratadas: { 'C06|falha-deploy': Date.parse(P0) } })).novas).toEqual([])
+  expect(episodiosParada(ep({ recebidas: [{ ...recebidas[0]!, at: P2 }], tratadas: { 'C06|falha-deploy': Date.parse(P0) } })).novas.length).toBe(1)
+})
+
+test('episodiosParada: an at-less db key handled at wall-clock time absorbs a late message', () => {
+  const execucao = { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm' } } } }
+  const tratadas = { 'C06|falha-deploy': Date.parse(P0) }
+  expect(episodiosParada(ep({ execucao, tratadas, bancoAt: Date.parse(P0) })).novas).toEqual([])
+  const r = episodiosParada(ep({ execucao, tratadas, recebidas: [{ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'm', at: P2 }], bancoAt: Date.parse(P0) }))
+  expect(r.novas).toEqual([])
+  expect(r.abertas.map(p => p.fonte)).toEqual(['banco'])
+})
+
+test('episodiosParada: a handled db key with at absorbs a message two hours later', () => {
+  const execucao = { C06: { bloqueios: { 'parada:falha-deploy': { motivo: 'm', at: P0 } } } }
+  const r = episodiosParada(ep({ execucao, tratadas: { 'C06|falha-deploy': Date.parse(P0) }, recebidas: [{ conjunto: 'C06', tipo: 'falha-deploy', motivo: 'm', at: P2 }], bancoAt: Date.parse(P0) }))
+  expect(r.novas).toEqual([])
+  expect(r.abertas.map(p => [p.fonte, p.at])).toEqual([['banco', P0]])
+  // a message of another C|tipo is still new
+  const o = episodiosParada(ep({ execucao, tratadas: { 'C06|falha-deploy': Date.parse(P0) }, recebidas: [{ conjunto: 'C06', tipo: 'gate-vermelho', motivo: 'g', at: P2 }] }))
+  expect(o.novas.map(p => p.tipo)).toEqual(['gate-vermelho'])
+})
+
+test('episodiosParada: a message-only stop stays open until the next db read', () => {
+  const recebidas = [{ conjunto: 'C06', tipo: 'falha-deploy' as const, motivo: 'm', at: P0 }]
+  expect(episodiosParada(ep({ recebidas, bancoAt: Date.parse(P0) - 1000 })).abertas.length).toBe(1)
+  expect(episodiosParada(ep({ recebidas, bancoAt: null })).abertas.length).toBe(1)
+  expect(episodiosParada(ep({ recebidas, bancoAt: Date.parse(P0) + 1000 })).abertas).toEqual([])
 })

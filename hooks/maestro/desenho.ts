@@ -84,9 +84,12 @@ export function banner(w: number, foco: string, alertas = 0): string {
 
 export type Tom = 'ok' | 'ruim' | 'aviso' | 'info' | 'neutro'
 
+/** Chip palettes by tom: light fill, light text, dark fill, dark text. */
+const PALETA_SELO: Record<Tom, string[]> = { ok: ['#dff1e4', '#1f6b35', '#203526', '#8fd3a0'], ruim: ['#f8dcd8', '#a3352b', '#4a2724', '#f3b0a8'], aviso: ['#fbefd6', '#8a5a12', '#3b2f1f', '#f0c48a'], info: ['#e3ecfd', '#1d4fbf', '#16233f', '#9cc4ff'], neutro: ['#ebe9e3', '#4a4843', '#34332f', '#d6d3cc'] }
+
 /** A status chip as a fully round pill, 18 px tall, both palettes. */
 export function selo(texto: string, tom: Tom): { src: string; w: number } {
-  const P = { ok: ['#dff1e4', '#1f6b35', '#203526', '#8fd3a0'], ruim: ['#f8dcd8', '#a3352b', '#4a2724', '#f3b0a8'], aviso: ['#fbefd6', '#8a5a12', '#3b2f1f', '#f0c48a'], info: ['#e3ecfd', '#1d4fbf', '#16233f', '#9cc4ff'], neutro: ['#ebe9e3', '#4a4843', '#34332f', '#d6d3cc'] }[tom]
+  const P = PALETA_SELO[tom]
   const w = Math.round(16 + [...texto].length * 6.3)
   return { w, src: `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="18" viewBox="0 0 ${w} 18" font-family="system-ui, sans-serif"><style>.f{fill:${P[0]}}.t{fill:${P[1]}}@media (prefers-color-scheme: dark){.f{fill:${P[2]}}.t{fill:${P[3]}}}</style><rect class="f" width="${w}" height="18" rx="9"/><text class="t" x="${w / 2}" y="12.5" text-anchor="middle" font-size="11" font-weight="500">${esc(texto)}</text></svg>` }
 }
@@ -172,6 +175,31 @@ export function tabelaTrilhas(w: number, linhas: LinhaTrilha[]): string {
 /** Height of the `tabelaTrilhas` Svg for `n` lanes. */
 export const alturaTabela = (n: number) => 22 + n * 30 + 4 + 60
 
+// ---- C06-S01: the continuous-mode pill, authorization card and window bar
+
+const CLASSES_TOM = (tom: 'info' | 'ok' | 'aviso') => `<style>.f{fill:${PALETA_SELO[tom][0]}}.t{fill:${PALETA_SELO[tom][1]}}.s{fill:${PALETA_SELO.neutro[1]}}.l{stroke:#d9d6ce}@media (prefers-color-scheme: dark){.f{fill:${PALETA_SELO[tom][2]}}.t{fill:${PALETA_SELO[tom][3]}}.s{fill:${PALETA_SELO.neutro[3]}}.l{stroke:#3a3936}}</style>`
+
+/** The mode and scope pill of the strip: 22 px tall, round, the full width `w`. */
+export function escopoModo(w: number, texto: string, tom: 'info' | 'ok' | 'aviso'): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="22" viewBox="0 0 ${w} 22" font-family="system-ui, sans-serif">${CLASSES_TOM(tom)}<rect class="f" width="${w}" height="22" rx="11"/><text class="t" x="12" y="15" font-size="11.5" font-weight="600">${esc(texto)}</text></svg>`
+}
+
+/** Height of the `cartaoContinuo` Svg for `n` rows. */
+export const alturaCartaoContinuo = (n: number) => 40 + 20 * n
+
+/** The authorization card: green header, the scope line, one checked row per thing the orchestrator may do alone. */
+export function cartaoContinuo(w: number, linhaEscopo: string, itens: string[]): string {
+  const h = alturaCartaoContinuo(itens.length)
+  const linhas = itens.map((t, i) => `<text class="s" x="12" y="${52 + i * 20}" font-size="12">✅ ${esc(t)}</text>`).join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="system-ui, sans-serif">${CLASSES_TOM('ok')}<rect class="l" x=".5" y=".5" width="${w - 1}" height="${h - 1}" rx="8" fill="none"/><rect class="f" width="${w}" height="24" rx="8"/><rect class="f" y="12" width="${w}" height="12"/><text class="t" x="12" y="16" font-size="12.5" font-weight="700">🔁 Ligar o modo contínuo</text><text class="s" x="12" y="38" font-size="11.5">${esc(linhaEscopo)}</text>${linhas}</svg>`
+}
+
+/** A window bar: an 8 px track and the filled share `fracao` (clamped to [0, 1]), at the exact width `w`. */
+export function barraJanela(w: number, fracao: number): string {
+  const f = Math.max(0, Math.min(1, Number.isFinite(fracao) ? fracao : 0))
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="8" viewBox="0 0 ${w} 8"><style>.tr{fill:#e9e6df}.fl{fill:#2f8a4a}@media (prefers-color-scheme: dark){.tr{fill:#2f2e2b}.fl{fill:#6cba7e}}</style><rect class="tr" width="${w}" height="8" rx="4"/><rect class="fl" width="${Math.round(w * f * 100) / 100}" height="8" rx="4"/></svg>`
+}
+
 // ponytail: one 64-entry Map per builder, oldest dropped, no size accounting; enough for 3 tables, 50 hold bars and the bands
 const caches: Map<string, unknown>[] = []
 /** Real builds per memoized builder name (A45). */
@@ -204,6 +232,9 @@ export const barraTempoDicaM = memo('barraTempoDica', barraTempoDica)
 // C11-S01 rework (band tail latency): every Svg a redraw of the band or a chat row draws comes from a memo or a
 // module constant, so an unchanged-state redraw builds no Svg string
 export const seloM = memo('selo', selo)
+export const escopoModoM = memo('escopoModo', escopoModo)
+export const cartaoContinuoM = memo('cartaoContinuo', cartaoContinuo)
+export const barraJanelaM = memo('barraJanela', barraJanela)
 export const bannerM = memo('banner', banner)
 export const faixaSecaoM = memo('faixaSecao', faixaSecao)
 export const distribuicaoM = memo('distribuicao', distribuicao)

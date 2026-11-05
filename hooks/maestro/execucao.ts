@@ -1267,3 +1267,80 @@ function papelDoRegistro(r: Registro): { papel: LinhaFamilia['papel']; conjunto:
   if (r.papel === 'conjunto' && r.conjunto) return { papel: 'conjunto', conjunto: r.conjunto }
   return null
 }
+
+// ---- C06-S01 stops
+
+export const TIPOS_PARADA = ['gate-vermelho', 'conflito-merge', 'colisao-superficie', 'pendencia-cliente', 'codex-travado', 'falha-deploy'] as const
+export type TipoParada = (typeof TIPOS_PARADA)[number]
+export type Parada = { chave: string; conjunto: string; tipo: TipoParada; motivo: string; at: string; fonte: 'mensagem' | 'banco' }
+
+/** A mandatory-stop line from a set session: `CONJUNTO C06 bloqueado parada:<tipo> <motivo>`; only the first line counts. */
+export function paradaObrigatoria(linha: string): { conjunto: string; tipo: TipoParada; motivo: string } | null {
+  const m = linha.split('\n')[0]!.trim().match(/^CONJUNTO (\S+) bloqueado parada:([a-z-]+)\s+(.+)$/)
+  if (!m || !(TIPOS_PARADA as readonly string[]).includes(m[2]!)) return null
+  return { conjunto: m[1]!, tipo: m[2] as TipoParada, motivo: m[3]!.trim() }
+}
+
+/** The objection of a Codex review stuck three rounds on the same point (A29), from ledger lines; null otherwise. */
+export function codexTravado(linhas: string[]): string | null {
+  const codex = linhas.map(linhaLedger).filter((e): e is Evento => e?.tipo === 'CODEX')
+  const ultimas = codex.slice(-3).map(e => e.texto.match(/^STALL ROUND \d+\s+(.+)$/)?.[1]?.trim().toLowerCase())
+  return ultimas.length === 3 && ultimas[0] && ultimas.every(o => o === ultimas[0]) ? codex[codex.length - 1]!.texto.replace(/^STALL ROUND \d+\s+/, '').trim() : null
+}
+
+/** Id of the `PARADA` audit row and of the toast: one per episode. */
+export const chaveParada = (tipo: TipoParada, conjunto: string, at: string) => `parada-${tipo}-${conjunto}-${at}`.replace(/[^A-Za-z0-9._-]/g, '-')
+
+const DEZ_MIN = 10 * 60_000
+type Bloqueios = Record<string, { motivo?: string; at?: string }>
+
+/**
+ * Folds the stop messages and the `bloqueios` of the db into episodes (R34). `novas` are the ones not handled yet;
+ * `abertas` are those still standing: every db one, and a message-only one until a db read taken after it shows no row.
+ */
+export function episodiosParada(i: {
+  recebidas: { conjunto: string; tipo: TipoParada; motivo: string; at: string }[]
+  execucao: Record<string, { bloqueios?: Bloqueios }>
+  specs: Record<string, { bloqueios?: Bloqueios }>
+  tratadas: Record<string, number>
+  bancoAt: number | null
+}): { novas: Parada[]; abertas: Parada[] } {
+  const tipos = TIPOS_PARADA as readonly string[]
+  const cand: Parada[] = i.recebidas.map(r => ({ ...r, chave: chaveParada(r.tipo, r.conjunto, r.at), fonte: 'mensagem' as const }))
+  const doBanco = (conjunto: string, b: Bloqueios | undefined) => {
+    for (const [k, v] of Object.entries(b ?? {})) {
+      const tipo = k.startsWith('parada:') ? k.slice(7) : ''
+      // a row without `at` has a fixed epoch-0 stamp: its episode is keyed once, never by the poll time
+      const at = v.at || new Date(0).toISOString()
+      if (tipos.includes(tipo)) cand.push({ chave: chaveParada(tipo as TipoParada, conjunto, at), conjunto, tipo: tipo as TipoParada, motivo: v.motivo ?? '', at, fonte: 'banco' })
+    }
+  }
+  for (const [c, d] of Object.entries(i.execucao)) doBanco(c, d.bloqueios)
+  for (const [s, d] of Object.entries(i.specs)) doBanco(s.split('-')[0]!, d.bloqueios)
+  const t = (p: Parada) => Date.parse(p.at)
+  const grupos = new Map<string, Parada[]>()
+  for (const p of cand) grupos.set(`${p.conjunto}|${p.tipo}`, [...(grupos.get(`${p.conjunto}|${p.tipo}`) ?? []), p])
+  const novas: Parada[] = []
+  const abertas: Parada[] = []
+  for (const [k, ps] of grupos) {
+    const eps: Parada[] = []
+    for (const p of ps.sort((a, b) => t(a) - t(b))) {
+      const ult = eps[eps.length - 1]
+      if (!ult || t(p) - t(ult) >= DEZ_MIN) eps.push(p)
+      else if (p.fonte === 'banco' && ult.fonte === 'mensagem') eps[eps.length - 1] = p
+    }
+    // an at-less db row (epoch 0) is the same stop as any message of this call: the message is the episode
+    const semAt = eps.some(p => p.fonte === 'banco' && t(p) === 0)
+    const comMsg = eps.some(p => p.fonte === 'mensagem')
+    const feito = i.tratadas[k]
+    // an open db key already handled is the episode: a message of its C|tipo is the same stop, however late it arrives
+    const dbTratada = feito !== undefined && eps.some(p => p.fonte === 'banco' && t(p) - feito < DEZ_MIN)
+    for (const p of eps) {
+      if (dbTratada && p.fonte === 'mensagem') continue
+      const dupla = t(p) === 0 && p.fonte === 'banco' && comMsg
+      if (!dupla && (feito === undefined || t(p) - feito >= DEZ_MIN)) novas.push(p)
+      if (p.fonte === 'banco' || (!semAt && (i.bancoAt === null || t(p) > i.bancoAt))) abertas.push(p)
+    }
+  }
+  return { novas, abertas }
+}

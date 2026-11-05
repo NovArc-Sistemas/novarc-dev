@@ -306,6 +306,21 @@ declare module 'claude-code' {
         at: number
         fonte: 'app' | 'registro'
       } | null
+      /** C06-S01: the cached config/continuo of the planning db (run mode and grant), with its version; read merged over the default (R56). */
+      maestroContinuo: {
+        doc: { runId: string; modo: 'manual' | 'continuo' | 'pausado'; modoBy: string; modoAt: string; autorizacao: Record<string, unknown> | null } | null
+        versao: number | null
+        at: number | null
+      }
+      /** C06-S01: the pane's authorization card (open, last grant error, when liberar was pressed) and the open recado. */
+      maestroContinuoUi: { cartao: boolean; erro: string | null; recado: boolean; pedidoEm: number | null }
+      /** C06-S01: orchestrator, the open stops, handled episodes, PARADA rows waiting for their write and a pause write to retry. */
+      maestroParadas: {
+        abertas: { chave: string; conjunto: string; tipo: string; motivo: string; at: string; fonte: 'mensagem' | 'banco'; pausou: boolean }[]
+        tratadas: Record<string, number>
+        pendentes: Record<string, { doc: AuditoriaDoc; falhas: number }>
+        pausaPendente: { at: number; modoAt: string } | null
+      }
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

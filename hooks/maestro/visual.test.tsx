@@ -157,8 +157,8 @@ test('pane order: header 1200x60, strip, seções band, tab row, trail band, bod
   expect(cab.props.alt.startsWith('NovArc Maestro · Maestro v2 · toda a execução')).toBe(true)
   expect(faixa.type).toBe('Box')
   expect([d1.type, d1.props.width, d1.props.height, d1.props.alt]).toEqual(['Svg', 1200, 20, '🧭 seções'])
-  expect(String(d1.props.source)).toContain('1 a 5 trocam de aba com o painel em foco')
-  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^t-/.test(b.key)).map((b: any) => [b.key, b.props.hotkey])).toEqual([['t-agora', '1'], ['t-exec', '2'], ['t-locks', '3'], ['t-pend', '4'], ['t-inteligencia', '5']])
+  expect(String(d1.props.source)).toContain('1 a 6 trocam de aba com o painel em foco')
+  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /^t-/.test(b.key)).map((b: any) => [b.key, b.props.hotkey])).toEqual([['t-agora', '1'], ['t-exec', '2'], ['t-locks', '3'], ['t-pend', '4'], ['t-inteligencia', '5'], ['t-configuracao', '6']])
   expect(abas.type).toBe('Box')
   expect(d2.props.alt.startsWith('Maestro v2 › ')).toBe(true)
   const contas = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'error' && t.props.bold).map((t: any) => t.text)
@@ -169,12 +169,12 @@ test('pane order: header 1200x60, strip, seções band, tab row, trail band, bod
   let u2: any = await painel($, 'desktop')
   expect((await svgs(u2))[0].alt.startsWith('NovArc Maestro · foco: conjunto C03')).toBe(true)
   expect(await u2.find({ key: 't-pend' })).toBeUndefined()
-  expect(String((await svgs(u2))[2].source)).toContain('1 a 3 trocam de aba')
+  expect(String((await svgs(u2))[2].source)).toContain('1 a 6 trocam de aba')
   await u2.unmount()
   v.exec = { papel: 'spec', conjunto: 'C03', spec: 'C03-S01', ledgerDir: null, forks: {} }
   u2 = await painel($, 'desktop')
   expect((await svgs(u2))[0].alt.startsWith('NovArc Maestro · foco: spec C03-S01')).toBe(true)
-  expect(String((await svgs(u2))[2].source)).toContain('1 a 3 trocam de aba')
+  expect(String((await svgs(u2))[2].source)).toContain('1 a 6 trocam de aba')
   await u2.unmount()
 })
 
@@ -689,7 +689,8 @@ test('Locks: the orphan card and the quiet card carry the time the orchestrator 
   m.servirEstado = { ...cobrado({}), maestroAba: 'locks' }
   const sem = await painel($, 'terminal')
   expect(await sem.find({ type: 'Text', text: '32 min sem RELEASE' })).toBeDefined()
-  expect(await sem.find({ type: 'Text', text: /orquestrador/ })).toBeUndefined()
+  // C06-S01: the Manual scope pill of the mode strip also names o orquestrador; only the cards' own lines count here
+  expect(await sem.find({ type: 'Text', text: /orquestrador (cobrou|pediu)/ })).toBeUndefined()
   await sem.unmount()
 })
 

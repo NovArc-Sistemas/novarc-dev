@@ -4,6 +4,7 @@ import {
   banner, barraSegmentos, barraTempoDica, construidos, distribuicao, divisor, faixaSecao, limparMemo, logo, logoCurto, logoGirando, marca, ponto, selo,
   tabelaTrilhas, tabelaTrilhasM, type LinhaTrilha,
   LOGO_FAIXA, barraSegmentosM, bannerM, faixaSecaoM, seloM,
+  alturaCartaoContinuo, barraJanela, barraJanelaM, cartaoContinuo, cartaoContinuoM, escopoModo, escopoModoM,
 } from './desenho'
 
 const cinco: LinhaTrilha[] = ['C03-S01', 'C03-S02', 'C03-S03', 'C03-S04', 'C03-S05'].map((nome, i) => ({ nome, feitos: i, atual: 'n', idade: `${i} min` }))
@@ -127,4 +128,49 @@ test('every Svg a band redraw draws is memoized or a module constant: a repeat b
   expect(LOGO_FAIXA).toEqual(logoCurto(22))
   barraSegmentosM(['d', 'd', 'b'])
   expect(construidos.barraSegmentos).toBe(2)
+})
+
+// ---- C06-S01
+
+const ITENS = ['GO, HOLD e FECHA sem perguntar', 'merge na ordem da fila', 'vale até 18:00 de hoje; pausar a qualquer momento']
+const C06: [string, string][] = [
+  ['escopoModo', escopoModo(300, 'GO, HOLD e FECHA', 'ok')],
+  ['cartaoContinuo', cartaoContinuo(320, 'Esta execução · C06 a C09', ITENS)],
+  ['barraJanela', barraJanela(300, 0.42)],
+]
+
+test('C06-S01 builders: numeric size, both palettes, never stretched', () => {
+  for (const [nome, s] of C06) {
+    expect({ nome, ok: /^<svg[^>]*\swidth="[\d.]+"[^>]*\sheight="[\d.]+"/.test(s) }).toEqual({ nome, ok: true })
+    expect({ nome, dark: s.includes('prefers-color-scheme: dark') }).toEqual({ nome, dark: true })
+    expect({ nome, esticado: s.includes('preserveAspectRatio="none"') }).toEqual({ nome, esticado: false })
+    expect({ nome, fim: s.endsWith('</svg>') && s.split('</svg>').length === 2 }).toEqual({ nome, fim: true })
+  }
+  expect(C06[0]![1]).toContain('width="300" height="22"')
+  expect(C06[1]![1]).toContain(`height="${alturaCartaoContinuo(3)}"`)
+  expect(alturaCartaoContinuo(3)).toBe(100)
+  expect(C06[1]![1]).toContain('🔁 Ligar o modo contínuo')
+  expect((C06[1]![1].match(/✅/g) ?? []).length).toBe(3)
+})
+
+test('C06-S01 builders escape < and &', () => {
+  expect(escopoModo(200, 'a < b & c', 'info')).toContain('a &lt; b &amp; c')
+  expect(cartaoContinuo(200, 'x<y', ['a<b'])).toContain('x&lt;y')
+  expect(cartaoContinuo(200, 'x', ['a<b'])).toContain('a&lt;b')
+})
+
+test('barraJanela: the fill is the share of the width, clamped', () => {
+  expect(barraJanela(300, 0.42)).toContain('class="fl" width="126"')
+  expect(barraJanela(300, 2)).toContain('class="fl" width="300"')
+  expect(barraJanela(300, -1)).toContain('class="fl" width="0"')
+})
+
+test('C06-S01 memo: equal arguments build once', () => {
+  limparMemo()
+  for (let i = 0; i < 3; i++) {
+    escopoModoM(300, 'x', 'ok')
+    cartaoContinuoM(320, 'x', ITENS)
+    barraJanelaM(300, 0.5)
+  }
+  expect(construidos).toEqual({ escopoModo: 1, cartaoContinuo: 1, barraJanela: 1 })
 })
