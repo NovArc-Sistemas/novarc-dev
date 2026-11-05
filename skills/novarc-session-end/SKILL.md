@@ -53,6 +53,11 @@ inside one `producao` grant:
 - **Release** with `LIBERA producao <C> <branch>` after step-08's redeploy is verified by re-download, and on **every**
   earlier exit after the `GO`: a red gate, an escalation, a `HOLD`, a pin mismatch, a failure. A slot left held stalls
   every other set.
+- **Proof per write.** After each verified production write inside the grant (a migration applied or confirmed
+  against the remote ledger, each function deploy, step-08's redeploy verified by re-download), append it to the set's
+  own ledger: `<skills>/novarc-session-build/core/scripts/ledger.py append --dir <set ledger dir> --type APPLIED --text
+  "<files>"` or `--type DEPLOYED --text "<targets> VERIFIED <how>"`. The orchestrator's Maestro reads these lines as
+  the proofs of its production belt; `LIBERA producao` proves nothing.
 - **A migration of this set's branches not in the remote ledger** is applied, but never as a close-out commit: its
   UTC re-stamp changes a product file after the approved head. So: release the slot, go back to the build protocol of
   this set session (`conjunto-overrides.md` production writes: `producao` grant, original session-build step-04 §4.4,

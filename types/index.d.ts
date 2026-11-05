@@ -321,6 +321,18 @@ declare module 'claude-code' {
         pendentes: Record<string, { doc: AuditoriaDoc; falhas: number }>
         pausaPendente: { at: number; modoAt: string } | null
       }
+      /**
+       * C06-S02: orchestrator, the continuous cycle's local copy: per set the PR and CI of its merge and the toast already
+       * shown, merge reports waiting for their git proof, the audit ids of production proofs already queued, and the
+       * go-safety-net turns (accepted at, rejections).
+       */
+      maestroCiclo: {
+        merges: Record<string, { pr: number | null; ci: 'verde' | 'sem-checks' | 'sem-pr' | 'nao-confirmado' | null; merged: boolean; mergedAt: number | null; toast: 'merge' | 'publicado' | null }>
+        pendentes: { C: string; sha7: string; ids: string[]; tentativas: number; at: number }[]
+        provas: string[]
+        goPedidos: Record<string, number>
+        goFalhas: Record<string, number>
+      }
       // Acervo
       acervoData: OrganizerData
       /** Ids returned by the last list call: the account signed in now. */

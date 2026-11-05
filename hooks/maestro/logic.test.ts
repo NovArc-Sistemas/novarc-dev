@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { VAZIA, anotar, raia } from './execucao'
+import { cartaoMerge, chaveCicloPendentes, chaveCliqueMerge, chaveGoInicio, comprovantes, decidirFecha, goDevidos, liberaProducao, linhaOrdem, linhasEsteira, ordemDoLedger, ordemProducao, proximoProducao, resumoEsteira, type Ci, type PedidoProducao } from './logic'
 import { aFechar, decidirMarco, donoDaFase, posseDaSpec, estadoFaixa, faixaOcioso, faixaOrq, quadrados, branchDoPush, prCreate, ultimoComando, porId, estadoConjunto, faixaConjunto, lerDocs, liberados, pastaDoCliente, slugPasta, specDaBranch, urlDoPr, urlOrquestrar, type Plano } from './logic'
 
 const plano: Plano = {
@@ -223,4 +224,202 @@ test('posseDaSpec: the ownership box row by phase (R16)', () => {
   expect(posseDaSpec({ iniciado: true, ready: false, aceito: false })).toBe('carga')
   expect(posseDaSpec({ iniciado: true, ready: true, aceito: false })).toBe('build')
   expect(posseDaSpec({ iniciado: true, ready: true, aceito: true })).toBe('fechamento')
+})
+
+// ---- C06-S02
+
+const planoC06: Plano = {
+  conjuntos: [
+    { id: 'C06', titulo: 'Contínuo', specs: [] },
+    { id: 'C07', titulo: 'Sete', specs: [], dependeDe: ['C06'] },
+    { id: 'C08', titulo: 'Oito', specs: [], dependeDe: ['C06'] },
+    { id: 'C09', titulo: 'Nove', specs: [], dependeDe: ['C07'] },
+  ],
+  specs: [],
+}
+const ped = (conjunto: string, chegada: number, migracoes: string[] = [], deploys: PedidoProducao['deploys'] = []): PedidoProducao => ({ conjunto, chegada, migracoes, deploys })
+
+test('A10: a set is served after the set it depends on, whatever arrived first', async () => {
+  expect(ordemProducao(planoC06, [ped('C09', 1), ped('C07', 2)]).ordem).toEqual(['C07', 'C09'])
+  expect(proximoProducao([{ conjunto: 'C09' }, { conjunto: 'C07' }], { conjuntos: ['C07', 'C09'], itens: {} })?.conjunto).toBe('C07')
+})
+
+test('A12: migrations go by the timestamp rule, not by finish order, with a ruling', async () => {
+  const r = ordemProducao(planoC06, [ped('C07', 1, ['20261110_add_auditoria']), ped('C08', 2, ['20261109_add_continuo'])], { migracao: { ordem: 'timestamp' } })
+  expect(r.ordem).toEqual(['C08', 'C07'])
+  expect(r.rulings.length).toBe(1)
+  expect(r.rulings[0]).toContain('20261109_add_continuo')
+  expect(r.rulings[0]).toContain('20261110_add_auditoria')
+})
+
+test('A13: a deploy waits for the migration it needs, even when its set arrived first', async () => {
+  const r = ordemProducao(planoC06, [ped('C08', 1, [], [{ alvo: 'notificar', precisa: '20261110_add_auditoria' }]), ped('C07', 2, ['20261110_add_auditoria'])])
+  expect(r.ordem).toEqual(['C07', 'C08'])
+})
+
+test('a dependency cycle leaves both sets out of the order', async () => {
+  const p: Plano = { conjuntos: [{ id: 'C07', titulo: '', specs: [] }, { id: 'C08', titulo: '', specs: [], dependeDe: ['C07'] }], specs: [] }
+  const r = ordemProducao(p, [ped('C07', 1, [], [{ alvo: 'x', precisa: 'm8' }]), ped('C08', 2, ['m8'])])
+  expect(r.ordem).toEqual([])
+  expect(r.ciclo).toEqual(['C07', 'C08'])
+})
+
+test('A14: a ledger without NOTE ORDEM-PRODUCAO serves arrival order', async () => {
+  expect(ordemDoLedger([])).toBe(null)
+  const fila = [{ conjunto: 'C08' }, { conjunto: 'C07' }]
+  expect(proximoProducao(fila, null)).toBe(fila[0])
+  expect(proximoProducao([], null)).toBe(null)
+})
+
+test('A11: the last NOTE ORDEM-PRODUCAO wins and round-trips', async () => {
+  const o = ordemDoLedger([
+    { tipo: 'NOTE', texto: 'ORDEM-PRODUCAO C07 C08' },
+    { tipo: 'NOTE', texto: 'SESSAO C07 x local_1 vazia' },
+    { tipo: 'NOTE', texto: 'ORDEM-PRODUCAO C08:merge C07' },
+  ])
+  expect(o).toEqual({ conjuntos: ['C08', 'C07'], itens: { C08: ['merge'] } })
+  const t = linhaOrdem(['C08', 'C07'], { C08: ['migracao=20261109_x', 'merge', 'deploy-notificar'] })
+  expect(t).toBe('ORDEM-PRODUCAO C08:migracao=20261109_x,merge,deploy-notificar C07')
+  expect(ordemDoLedger([{ tipo: 'NOTE', texto: t }])).toEqual({ conjuntos: ['C08', 'C07'], itens: { C08: ['migracao=20261109_x', 'merge', 'deploy-notificar'] } })
+})
+
+test('an unlisted set goes after every listed one, arrival breaking ties', async () => {
+  const fila = [{ conjunto: 'C10' }, { conjunto: 'C09' }, { conjunto: 'C07' }]
+  expect(proximoProducao(fila, { conjuntos: ['C07'], itens: {} })?.conjunto).toBe('C07')
+  expect(proximoProducao(fila.slice(0, 2), { conjuntos: ['C07'], itens: {} })?.conjunto).toBe('C10')
+})
+
+test('A27: the order keeps set ids only', async () => {
+  const o = ordemDoLedger([{ tipo: 'NOTE', texto: 'ORDEM-PRODUCAO C07 local_abc token C08' }])!
+  expect(o.conjuntos).toEqual(['C07', 'C08'])
+  expect(o.conjuntos.every(c => /^C\d{2}$/.test(c))).toBe(true)
+})
+
+test('A1, A2, A26, A28: when FECHA goes on its own', async () => {
+  expect(decidirFecha({ C: 'C06', modo: 'continuo', autorizado: true, clique: false, c08: false })).toEqual({ acao: 'enviar' })
+  expect(decidirFecha({ C: 'C06', modo: 'continuo', autorizado: true, clique: true, c08: false })).toEqual({ acao: 'perguntar', texto: 'C06 pronto para fechar' })
+  expect(decidirFecha({ C: 'C06', modo: 'continuo', autorizado: false, clique: false, c08: false })).toEqual({ acao: 'perguntar', texto: 'C06 pronto para fechar' })
+  expect(decidirFecha({ C: 'C06', modo: 'manual', autorizado: true, clique: false, c08: false })).toEqual({ acao: 'perguntar', texto: 'C06 pronto para fechar' })
+  expect(decidirFecha({ C: 'C06', modo: 'pausado', autorizado: true, clique: false, c08: false })).toEqual({ acao: 'nada' })
+})
+
+test('A1, A21: deterministic keys of the automatic FECHA, the GO inicio and the click', async () => {
+  expect(chaveCicloPendentes('FECHA C06 C06-S01=abcdef1234 C06-S02=1234567890')).toBe('ciclo-pendentes-C06-abcdef1-1234567')
+  expect(chaveGoInicio('C07', '20261028-1105')).toBe('go-inicio-C07-20261028-1105')
+  expect(chaveGoInicio('C07', '20261028-1105')).not.toMatch(/-fase4-/)
+  expect(chaveCliqueMerge('C05', ['ABCDEF1234', '1234567aaa'])).toBe('clique-merge-C05-abcdef1-1234567')
+})
+
+test('a malformed FECHA has no key', async () => {
+  expect(chaveCicloPendentes('FECHA C06')).toBe(null)
+  expect(chaveCicloPendentes('FECHA C06 C06-S01=xyz')).toBe(null)
+  expect(chaveCicloPendentes('FECHA C06 C06-S01=abc12')).toBe(null)
+  expect(chaveCicloPendentes('GO C06 inicio abcdef1')).toBe(null)
+})
+
+test('A15, A16: the profile ceiling and the scope decide what is granted', async () => {
+  const perfil = { migracao: { ordem: 'timestamp' }, deploys: [{ alvo: 'notificar', dispara: 'comando' }], merge: { clique: false }, teto: { migracaoProducao: false, deploy: true } }
+  const m = liberaProducao({ tipo: 'migracao', nome: '20261109_x' }, perfil, { migracoes: true, deploys: true, merge: true })
+  expect(m.ok).toBe(false)
+  if (!m.ok) {
+    expect(m.perguntar).toBe(false)
+    expect(m.espera).toContain('migração 20261109_x')
+  }
+  const manual = liberaProducao({ tipo: 'migracao', nome: '20261109_x' }, perfil, null)
+  expect(!manual.ok && manual.perguntar).toBe(true)
+  const semDeploys = liberaProducao({ tipo: 'deploy', nome: 'api' }, { merge: {} }, { deploys: true })
+  expect(!semDeploys.ok && semDeploys.perguntar).toBe(true)
+  expect(liberaProducao({ tipo: 'deploy', nome: 'notificar' }, perfil, null).ok).toBe(true)
+  const escopo = liberaProducao({ tipo: 'deploy', nome: 'notificar' }, perfil, { deploys: false })
+  expect(!escopo.ok && !escopo.perguntar && escopo.espera.includes('não cobre deploys')).toBe(true)
+  expect(liberaProducao({ tipo: 'merge', nome: 'C07' }, perfil, { merge: true }).ok).toBe(true)
+  expect(liberaProducao({ tipo: 'merge', nome: 'C07' }, null, null).ok).toBe(false)
+})
+
+test('A23, A24, A26: the dependency GO is due once per set, only in Contínuo', async () => {
+  const base = { liberados: ['C07', 'C08'], vazias: ['C07', 'C08'], enviados: new Set<string>(), pedidos: new Set<string>(), modo: 'continuo' }
+  expect(goDevidos(base)).toEqual(['C07', 'C08'])
+  expect(goDevidos({ ...base, enviados: new Set(['C07']) })).toEqual(['C08'])
+  expect(goDevidos({ ...base, pedidos: new Set(['C07', 'C08']) })).toEqual([])
+  expect(goDevidos({ ...base, vazias: [] })).toEqual([])
+  expect(goDevidos({ ...base, modo: 'pausado' })).toEqual([])
+  expect(goDevidos({ ...base, modo: 'manual' })).toEqual([])
+})
+
+test('production proofs name every resource of a batch, up to VERIFIED or the stamp', async () => {
+  const c = comprovantes(['APPLIED a.sql b.sql  # 2026-10-28T10:00:00Z', 'NOTE APPLIED x', 'DEPLOYED api notificar VERIFIED re-download  # 2026-10-28T11:00:00Z'].join('\n'))
+  expect(c.migracoes).toEqual([{ nome: 'a.sql', at: '2026-10-28T10:00:00Z' }, { nome: 'b.sql', at: '2026-10-28T10:00:00Z' }])
+  expect(c.deploys.map(d => d.alvo)).toEqual(['api', 'notificar'])
+})
+
+const vazio = { migracoes: [], deploys: [], merge: false, go: false }
+const ordemA17 = { conjuntos: ['C08'], itens: { C08: ['migracao=20261109_add_continuo', 'merge', 'deploy-notificar'] } }
+
+test('A17: belt rows in order, the holder running, the rest pending', async () => {
+  const ls = linhasEsteira(ordemA17, { dono: 'C08', soltos: [], feitos: {}, falha: {}, pr: { C08: 31 } })
+  expect(ls.map(l => `${l.k}. ${l.emoji} ${l.titulo}`)).toEqual(['1. 🗄️ migração 20261109_add_continuo', '2. 🔀 merge PR #31', '3. 🚀 deploy da notificar'])
+  expect(ls.map(l => l.status)).toEqual(['rodando', 'pendente', 'pendente'])
+  expect(linhasEsteira(null, { dono: null, soltos: [], feitos: {}, falha: {}, pr: {} })).toEqual([])
+})
+
+test('A18: a failed step turns red and stops the belt', async () => {
+  const ls = linhasEsteira({ conjuntos: ['C08', 'C09'], itens: ordemA17.itens }, { dono: 'C08', soltos: [], feitos: {}, falha: { C08: 'timeout' }, pr: {} })
+  expect(ls[0]).toMatchObject({ status: 'falhou', erro: 'timeout' })
+  expect(ls.slice(1).every(l => l.status === 'pendente')).toBe(true)
+})
+
+test('a released set without proofs stays pending, never done', async () => {
+  const ls = linhasEsteira(ordemA17, { dono: null, soltos: ['C08'], feitos: { C08: vazio }, falha: {}, pr: {} })
+  expect(ls.every(l => l.status === 'pendente' && l.sub.endsWith(' · sem comprovante'))).toBe(true)
+  const prova = linhasEsteira(ordemA17, { dono: 'C08', soltos: [], feitos: { C08: { ...vazio, migracoes: ['20261109_add_continuo'] } }, falha: {}, pr: {} })
+  expect(prova.map(l => l.status)).toEqual(['feito', 'rodando', 'pendente'])
+  expect(prova[0]!.sub).toBe('C08 · aplicada')
+})
+
+test('A30: the belt bar has one segment per row, its alt and the terminal fallback', async () => {
+  const ls = linhasEsteira(ordemA17, { dono: 'C08', soltos: [], feitos: { C08: { ...vazio, migracoes: ['20261109_add_continuo'] } }, falha: {}, pr: {} })
+  expect(resumoEsteira(ls)).toEqual({ segmentos: ['d', 'w', ''], alt: 'esteira de produção: 1 de 3 feitos', terminal: '▮▯▯' })
+})
+
+const cart = (o: Partial<Parameters<typeof cartaoMerge>[0]> = {}) =>
+  cartaoMerge({
+    C: 'C05', pr: 31, ci: 'verde' as Ci, merged: false, deployNoMerge: true, publicado: false, prontoParaMerge: false, clique: false,
+    orquestrador: true, dono: null, eu: { pessoa: 'Willian', maquina: 'PC1' }, aplicado: ['migração x'], ...o,
+  })
+
+test('A5: the merge card and toast claim only what is proven', async () => {
+  const pub = cart({ merged: true, publicado: true })!
+  expect(`${pub.emoji} ${pub.titulo}`).toBe('🚀 Mergeado e publicado')
+  expect(pub.sub).toBe('PR #31 · gate verde · automático pelo perfil')
+  expect(pub.toast).toBe('C05 mergeado e publicado · PR #31 · CI verde · migração x')
+  const aguarda = cart({ merged: true })!
+  expect(`${aguarda.emoji} ${aguarda.titulo}`).toBe('🔀 Mergeado')
+  expect(aguarda.toast).toBe(null)
+  expect(aguarda.ultima).toBe('publicação: aguardando o redeploy')
+  expect(cart({ merged: true, deployNoMerge: false, aplicado: [] })!.toast).toBe('C05 mergeado · PR #31 · CI verde · só o merge')
+  const semChecks = cart({ merged: true, deployNoMerge: false, ci: 'sem-checks' })!
+  expect(semChecks.sub).toContain('gate sem checks')
+  expect(semChecks.toast).toContain('sem CI')
+  expect(semChecks.toast).not.toContain('CI verde')
+  expect(cart({ merged: true, deployNoMerge: false, ci: 'sem-pr' })!.toast).not.toContain('PR #')
+})
+
+test('A6, A29: a click profile waits with the Button only for the owner', async () => {
+  const w = cart({ clique: true, prontoParaMerge: true })!
+  expect(`${w.emoji} ${w.titulo}`).toBe('🔀 Pronto para merge')
+  expect(w).toMatchObject({ botao: true, borda: 'warning', toast: null, ultima: 'o perfil pede aprovação humana · espera o clique, sem prazo' })
+  expect(cart({ clique: true, prontoParaMerge: true, ci: 'nao-confirmado' })!.sub).toBe('PR #31 · gate ainda não confirmado · merge pelo seu clique')
+  const ana = cart({ clique: true, prontoParaMerge: true, dono: { pessoa: 'Ana', podeLiberar: false } })!
+  expect(ana.botao).toBe(false)
+  expect(ana.ultima).toBe('merge e deploy esperam alguém da NovArc')
+  expect(cart({ clique: true, prontoParaMerge: true, dono: { pessoa: 'Willian', maquina: 'PC2', podeLiberar: true } })!.botao).toBe(false)
+  expect(cart({ clique: true, prontoParaMerge: true, dono: { pessoa: 'Willian', maquina: 'PC1', podeLiberar: true } })!.botao).toBe(true)
+  expect(cart({ clique: true, prontoParaMerge: true, orquestrador: false })!.botao).toBe(false)
+  expect(cart({ clique: true, prontoParaMerge: false })).toBe(null)
+})
+
+test('a card without a PR says PR #? and carries no session id', async () => {
+  const c = cart({ pr: null, merged: true, deployNoMerge: false })!
+  expect(c.sub).toContain('PR #?')
+  expect(JSON.stringify(c)).not.toMatch(/undefined|local_/)
 })

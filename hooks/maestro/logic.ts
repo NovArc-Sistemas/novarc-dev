@@ -62,7 +62,7 @@ export type ConjuntoDoc = { sessao?: string; iniciadoEm?: string; bloqueios?: Re
 export type Limiares = { calado: number; lockOrfao: number; fonte: 'padrao' | 'medido'; at: string }
 export type Proposta = { calado: number; lockOrfao: number; amostras: number; at: string }
 /** `config/orquestracao`: the orchestrator mod's singleton (run, slots, thresholds). */
-export type OrquestracaoDoc = { runId: string; sessao: string; iniciadaEm: string; slots: Slots; limiares: Limiares; proposta: Proposta | null; at: string }
+export type OrquestracaoDoc = { runId: string; sessao: string; iniciadaEm: string; slots: Slots; limiares: Limiares; proposta: Proposta | null; at: string; ordemProducao?: string[] }
 /** One `auditoria/{id}` document (C03-S01 dados.md); declared in types/index.d.ts, which must stay self-contained. */
 export type { AuditoriaDoc } from '../../types'
 
@@ -381,6 +381,283 @@ export function pastaDoCliente(cliente: string | null | undefined): string {
 
 /** A folder path's slug, the catalogue page's own rule (no marks, lowercase, runs of other chars become '-'). */
 export const slugPasta = (s: string) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+// ---- C06-S02: the production order, the continuous cycle's decisions, the belt and the merge card (pure)
+
+/**
+ * The part of the project profile (C06-S01 `execucao.perfil`) these helpers read, typed structurally so this block
+ * needs nothing of C06-S01; the real `Perfil` is passed in by assignment.
+ */
+export type PerfilProducao = {
+  migracao?: { ordem?: string }
+  deploys?: { alvo: string; dispara?: string }[]
+  merge?: { clique?: boolean }
+  teto?: { migracaoProducao?: boolean; deploy?: boolean }
+}
+
+/** One set's `producao` request: arrival time and the migrations and deploys it declares (`precisa` = a migration name). */
+export type PedidoProducao = { conjunto: string; chegada: number; migracoes: string[]; deploys: { alvo: string; precisa?: string }[] }
+
+/**
+ * The orchestrator's serving order between sets (orquestrar.md \u00a74 "Production order"): `dependeDe` first, a set whose
+ * deploy needs another set's migration after it, then (rule `timestamp`, the default) the older migration first with
+ * a ruling line, then plan `ordem` (else plan position), then arrival. Sets caught in or behind a cycle go to `ciclo`.
+ */
+export function ordemProducao(plano: Plano, fila: PedidoProducao[], perfil?: PerfilProducao | null): { ordem: string[]; rulings: string[]; ciclo: string[] } {
+  const conj = plano.conjuntos ?? []
+  const pos = (C: string) => {
+    const i = conj.findIndex(c => c.id === C)
+    const o = (conj[i] as { ordem?: unknown } | undefined)?.ordem
+    return typeof o === 'number' ? o : i < 0 ? Number.MAX_SAFE_INTEGER : i
+  }
+  const ped = new Map<string, PedidoProducao>()
+  for (const p of [...fila].sort((a, b) => a.chegada - b.chegada)) {
+    const x = ped.get(p.conjunto)
+    if (x) {
+      x.migracoes.push(...p.migracoes)
+      x.deploys.push(...p.deploys)
+    } else ped.set(p.conjunto, { ...p, migracoes: [...p.migracoes], deploys: [...p.deploys] })
+  }
+  const ids = [...ped.keys()]
+  const antes = new Map(ids.map(c => [c, new Set<string>()]))
+  for (const c of ids) {
+    for (const d of conj.find(x => x.id === c)?.dependeDe ?? []) if (d !== c && ped.has(d)) antes.get(c)!.add(d)
+    for (const dp of ped.get(c)!.deploys) {
+      if (dp.precisa) for (const o of ids) if (o !== c && ped.get(o)!.migracoes.includes(dp.precisa)) antes.get(c)!.add(o)
+    }
+  }
+  const porData = !perfil?.migracao?.ordem || perfil.migracao.ordem === 'timestamp'
+  const maisVelha = (c: string) => [...ped.get(c)!.migracoes].sort()[0] ?? null
+  const base = (a: string, b: string) => pos(a) - pos(b) || ped.get(a)!.chegada - ped.get(b)!.chegada
+  const regra = (a: string, b: string) => {
+    const ma = maisVelha(a)
+    const mb = maisVelha(b)
+    return porData && ma && mb && ma !== mb ? (ma < mb ? -1 : 1) : base(a, b)
+  }
+  const ordem: string[] = []
+  const rulings: string[] = []
+  const resta = new Set(ids)
+  while (resta.size) {
+    const prontos = [...resta].filter(c => [...antes.get(c)!].every(d => !resta.has(d)))
+    if (!prontos.length) break
+    const vez = [...prontos].sort(regra)[0]!
+    const semRegra = [...prontos].sort(base)[0]!
+    if (vez !== semRegra) rulings.push(`${vez} antes de ${semRegra}: migra\u00e7\u00e3o ${maisVelha(vez)} \u00e9 mais antiga que ${maisVelha(semRegra)} (regra timestamp)`)
+    ordem.push(vez)
+    resta.delete(vez)
+  }
+  return { ordem, rulings, ciclo: [...resta].sort(base) }
+}
+
+/** The last `NOTE ORDEM-PRODUCAO` of the orchestrator ledger: set ids in order, each set's declared items. */
+export type OrdemLedger = { conjuntos: string[]; itens: Record<string, string[]> }
+
+/** `ORDEM-PRODUCAO C07 C08:migracao=x,merge`: the last such NOTE wins; tokens that are not `C<nn>` are dropped. */
+export function ordemDoLedger(evs: { tipo: string; texto: string }[]): OrdemLedger | null {
+  let ultima: string | null = null
+  for (const e of evs) if (e.tipo === 'NOTE' && /^ORDEM-PRODUCAO(\s|$)/.test(e.texto.trim())) ultima = e.texto.trim()
+  if (ultima === null) return null
+  const out: OrdemLedger = { conjuntos: [], itens: {} }
+  for (const tok of ultima.split(/\s+/).slice(1)) {
+    const i = tok.indexOf(':')
+    const C = i < 0 ? tok : tok.slice(0, i)
+    if (!/^C\d{2}$/.test(C) || out.conjuntos.includes(C)) continue
+    out.conjuntos.push(C)
+    const itens = i < 0 ? [] : tok.slice(i + 1).split(',').filter(Boolean)
+    if (itens.length) out.itens[C] = itens
+  }
+  return out
+}
+
+/** The text of a `NOTE ORDEM-PRODUCAO` line (without `NOTE`), the inverse of `ordemDoLedger`. */
+export function linhaOrdem(ordem: string[], itens: Record<string, string[]>): string {
+  return ['ORDEM-PRODUCAO', ...ordem.map(C => (itens[C]?.length ? `${C}:${itens[C]!.join(',')}` : C))].join(' ')
+}
+
+/** The next `producao` request to grant: listed sets by their place in the order, unlisted after; `fila` is in arrival order. */
+export function proximoProducao<T extends { conjunto: string }>(fila: T[], ordem: OrdemLedger | null): T | null {
+  if (!fila.length) return null
+  if (!ordem) return fila[0]!
+  const lugar = (C: string) => {
+    const i = ordem.conjuntos.indexOf(C)
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i
+  }
+  return fila.map((f, i) => ({ f, i })).sort((a, b) => lugar(a.f.conjunto) - lugar(b.f.conjunto) || a.i - b.i)[0]!.f
+}
+
+export const MOTIVO_FECHA = 'pendentes resolvidos no pr\u00e9-fechamento das specs'
+
+/**
+ * `CONJUNTO <C> pronto` with \u00a75.1 holding (R1, R2, R27, R29): Pausado sends nothing; Cont\u00ednuo with the authorization
+ * sends FECHA, except a click profile before C08; everything else asks the person who conducts.
+ */
+export function decidirFecha(i: { C: string; modo: 'manual' | 'continuo' | 'pausado'; autorizado: boolean; clique: boolean | undefined; c08: boolean }): { acao: 'enviar' } | { acao: 'perguntar'; texto: string } | { acao: 'nada' } {
+  if (i.modo === 'pausado') return { acao: 'nada' }
+  if (i.modo === 'continuo' && i.autorizado && !(i.clique && !i.c08)) return { acao: 'enviar' }
+  return { acao: 'perguntar', texto: `${i.C} pronto para fechar` }
+}
+
+const sha7 = (s: string) => s.slice(0, 7).toLowerCase()
+
+/** R4: `FECHA C06 C06-S01=<sha> C06-S02=<sha>` -> `ciclo-pendentes-C06-<sha7>-<sha7>`; a line without valid pins has no key. */
+export function chaveCicloPendentes(linhaFecha: string): string | null {
+  const m = String(linhaFecha).split(/\r?\n/)[0]!.trim().match(/^FECHA (C\d{2})((?: C\d{2}-S\d{2}=[0-9a-fA-F]{7,})+)$/)
+  if (!m) return null
+  return `ciclo-pendentes-${m[1]}-${m[2]!.trim().split(' ').map(p => sha7(p.slice(p.indexOf('=') + 1))).join('-')}`
+}
+
+/** R22: the GO inicio key, distinct from C03's phase-4 key `go-<slug>-fase4-<runId>`. */
+export const chaveGoInicio = (C: string, runId: string) => `go-inicio-${C}-${runId}`
+
+/** R9: the click's key over the pinned heads, the same for the pane button and the agent. */
+export const chaveCliqueMerge = (C: string, pins: string[]) => `clique-merge-${C}-${pins.map(sha7).join('-')}`
+
+/**
+ * Whether one production step may be granted (R16, R17). `escopo` null = Manual: the ceiling alone, a step it forbids
+ * asks the person; an object = Cont\u00ednuo: the ceiling and the scope, a miss waits. A step the profile does not describe
+ * always asks.
+ */
+export function liberaProducao(
+  item: { tipo: 'migracao' | 'deploy' | 'merge'; nome: string },
+  perfil: PerfilProducao | null | undefined,
+  escopo: { migracoes?: boolean; deploys?: boolean; merge?: boolean } | null,
+): { ok: true } | { ok: false; espera: string; perguntar: boolean } {
+  const rot = item.tipo === 'migracao' ? `migra\u00e7\u00e3o ${item.nome}` : item.tipo === 'deploy' ? `deploy da ${item.nome}` : `merge do ${item.nome}`
+  const pede = (motivo: string, perguntar: boolean) => ({ ok: false as const, espera: `${rot} espera voc\u00ea: ${motivo}`, perguntar })
+  const descrito = !!perfil && (item.tipo === 'migracao' ? !!perfil.migracao : item.tipo === 'deploy' ? !!perfil.deploys?.some(d => d.alvo === item.nome) : !!perfil.merge)
+  if (!descrito) return pede('o perfil do projeto n\u00e3o descreve esse passo', true)
+  const teto = item.tipo === 'migracao' ? perfil!.teto?.migracaoProducao === true : item.tipo === 'deploy' ? perfil!.teto?.deploy === true : true
+  if (!teto) return pede(item.tipo === 'migracao' ? 'o teto do perfil n\u00e3o libera migra\u00e7\u00e3o em produ\u00e7\u00e3o' : 'o teto do perfil n\u00e3o libera deploy', escopo === null)
+  if (escopo === null) return { ok: true }
+  const cobre = item.tipo === 'migracao' ? escopo.migracoes : item.tipo === 'deploy' ? escopo.deploys : escopo.merge
+  if (!cobre) return pede(`a autoriza\u00e7\u00e3o n\u00e3o cobre ${item.tipo === 'migracao' ? 'migra\u00e7\u00f5es' : item.tipo === 'deploy' ? 'deploys' : 'o merge'}`, false)
+  return { ok: true }
+}
+
+/** go-safety-net (R24, R25, R27): released sets whose empty session waits, with no delivered GO and no turn queued yet. */
+export function goDevidos(i: { liberados: string[]; vazias: string[]; enviados: Set<string>; pedidos: Set<string>; modo: string }): string[] {
+  if (i.modo !== 'continuo') return []
+  return i.liberados.filter(C => i.vazias.includes(C) && !i.enviados.has(C) && !i.pedidos.has(C))
+}
+
+const CARIMBO = /\s+#\s(\d{4}-\d\d-\d\dT\S*)\s*$/
+
+/** The `APPLIED <files\u2026>` and `DEPLOYED <targets\u2026> [VERIFIED <how>]` lines of a ledger: every named resource, with its stamp. */
+export function comprovantes(texto: string): { migracoes: { nome: string; at: string }[]; deploys: { alvo: string; at: string }[] } {
+  const out = { migracoes: [] as { nome: string; at: string }[], deploys: [] as { alvo: string; at: string }[] }
+  for (const l of String(texto).split(/\r?\n/)) {
+    const at = l.match(CARIMBO)?.[1] ?? ''
+    const t = l.replace(CARIMBO, '').trim().split(/\s+/)
+    if (t[0] !== 'APPLIED' && t[0] !== 'DEPLOYED') continue
+    const fim = t.indexOf('VERIFIED')
+    for (const r of t.slice(1, fim < 0 ? undefined : fim)) {
+      if (t[0] === 'APPLIED') out.migracoes.push({ nome: r, at })
+      else out.deploys.push({ alvo: r, at })
+    }
+  }
+  return out
+}
+
+export type LinhaEsteira = { k: number; emoji: string; titulo: string; sub: string; status: 'feito' | 'rodando' | 'pendente' | 'falhou'; erro?: string }
+
+/**
+ * The belt rows (R18, R19) in the orchestrator's order. A row is done only on a proof; the first unproven row of the
+ * set holding the grant runs (or failed, when the set reported `parada:falha-deploy`), and every row after a failure
+ * waits. A released set (`soltos`) with unproven rows says so.
+ */
+export function linhasEsteira(
+  ordem: OrdemLedger | null,
+  i: { dono: string | null; soltos: string[]; feitos: Record<string, { migracoes: string[]; deploys: string[]; merge: boolean; go: boolean }>; falha: Record<string, string>; pr: Record<string, number | null> },
+): LinhaEsteira[] {
+  const out: LinhaEsteira[] = []
+  let parado = false
+  for (const C of ordem?.conjuntos ?? []) {
+    const f = i.feitos[C] ?? { migracoes: [], deploys: [], merge: false, go: false }
+    let primeiro = true
+    for (const it of ordem!.itens[C] ?? ['merge']) {
+      const r = it.startsWith('migracao=')
+        ? { emoji: '\ud83d\uddc4\ufe0f', titulo: `migra\u00e7\u00e3o ${it.slice(9)}`, prova: f.migracoes.includes(it.slice(9)), sub: f.migracoes.includes(it.slice(9)) ? `${C} \u00b7 aplicada` : C }
+        : it === 'merge'
+          ? { emoji: '\ud83d\udd00', titulo: i.pr[C] ? `merge PR #${i.pr[C]}` : `merge ${C}`, prova: f.merge, sub: `${C} \u00b7 autom\u00e1tico` }
+          : it.startsWith('deploy-')
+            ? { emoji: '\ud83d\ude80', titulo: `deploy da ${it.slice(7)}`, prova: f.deploys.includes(it.slice(7)), sub: `${C} \u00b7 depois do merge` }
+            : it === 'go'
+              ? { emoji: '\ud83d\udce8', titulo: `GO ${C}`, prova: f.go, sub: 'brief atual' }
+              : null
+      if (!r) continue
+      const linha: LinhaEsteira = { k: out.length + 1, emoji: r.emoji, titulo: r.titulo, sub: r.sub, status: 'pendente' }
+      if (r.prova) linha.status = 'feito'
+      else if (!parado && primeiro && i.falha[C] !== undefined) {
+        linha.status = 'falhou'
+        linha.erro = i.falha[C]
+        parado = true
+      } else if (!parado && primeiro && C === i.dono) linha.status = 'rodando'
+      else if (i.soltos.includes(C)) linha.sub = `${r.sub} \u00b7 sem comprovante`
+      if (!r.prova) primeiro = false
+      out.push(linha)
+    }
+  }
+  return out
+}
+
+/** The belt bar (R31): one segment per row, its alt text and the terminal fallback. */
+export function resumoEsteira(ls: LinhaEsteira[]): { segmentos: ('d' | 'w' | 'b' | '')[]; alt: string; terminal: string } {
+  const S = { feito: 'd', rodando: 'w', falhou: 'b', pendente: '' } as const
+  const d = ls.filter(l => l.status === 'feito').length
+  return { segmentos: ls.map(l => S[l.status]), alt: `esteira de produ\u00e7\u00e3o: ${d} de ${ls.length} feitos`, terminal: ls.map(l => (l.status === 'feito' ? '\u25ae' : '\u25af')).join('') }
+}
+
+/** What the PR checks proved at the merge: green, none ran, no PR (local merge), or not confirmed. */
+export type Ci = 'verde' | 'sem-checks' | 'sem-pr' | 'nao-confirmado'
+
+export type CartaoMerge = { emoji: '\ud83d\ude80' | '\ud83d\udd00'; titulo: string; sub: string; ultima: string | null; botao: boolean; borda: 'warning' | 'neutro'; toast: string | null }
+
+/**
+ * The merge card and toast of a set (R6, R7, R8, R28, R30): only what is proven. Published only with a deploy proof
+ * after the merge; `gate verde` / `CI verde` only with green checks; the click Button only for the owner.
+ */
+export function cartaoMerge(i: {
+  C: string
+  pr: number | null
+  ci: Ci | null
+  merged: boolean
+  deployNoMerge: boolean
+  publicado: boolean
+  prontoParaMerge: boolean
+  clique: boolean | undefined
+  orquestrador: boolean
+  dono: { pessoa?: string; maquina?: string; podeLiberar?: boolean } | null
+  eu: { pessoa: string; maquina: string }
+  aplicado: string[]
+}): CartaoMerge | null {
+  const gate = (esperando: boolean) => (i.ci === 'verde' ? 'gate verde' : i.ci === 'sem-checks' ? 'gate sem checks' : esperando ? 'gate ainda n\u00e3o confirmado' : 'gate n\u00e3o confirmado')
+  const pr = (esperando: boolean) => (i.ci === 'sem-pr' ? 'merge local' : `PR #${i.pr ?? '?'} \u00b7 ${gate(esperando)}`)
+  const modo = i.clique ? 'merge pelo seu clique' : 'autom\u00e1tico pelo perfil'
+  if (i.merged) {
+    const ci = i.ci === 'verde' ? 'CI verde' : i.ci === 'sem-checks' ? 'sem CI' : 'CI n\u00e3o confirmado'
+    const meio = i.ci === 'sem-pr' ? '' : ` \u00b7 PR #${i.pr ?? '?'} \u00b7 ${ci}`
+    return {
+      emoji: i.publicado ? '\ud83d\ude80' : '\ud83d\udd00',
+      titulo: i.publicado ? 'Mergeado e publicado' : 'Mergeado',
+      sub: `${pr(false)} \u00b7 ${modo}`,
+      ultima: !i.publicado && i.deployNoMerge ? 'publica\u00e7\u00e3o: aguardando o redeploy' : null,
+      botao: false,
+      borda: 'neutro',
+      toast: i.publicado || !i.deployNoMerge ? `${i.C} mergeado${i.publicado ? ' e publicado' : ''}${meio} \u00b7 ${i.aplicado.join(', ') || 's\u00f3 o merge'}` : null,
+    }
+  }
+  if (!i.clique || !i.prontoParaMerge) return null
+  const d = i.dono
+  return {
+    emoji: '\ud83d\udd00',
+    titulo: 'Pronto para merge',
+    sub: `${pr(true)} \u00b7 ${modo}`,
+    ultima: d?.podeLiberar === false ? 'merge e deploy esperam algu\u00e9m da NovArc' : 'o perfil pede aprova\u00e7\u00e3o humana \u00b7 espera o clique, sem prazo',
+    botao: i.orquestrador && (d === null || (d.podeLiberar !== false && !!d.pessoa && d.pessoa === i.eu.pessoa && !!d.maquina && d.maquina === i.eu.maquina)),
+    borda: 'warning',
+    toast: null,
+  }
+}
 
 // ---- C06-S01: project profile, continuous-mode authorization and mode
 

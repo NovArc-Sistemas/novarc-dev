@@ -969,7 +969,7 @@ export function linhaRelay(p: Prevista): string {
 
 /** Parses `linhaRelay` back; a RELAY whose third field is not a directive key (the set ledger's own RELAY) is null. */
 export function lerRelay(linha: string): { acao: string; alvo: string; chave: string; linha: string } | null {
-  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^RELAY (\S+) (\S+) ((?:go|release|status|lock|slot|marco)-\S+) (.+)$/)
+  const m = linha.trim().replace(STAMP_LEDGER, '').match(/^RELAY (\S+) (\S+) ((?:go|release|status|lock|slot|marco|ciclo-pendentes|clique-merge)-\S+) (.+)$/) // C06-S02: the cycle's keys too
   return m ? { acao: m[1]!, alvo: m[2]!, chave: m[3]!, linha: m[4]! } : null
 }
 

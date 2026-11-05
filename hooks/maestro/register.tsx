@@ -81,6 +81,11 @@ import { decidirMarco, posseDaSpec } from './logic'
 import { acimaDoTeto, autorizado, camposReinicio, escopoSugerido, linhaEscopoCartao, modoDe, mudarModo, nomePerfil, resumoEscopo, seloModo, validarConcessao, type ContinuoDoc, type EscopoContinuo, type ModoContinuo } from './logic'
 import { ATALHOS, cartaoLiberacao, cartaoRecado, cartoesParada, faixaModo } from './continuo-ui'
 import { episodiosParada, paradaObrigatoria, type Parada, type TipoParada } from './execucao'
+// C06-S02: the continuous cycle and the production belt
+import {
+  MOTIVO_FECHA, cartaoMerge, chaveCicloPendentes, chaveCliqueMerge, chaveGoInicio, comprovantes, goDevidos, linhasEsteira, ordemDoLedger, resumoEsteira,
+  type CartaoMerge, type Ci, type LinhaEsteira,
+} from './logic'
 import { abaConfiguracao } from './configuracao-aba'
 import { NOVARC_CONTINUO_MD, NOVARC_MD, comImport, importsRegras, regrasNoInicio, semImports } from './regras'
 
@@ -124,6 +129,7 @@ const SEL = { plugin: 'novarc', key: 'maestroSelConjunto' } as const
 const CONTINUO = { plugin: 'novarc', key: 'maestroContinuo' } as const
 const CONTINUO_UI = { plugin: 'novarc', key: 'maestroContinuoUi' } as const
 const PARADAS = { plugin: 'novarc', key: 'maestroParadas' } as const
+const CICLO = { plugin: 'novarc', key: 'maestroCiclo' } as const
 const NUNCA = 'maestro-nunca'
 // C06-S01: set only after a first install wrote NOVARC.md and the import line (R24: an interrupted install retries)
 const REGRAS_INSTALADAS = 'maestro-regras-instaladas'
@@ -164,6 +170,7 @@ const PADRAO: Record<string, () => unknown> = {
   maestroContinuo: () => ({ doc: null, versao: null, at: null }),
   maestroContinuoUi: () => ({ cartao: false, erro: null, recado: false, pedidoEm: null }),
   maestroParadas: () => ({ abertas: [], tratadas: {}, pendentes: {}, pausaPendente: null }),
+  maestroCiclo: () => CICLO_VAZIO(),
 }
 const objeto = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -206,6 +213,7 @@ async function cru($: any, k: string): Promise<unknown> {
     case 'maestroContinuo': return (await $.state.get(CONTINUO)).value
     case 'maestroContinuoUi': return (await $.state.get(CONTINUO_UI)).value
     case 'maestroParadas': return (await $.state.get(PARADAS)).value
+    case 'maestroCiclo': return (await $.state.get(CICLO)).value
     default: throw new Error(`ler: chave desconhecida ${k}`)
   }
 }
@@ -586,6 +594,11 @@ async function atualizar($: any, doTimer = false): Promise<void> {
       } catch (err) {
         await logarUmaVez($, 'familia', err)
       }
+      try {
+        await passoCiclo($, g) // C06-S02: merge proofs, belt proofs, go-safety-net
+      } catch (err) {
+        await logarUmaVez($, 'ciclo', err)
+      }
     }
     if (!velho(g)) await prepararFaixa($)
   } catch {
@@ -874,7 +887,11 @@ export async function auditar(
   const at = new Date()
   const id = idObservado(at, sessao, ++nAuditoria)
   quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
-  const doc = entradaAuditoria(e, { at, runId: runIdAtual(ex), sessao: nomeDaSessao(ex), papel: ex.papel, by: quem })
+  enfileirar($, id, entradaAuditoria(e, { at, runId: runIdAtual(ex), sessao: nomeDaSessao(ex), papel: ex.papel, by: quem }))
+}
+
+/** C06-S02: the queue's one entry point (auditar and auditarChave): push, cut, mirror, and arm the flush when it was empty. */
+function enfileirar($: any, id: string, doc: AuditoriaDoc): void {
   const vazia = !fila.length
   fila.push({ id, doc })
   cortarFila($)
@@ -990,6 +1007,429 @@ async function guardarGo($: any, C: string, texto: string): Promise<void> {
   const copia = gosAtual
   espelhoGos = espelhoGos.then(() => (velho(g) ? undefined : $.state.set(GOS, copia))).catch(() => {})
   await espelhoGos
+}
+
+// ---- C06-S02: the continuous cycle (orquestrar.md §4 and §5): keyed FECHA / GO inicio, proven merges, the belt's
+// proofs, the merge card and the go-safety-net. The module copy is the single writer, mirrored like the GO copy.
+
+type Ciclo = {
+  merges: Record<string, { pr: number | null; ci: Ci | null; merged: boolean; mergedAt: number | null; toast: 'merge' | 'publicado' | null }>
+  pendentes: { C: string; sha7: string; ids: string[]; tentativas: number; at: number }[]
+  provas: string[]
+  goPedidos: Record<string, number>
+  goFalhas: Record<string, number>
+}
+const CICLO_VAZIO = (): Ciclo => ({ merges: {}, pendentes: [], provas: [], goPedidos: {}, goFalhas: {} })
+let cicloAtual: Ciclo = CICLO_VAZIO()
+let cicloSemeado = false
+let espelhoCiclo: Promise<unknown> = Promise.resolve()
+// Keys of a FECHA / GO inicio between its reservation and its send's answer (R4, R22): a second send waits out.
+const emEnvio = new Set<string>()
+// Per ledger file of a set dir: the last text read, shared by the set fold (dobrar, lerMapa) and the belt's proofs, so
+// a file is read once per change whichever runs first (the look tick and the poll tick each read the set dirs).
+type TextoLido = { size: number; mtimeMs: number; texto: string; c?: ReturnType<typeof comprovantes> }
+const textosConjunto: Record<string, TextoLido> = {}
+async function lerConjuntoArquivo($: any, p: string, f: { size: number; mtimeMs: number }): Promise<string> {
+  const v = textosConjunto[p]
+  if (v && v.size === f.size && v.mtimeMs === f.mtimeMs) return v.texto
+  const texto = String(await $.fs.read(p))
+  textosConjunto[p] = { size: f.size, mtimeMs: f.mtimeMs, texto }
+  return texto
+}
+// A merge report re-checked against origin at most this many polls.
+const MAX_PROVA_MERGE = 6
+
+async function semearCiclo($: any): Promise<void> {
+  if (cicloSemeado) return
+  cicloSemeado = true // before the await: a second caller never reads again
+  const l = (await ler($, 'maestroCiclo')) as Ciclo
+  const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
+  const obj = <T,>(v: unknown): Record<string, T> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, T>) : {})
+  const lido: Ciclo = { merges: obj(l.merges), pendentes: arr(l.pendentes), provas: arr(l.provas), goPedidos: obj(l.goPedidos), goFalhas: obj(l.goFalhas) }
+  cicloAtual = {
+    merges: { ...lido.merges, ...cicloAtual.merges },
+    pendentes: [...lido.pendentes, ...cicloAtual.pendentes],
+    provas: [...new Set([...lido.provas, ...cicloAtual.provas])],
+    goPedidos: { ...lido.goPedidos, ...cicloAtual.goPedidos },
+    goFalhas: { ...lido.goFalhas, ...cicloAtual.goFalhas },
+  }
+}
+
+function mudarCiclo($: any, f: (c: Ciclo) => Ciclo): void {
+  const g = geracao
+  cicloAtual = f(cicloAtual)
+  const copia = cicloAtual
+  espelhoCiclo = espelhoCiclo.then(() => (velho(g) ? undefined : $.state.set(CICLO, copia))).catch(() => {})
+}
+
+/** The two agent lines this spec keys (R4, R22): the key, its audit action and reason; null for any other line. */
+function chaveDoCiclo(linha: string, ex: Execucao): { chave: string; acao: string; motivo: string; alvo: string } | null {
+  const runId = runIdAtual(ex)
+  const go = linha.match(/^GO (C\d{2}) inicio \S+/)
+  if (go && runId) return { chave: chaveGoInicio(go[1]!, runId), acao: 'GO-DEPENDENCIA', motivo: 'dependência concluída', alvo: go[1]! }
+  const fecha = chaveCicloPendentes(linha)
+  if (fecha && modoDe(((cicloModo ?? null) as ContinuoDoc | null), runId) === 'continuo') return { chave: fecha, acao: 'CICLO-PENDENTES', motivo: MOTIVO_FECHA, alvo: linha.split(/\s+/)[1]! }
+  return null
+}
+// The cached config/continuo document, kept in step by the session.send hook's own read (no tool call on the hot path).
+let cicloModo: ContinuoDoc | null = null
+
+/**
+ * Before the send (R4, R22, plan "Send lifecycle"): the key reserved in memory with no await before it, then the keyed
+ * `auditoria` row `enviando` (an exists refusal reads the row: `enviado` stops the send), else a RELAY line; with no
+ * durable trail at all the send is refused.
+ */
+async function reservarAntes($: any, linha: string, k: { chave: string; acao: string; motivo: string; alvo: string }): Promise<{ seguir: true; versao: number | null } | { seguir: false; motivo: string }> {
+  if (emEnvio.has(k.chave)) return { seguir: false, motivo: 'envio em curso' }
+  emEnvio.add(k.chave)
+  const solta = (motivo: string) => {
+    emEnvio.delete(k.chave)
+    return { seguir: false as const, motivo }
+  }
+  if (envios[k.chave]?.estado === 'enviado') return solta('já entregue')
+  const ex = ultimoExec!
+  const url = (((await ler($, 'ctx')) ?? null) as Contexto | null)?.artefato
+  const relay = async () => ((await anexarLedger($, 'RELAY', `${k.acao} ${k.alvo} ${k.chave} ${linha}`)) ? { seguir: true as const, versao: null } : solta('sem trilha durável'))
+  if (!url) return relay()
+  quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
+  const doc = entradaAuditoria({ acao: k.acao, alvo: k.alvo, motivo: k.motivo, regra: k.acao === 'CICLO-PENDENTES' ? 'autorizado(fecha)' : 'autorizado(go)', linha, origem: 'agente' }, { at: new Date(), runId: runIdAtual(ex), sessao: nomeDaSessao(ex), papel: 'orquestrador', by: quem })
+  let r: any = null
+  try {
+    r = await $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection: 'auditoria', doc_id: k.chave, data: { ...doc, estado: 'enviando' } })
+  } catch {
+    return relay()
+  }
+  if (r && r.deny === undefined && !r.isError) return { seguir: true, versao: Number(String(r.text ?? '').match(/\bversion (\d+)/i)?.[1]) || null }
+  if (!existe(String(r?.deny ?? r?.text ?? ''))) return relay()
+  try {
+    const g = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection: 'auditoria', doc_id: k.chave })
+    const d = lerDocs(String(g?.text ?? ''))[0]
+    if ((d?.data as Partial<AuditoriaDoc> | undefined)?.estado === 'enviado') {
+      envios[k.chave] = { acao: k.acao, alvo: k.alvo, at: Date.now(), estado: 'enviado' }
+      diretivasFeitas.add(k.chave)
+      espelharDiretivas($)
+      return solta('já entregue')
+    }
+    return { seguir: true, versao: d?.version ?? null }
+  } catch {
+    return { seguir: true, versao: null }
+  }
+}
+
+/** After a delivered send: the key is done, and its row moves to `enviado` pinned to the reserved version. */
+async function marcarEntregue($: any, k: { chave: string; acao: string; alvo: string }, versao: number | null): Promise<void> {
+  envios[k.chave] = { acao: k.acao, alvo: k.alvo, at: Date.now(), estado: 'enviado' }
+  diretivasFeitas.add(k.chave)
+  espelharDiretivas($)
+  const url = (((await ler($, 'ctx')) ?? null) as Contexto | null)?.artefato
+  if (!url || versao === null) return
+  for (let v: number | null = versao, i = 0; v !== null && i < 2; i++) {
+    const r = await $.tool.call({ tool: 'ArtifactData', action: 'update', url, collection: 'auditoria', doc_id: k.chave, if_version: v, data: { estado: 'enviado' } })
+    if (r && r.deny === undefined && !r.isError) return
+    const g = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection: 'auditoria', doc_id: k.chave })
+    v = lerDocs(String(g?.text ?? ''))[0]?.version ?? null
+  }
+  $.ui.log(`maestro: ${k.chave} entregue, mas a linha de auditoria ficou em enviando`)
+}
+
+/** One audit record under a deterministic id through the C03 queue: a re-read or a restart writes it once (exists refusal). */
+async function auditarChave($: any, id: string, e: Parameters<typeof auditar>[1]): Promise<void> {
+  const ex = ultimoExec
+  if (!ex?.papel || fila.some(x => x.id === id)) return
+  quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
+  enfileirar($, id, entradaAuditoria(e, { at: new Date(), runId: runIdAtual(ex), sessao: nomeDaSessao(ex), papel: ex.papel, by: quem }))
+}
+
+const ESTAGIO_PR = /\/pull\/(\d+)/
+
+/** The pins of the last `NOTE FECHA <C> <S>=<sha> ...` this orchestrator wrote: what it approved. */
+function pinsDoFecha(C: string): Record<string, string> {
+  let pins: Record<string, string> = {}
+  for (const e of eventosOrq) {
+    const t = e.texto.trim().split(/\s+/)
+    if (e.tipo === 'NOTE' && t[0] === 'FECHA' && t[1] === C) pins = Object.fromEntries(t.slice(2).filter(p => /^C\d{2}-S\d{2}=[0-9a-f]{7,}$/i.test(p)).map(p => p.split('=') as [string, string]))
+  }
+  return pins
+}
+
+/**
+ * The git proof of a merge report (plan "Authenticity", R6): the reported sha is a commit on origin's default branch,
+ * every approved pin of the reported specs is in it, and it is not older than this run's base. `null` = not yet
+ * decidable (origin not updated), true / false = decided.
+ */
+async function provarMerge($: any, p: { C: string; sha7: string; ids: string[] }): Promise<boolean | null> {
+  const cwd = raizWorktree ?? cwdSessao
+  const git = async (...a: string[]) => {
+    try {
+      return Number((await $.process.run(['git', ...a], { cwd }))?.exitCode)
+    } catch {
+      return 1
+    }
+  }
+  const pins = pinsDoFecha(p.C)
+  const meus = p.ids.map(id => pins[id]).filter((x): x is string => !!x)
+  if (!meus.length || meus.length !== p.ids.length) return false
+  await git('fetch', 'origin', '--quiet')
+  if ((await git('rev-parse', '--verify', '--quiet', `${p.sha7}^{commit}`)) !== 0) return null
+  if ((await git('merge-base', '--is-ancestor', p.sha7, `origin/${ramoPadrao}`)) !== 0) return null
+  for (const pin of meus) if ((await git('merge-base', '--is-ancestor', pin, p.sha7)) !== 0) return false
+  const base = notasOrq(eventosOrq).base
+  if (base && (await git('merge-base', '--is-ancestor', p.sha7, base)) === 0) return false
+  return true
+}
+
+/** What the PR's checks proved: one `gh pr checks <n>` (exit 0 with lines = green; "no checks" = none ran). */
+async function ciDoPr($: any, pr: number | null): Promise<Ci> {
+  if (pr === null) return 'sem-pr'
+  try {
+    const r = await $.process.run(['gh', 'pr', 'checks', String(pr)], { cwd: raizWorktree ?? cwdSessao })
+    const t = `${r?.stdout ?? ''}${r?.stderr ?? ''}`
+    if (/no checks reported/i.test(t)) return 'sem-checks'
+    return Number(r?.exitCode) === 0 && t.trim() ? 'verde' : 'nao-confirmado'
+  } catch {
+    return 'nao-confirmado'
+  }
+}
+
+/** Each set's production proofs from its ledger dir (`ledger.md` and `fork-*.md`), read only past the last read size. */
+async function provasDosConjuntos($: any): Promise<Record<string, { migracoes: { nome: string; at: string }[]; deploys: { alvo: string; at: string }[] }>> {
+  const out: Record<string, { migracoes: { nome: string; at: string }[]; deploys: { alvo: string; at: string }[] }> = {}
+  const dirs = await dirsDosConjuntos($)
+  for (const [C, dir] of Object.entries(dirs)) {
+    const acc = { migracoes: [] as { nome: string; at: string }[], deploys: [] as { alvo: string; at: string }[] }
+    try {
+      const fs = ((await $.fs.list(dir)) as { name: string; size: number; mtimeMs: number }[]).filter(f => f.name === 'ledger.md' || /^fork-.+\.md$/.test(f.name))
+      for (const f of fs) {
+        const p = `${dir}/${f.name}`
+        await lerConjuntoArquivo($, p, f) // read only when it changed since the fold or the last tick read it
+        const v = textosConjunto[p]!
+        v.c ??= comprovantes(v.texto)
+        acc.migracoes.push(...v.c.migracoes)
+        acc.deploys.push(...v.c.deploys)
+      }
+    } catch {
+      // no ledger yet: no proofs
+    }
+    out[C] = acc
+  }
+  return out
+}
+
+/** The set ids the orchestrator ledger shows as failed production (`NOTE CONJUNTO <C> bloqueado parada:falha-deploy <erro>`). */
+function falhasDeProducao(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const e of eventosOrq) {
+    const m = e.tipo === 'NOTE' ? e.texto.trim().match(/^CONJUNTO (C\d{2}) bloqueado parada:falha-deploy\s*(.*)$/) : null
+    if (m) out[m[1]!] = m[2] || 'falha no deploy'
+  }
+  return out
+}
+
+/** The plan's profile, the run mode and what a card needs about owner and this person (orchestrator). */
+async function contextoCiclo($: any): Promise<{ plano: Plano | null; perfil: any; modo: ModoContinuo; runId: string | null }> {
+  const c = ((await ler($, 'ctx')) ?? null) as Contexto | null
+  const plano = (c?.plano ?? null) as Plano | null
+  const ex = ultimoExec
+  const doc = ((await ler($, 'maestroContinuo')) as MaestroContinuo).doc
+  cicloModo = doc
+  const runId = ex ? runIdAtual(ex) : null
+  return { plano, perfil: plano?.execucao?.perfil ?? null, modo: modoDe(doc, runId), runId }
+}
+
+/**
+ * The cycle's poll step (orchestrator, after the family step): pending merge proofs, the belt's proofs and their audit
+ * rows, the publish toast, and the go-safety-net (R24-R27): 0 database reads.
+ */
+let cicloRodando = false
+async function passoCiclo($: any, g: number): Promise<void> {
+  const ex = ultimoExec
+  if (ex?.papel !== 'orquestrador' || velho(g) || cicloRodando) return
+  cicloRodando = true
+  try {
+    await passoCicloDentro($, g)
+  } finally {
+    cicloRodando = false
+  }
+}
+
+async function passoCicloDentro($: any, g: number): Promise<void> {
+  await semearCiclo($)
+  const { plano, perfil, modo } = await contextoCiclo($)
+  // 1. merge reports waiting for origin
+  for (const p of [...cicloAtual.pendentes]) {
+    const r = await provarMerge($, p)
+    if (velho(g)) return
+    if (r === true) await aceitarMerge($, p, perfil)
+    else if (r === false || p.tentativas + 1 >= MAX_PROVA_MERGE) {
+      $.ui.log(`maestro: relato de merge do ${p.C} (${p.sha7}) não provado; nada mostrado`)
+      mudarCiclo($, c => ({ ...c, pendentes: c.pendentes.filter(x => x !== p) }))
+    } else mudarCiclo($, c => ({ ...c, pendentes: c.pendentes.map(x => (x === p ? { ...x, tentativas: x.tentativas + 1 } : x)) }))
+  }
+  // 2. production proofs: one audit row per resource, and the publish toast
+  const provas = await provasDosConjuntos($)
+  for (const [C, pv] of Object.entries(provas)) {
+    for (const m of pv.migracoes) await auditarProva($, `migracao-${C}-${slugPasta(m.nome)}`, { acao: 'MIGRACAO', alvo: C, motivo: `migração ${m.nome}` })
+    for (const d of pv.deploys) await auditarProva($, `deploy-${C}-${slugPasta(d.alvo)}-${slugPasta(d.at || 'sem-hora')}`, { acao: 'DEPLOY', alvo: C, motivo: `deploy da ${d.alvo}` })
+    const mg = cicloAtual.merges[C]
+    if (mg?.merged && mg.toast !== 'publicado' && publicado(perfil, pv.deploys, mg.mergedAt)) {
+      const card = cartaoDoConjunto(C, perfil, provas, null)
+      if (card?.toast) $.ui.toast(card.toast)
+      mudarCiclo($, c => ({ ...c, merges: { ...c.merges, [C]: { ...c.merges[C]!, toast: 'publicado' } } }))
+    }
+  }
+  provasCache = provas
+  // 3. the waiting click card refreshes its gate from the PR's checks (finding 1 of round 3)
+  for (const C of esperandoClique(plano, perfil)) {
+    const ci = await ciDoPr($, cicloAtual.merges[C]?.pr ?? null)
+    mudarCiclo($, c => ({ ...c, merges: { ...c.merges, [C]: { ...(c.merges[C] ?? { pr: null, merged: false, mergedAt: null, toast: null }), ci } } }))
+  }
+  // 4. go-safety-net
+  if (plano) await redeGo($, plano, modo)
+}
+
+let provasCache: Record<string, { migracoes: { nome: string; at: string }[]; deploys: { alvo: string; at: string }[] }> = {}
+
+async function auditarProva($: any, id: string, e: { acao: string; alvo: string; motivo: string }): Promise<void> {
+  if (cicloAtual.provas.includes(id)) return
+  mudarCiclo($, c => ({ ...c, provas: [...c.provas, id].slice(-500) }))
+  await auditarChave($, id, { ...e, regra: 'orquestrar.md §4', linha: null, origem: 'maestro' })
+}
+
+/** Published = a DEPLOYED proof stamped after the merge for every target the profile deploys on merge. */
+function publicado(perfil: any, deploys: { alvo: string; at: string }[], mergedAt: number | null): boolean {
+  const alvos = ((perfil?.deploys ?? []) as { alvo: string; dispara?: string }[]).filter(d => d.dispara === 'merge').map(d => d.alvo)
+  return !!alvos.length && mergedAt !== null && alvos.every(a => deploys.some(d => d.alvo === a && Date.parse(d.at) >= mergedAt))
+}
+
+/** Sets whose every spec is at `pr-aberto` (not merged) in a click profile: the merge waits for the click (Assumption 2). */
+function esperandoClique(plano: Plano | null, perfil: any): string[] {
+  if (!plano || !perfil?.merge?.clique) return []
+  const specs = Object.fromEntries(Object.entries(banco?.specs ?? {}).map(([id, d]) => [id, d.data as SpecDoc]))
+  return (plano.conjuntos ?? []).filter(c => c.specs.length && c.specs.every(s => specs[s]?.etapa === 'pr-aberto') && !cicloAtual.merges[c.id]?.merged).map(c => c.id)
+}
+
+/** The merge card model of a set, from the module copy, the proofs and the profile. */
+function cartaoDoConjunto(C: string, perfil: any, provas: typeof provasCache, dono: { pessoa?: string; maquina?: string; podeLiberar?: boolean } | null, pronto = false): CartaoMerge | null {
+  const mg = cicloAtual.merges[C]
+  const pv = provas[C] ?? { migracoes: [], deploys: [] }
+  const deployNoMerge = ((perfil?.deploys ?? []) as { dispara?: string }[]).some(d => d.dispara === 'merge')
+  return cartaoMerge({
+    C, pr: mg?.pr ?? null, ci: mg?.ci ?? null, merged: !!mg?.merged, deployNoMerge, publicado: !!mg?.merged && publicado(perfil, pv.deploys, mg.mergedAt),
+    prontoParaMerge: pronto, clique: perfil?.merge?.clique, orquestrador: ultimoExec?.papel === 'orquestrador', dono, eu: { pessoa: quem ?? '', maquina: maquina ?? '' },
+    aplicado: [...pv.migracoes.map(m => `migração ${m.nome}`), ...pv.deploys.map(d => `deploy da ${d.alvo}`)],
+  })
+}
+let maquina: string | null = null
+
+/** A proven merge: the card's state, the MERGE row, the toast when the merge itself is the last proven state. */
+async function aceitarMerge($: any, p: { C: string; sha7: string; ids: string[] }, perfil: any): Promise<void> {
+  const pr = cicloAtual.merges[p.C]?.pr ?? null
+  const ci = await ciDoPr($, pr)
+  const mergedAt = Date.now()
+  mudarCiclo($, c => ({ ...c, pendentes: c.pendentes.filter(x => !(x.C === p.C && x.sha7 === p.sha7)), merges: { ...c.merges, [p.C]: { pr, ci, merged: true, mergedAt, toast: null } } }))
+  await auditarChave($, `merge-${p.C}-${p.sha7}`, { acao: 'MERGE', alvo: p.C, motivo: pr ? `PR #${pr}` : `merge ${p.sha7}`, regra: 'orquestrar.md §5', linha: null, origem: 'maestro' })
+  const card = cartaoDoConjunto(p.C, perfil, provasCache, null)
+  if (card?.toast) {
+    $.ui.toast(card.toast)
+    mudarCiclo($, c => ({ ...c, merges: { ...c.merges, [p.C]: { ...c.merges[p.C]!, toast: card.titulo === 'Mergeado e publicado' ? 'publicado' : 'merge' } } }))
+  }
+}
+
+/** go-safety-net (R24-R27): one `Maestro (automático): GO pendente` turn per released set whose empty session waits. */
+async function redeGo($: any, plano: Plano, modo: ModoContinuo): Promise<void> {
+  const notas = notasOrq(eventosOrq)
+  const runId = ultimoExec ? runIdAtual(ultimoExec) : null
+  const vazias = notas.sessoes.filter(s => s.vazia && !s.spec).map(s => s.conjunto).filter(C => !notas.gos[C])
+  const specs = Object.fromEntries(Object.entries(banco?.specs ?? {}).map(([id, d]) => [id, d.data as SpecDoc]))
+  const execs = Object.fromEntries(Object.entries(banco?.execucao ?? {}).map(([id, d]) => [id, d.data as ConjuntoDoc]))
+  const enviados = new Set(Object.keys(gosAtual).concat(Object.keys(notas.gos)).concat(runId ? (plano.conjuntos ?? []).map(c => c.id).filter(C => envios[chaveGoInicio(C, runId)]?.estado === 'enviado') : []))
+  const devidos = goDevidos({ liberados: liberados(plano, specs, execs), vazias, enviados, pedidos: new Set(Object.keys(cicloAtual.goPedidos)), modo })
+  for (const C of devidos) {
+    try {
+      await $.prompt.submit({ text: `Maestro (automático): GO pendente para ${C}. Confira o ledger e mande o GO com o brief atual (orquestrar.md §5.3); este turno não abre sessão.` })
+      mudarCiclo($, c => ({ ...c, goPedidos: { ...c.goPedidos, [C]: Date.now() } }))
+    } catch {
+      mudarCiclo($, c => ({ ...c, goFalhas: { ...c.goFalhas, [C]: (c.goFalhas[C] ?? 0) + 1 } }))
+    }
+  }
+}
+
+/** The band's `🔴 GO pendente: <C>` (R26 and the accepted turn with no delivered GO after 10 min). */
+function goPendentes(agora: number): string[] {
+  const notas = notasOrq(eventosOrq)
+  const runId = ultimoExec ? runIdAtual(ultimoExec) : null
+  const entregue = (C: string) => !!gosAtual[C] || !!notas.gos[C] || (!!runId && envios[chaveGoInicio(C, runId)]?.estado === 'enviado')
+  const falhas = Object.entries(cicloAtual.goFalhas).filter(([C, n]) => n >= 3 && !entregue(C)).map(([C]) => C)
+  const velhos = Object.entries(cicloAtual.goPedidos).filter(([C, t]) => agora - t >= 10 * 60_000 && !entregue(C)).map(([C]) => C)
+  return [...new Set([...falhas, ...velhos])].sort()
+}
+
+/** The `config/dono` document of C10-S01, when the planning read has one (none before C10-S01: the session is owner). */
+const donoDoBanco = () => ((banco?.config as Record<string, DbDoc> | undefined)?.dono?.data ?? null) as { pessoa?: string; maquina?: string; podeLiberar?: boolean } | null
+
+/** The pane's cycle view (orchestrator): the belt rows, each set's merge card, the sets the cycle closed, the waiting clicks. */
+function dadosCiclo(plano: Plano | null): CicloPainel {
+  const perfil = plano?.execucao?.perfil ?? null
+  const ordem = ordemDoLedger(eventosOrq)
+  const notas = notasOrq(eventosOrq)
+  const feitos: Record<string, { migracoes: string[]; deploys: string[]; merge: boolean; go: boolean }> = {}
+  const pr: Record<string, number | null> = {}
+  for (const C of ordem?.conjuntos ?? []) {
+    const pv = provasCache[C] ?? { migracoes: [], deploys: [] }
+    feitos[C] = { migracoes: pv.migracoes.map(m => m.nome), deploys: pv.deploys.map(x => x.alvo), merge: !!cicloAtual.merges[C]?.merged, go: !!notas.gos[C] }
+    pr[C] = cicloAtual.merges[C]?.pr ?? null
+  }
+  const dono = slotsOrq.producao.dono?.conjunto ?? null
+  const soltos = [...new Set(eventosOrq.filter(e => e.tipo === 'GO' && e.texto.split(/\s+/)[1] === 'producao').map(e => e.texto.split(/\s+/)[0]!))].filter(C => C !== dono)
+  const aguardando = esperandoClique(plano, perfil)
+  const donoDoc = donoDoBanco()
+  const cards: Record<string, CartaoMerge> = {}
+  for (const c of plano?.conjuntos ?? []) {
+    const card = cartaoDoConjunto(c.id, perfil, provasCache, donoDoc, aguardando.includes(c.id))
+    if (card) cards[c.id] = card
+  }
+  const fechados = new Set(eventosOrq.filter(e => e.tipo === 'NOTE' && /^FECHA C\d{2}\b/.test(e.texto.trim())).map(e => e.texto.trim().split(/\s+/)[1]!))
+  return {
+    esteira: linhasEsteira(ordem, { dono, soltos, feitos, falha: falhasDeProducao(), pr }),
+    cards,
+    segue: Object.entries(cicloAtual.merges).filter(([C, m]) => m.merged && fechados.has(C)).map(([C]) => C).sort(),
+    aguardando: aguardando.filter(C => cards[C]?.borda === 'warning'),
+  }
+}
+type CicloPainel = { esteira: LinhaEsteira[]; cards: Record<string, CartaoMerge>; segue: string[]; aguardando: string[] }
+
+/** The pinned heads of a set's specs, from the last planning read (the click's key, R9). */
+function headsDoConjunto(plano: Plano | null, C: string): string[] {
+  const cj = (plano?.conjuntos ?? []).find(c => c.id === C)
+  return (cj?.specs ?? []).map(s => String((banco?.specs?.[s]?.data as SpecDoc | undefined)?.headSha ?? '')).filter(h => /^[0-9a-f]{7,}$/i.test(h))
+}
+
+/**
+ * `👆 fazer merge` (R9, plan "Click identity and order"): the keyed `CLIQUE-MERGE` row (or a RELAY line) is written
+ * first, then the person's words go to this conversation; a failed write submits nothing. Never `$.ui.ask`.
+ */
+async function fazerMerge($: any, plano: Plano | null, C: string): Promise<void> {
+  const ex = ultimoExec
+  if (ex?.papel !== 'orquestrador') return
+  const card = cartaoDoConjunto(C, plano?.execucao?.perfil, provasCache, donoDoBanco(), esperandoClique(plano, plano?.execucao?.perfil).includes(C))
+  if (!card?.botao) return
+  const heads = headsDoConjunto(plano, C)
+  const chave = chaveCliqueMerge(C, heads)
+  quem ??= String((await $.env.get('USERNAME')) ?? (await $.env.get('USER')) ?? '')
+  const url = (((await ler($, 'ctx')) ?? null) as Contexto | null)?.artefato
+  let ok = false
+  if (url) {
+    const doc = entradaAuditoria({ acao: 'CLIQUE-MERGE', alvo: C, motivo: `heads ${heads.join(' ') || 'sem head lido'}`, regra: 'execucao.perfil.merge.clique', linha: null, origem: 'agente' }, { at: new Date(), runId: runIdAtual(ex), sessao: nomeDaSessao(ex), papel: 'orquestrador', by: quem })
+    try {
+      const r = await $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection: 'auditoria', doc_id: chave, data: doc })
+      ok = !!r && r.deny === undefined && (!r.isError || existe(String(r.text ?? '')))
+    } catch {
+      ok = false
+    }
+  }
+  if (!ok) ok = await anexarLedger($, 'RELAY', `CLIQUE-MERGE ${C} ${chave} Libero o merge do ${C}`)
+  if (!ok) return $.ui.toast('merge não liberado: o clique não foi registrado')
+  await $.prompt.submit({ text: `Libero o merge do ${C}`, asUser: true })
 }
 
 function mudarMapa($: any, f: (m: MapaSessoes) => MapaSessoes): void {
@@ -1919,7 +2359,7 @@ async function dobrar($: any, dir: string, ex: Execucao, alvo: string, g: number
     if (c && c.size === f.size && c.mtimeMs === f.mtimeMs) continue
     let texto: string
     try {
-      texto = String(await $.fs.read(p))
+      texto = alvo === 'c:' ? await lerConjuntoArquivo($, p, f) : String(await $.fs.read(p)) // C06-S02: shared with the belt
     } catch {
       continue // read again on the next look (its cursor did not move); the other files still fold
     }
@@ -1938,7 +2378,7 @@ async function lerMapa($: any, p: string, f: { size: number; mtimeMs: number }, 
   if (c && c.size === f.size && c.mtimeMs === f.mtimeMs) return
   let texto: string
   try {
-    texto = String(await $.fs.read(p))
+    texto = alvo === 'c:' ? await lerConjuntoArquivo($, p, f) : String(await $.fs.read(p)) // C06-S02: shared with the belt
   } catch {
     return // read again on the next look
   }
@@ -2179,6 +2619,7 @@ async function gravarOrquestracao($: any, g: number): Promise<void> {
       sessao,
       iniciadaEm: d?.runId === runId && d.iniciadaEm ? d.iniciadaEm : agora,
       slots: slotsOrq,
+      ordemProducao: ordemDoLedger(eventosOrq)?.conjuntos ?? [], // C06-S02 (R12, R28): set ids only
       limiares: d?.limiares ?? { ...LIMIARES_PADRAO, fonte: 'padrao', at: agora },
       proposta: prop,
       at: agora,
@@ -3377,6 +3818,7 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   cursor = {}
   cacheReg = {}
   porDir = {}
+  for (const k of Object.keys(textosConjunto)) delete textosConjunto[k] // C06-S02: re-read with the fold
   marcadores = {}
   varrendo = false
   ultimaVarredura = 0
@@ -3443,6 +3885,11 @@ async function zerarSessao($: any, modo: 'auto' | 'off' = 'auto'): Promise<void>
   espelhoMapa = espelhoMapa.then(() => $.state.set(MAPA, null)).catch(() => {})
   gosAtual = {}
   gosSemeado = false
+  cicloAtual = CICLO_VAZIO() // C06-S02
+  cicloSemeado = false
+  espelhoCiclo = Promise.resolve()
+  emEnvio.clear()
+  provasCache = {}
   espelhoGos = espelhoGos.then(() => $.state.set(GOS, null)).catch(() => {})
   await $.state.set(SEL, null)
   await $.state.set(CTX, null)
@@ -3499,6 +3946,10 @@ export type FaixaDados = {
   modo: ModoContinuo
   /** C06-S01 (R31): the newest open stop, drawn before the alerts; `pausado` when it paused the run. */
   parada?: { titulo: 'pausado' | 'parada'; motivo: string } | null
+  /** C06-S02 (R8): orchestrator, the first merge waiting for the person's click, with its PR and gate text. */
+  merge?: { C: string; pr: number | null; gate: string } | null
+  /** C06-S02 (R26): orchestrator, the sets whose GO inicio is still pending. */
+  goPendente?: string[]
 }
 
 const SEGMENTO: Record<string, 'd' | 'w' | 'b'> = { success: 'd', claude: 'w', error: 'b' }
@@ -3589,6 +4040,15 @@ async function prepararFaixa($: any, ex?: Execucao): Promise<void> {
       run.papel === 'orquestrador' ? ((await ler($, 'maestroParadas')) as EstadoParadas).abertas : [],
     ),
   )
+  if (run.papel !== 'orquestrador') return
+  // C06-S02: the click a merge waits for and the GO still pending, over the band the line above wrote
+  const plano = ((((await ler($, 'ctx')) ?? null) as Contexto | null)?.plano ?? null) as Plano | null
+  const cic = dadosCiclo(plano)
+  const C = cic.aguardando[0]
+  const mg = C ? cicloAtual.merges[C] : undefined
+  const gate = !C ? '' : mg?.ci === 'verde' ? 'gate verde' : mg?.ci === 'sem-checks' ? 'gate sem checks' : 'gate ainda não confirmado'
+  const atual = (await ler($, 'maestroFaixaDados')) as FaixaDados
+  await $.state.set(FAIXA_DADOS, { ...atual, merge: C ? { C, pr: mg?.pr ?? null, gate } : null, goPendente: goPendentes(Date.now()), nAlertas: atual.nAlertas + cic.aguardando.length })
 }
 
 const SEM_FAIXA: FaixaDados = { papel: null, txt: null, titulo: 'NOVARC', status: 'ativo', alertas: [], pend: null, segmentos: [], feitos: null, verde: null, nAlertas: 0, abaAlerta: null, nOutras: 0, modo: 'manual', parada: null }
@@ -3597,7 +4057,7 @@ const SEM_FAIXA: FaixaDados = { papel: null, txt: null, titulo: 'NOVARC', status
  * The band above the prompt in three fixed columns (R19): the short logo; title and status on line 1, alerts, a hint
  * or the set segments on line 2, every Text cut with an ellipsis; the seal and the Buttons on the right, never wrapping.
  */
-function faixaArvore(ui: any, superficie: string, modo: 'auto' | 'on' | 'off', f: FaixaDados, larg: number, acoes: { ativar: Acao; nunca: Acao; painel: Acao; ver: Acao; verPend: Acao }): any {
+function faixaArvore(ui: any, superficie: string, modo: 'auto' | 'on' | 'off', f: FaixaDados, larg: number, acoes: { ativar: Acao; nunca: Acao; painel: Acao; ver: Acao; verPend: Acao; verMerge?: Acao }): any {
   const { Box, Text } = ui
   const Client = ui.Client
   const k = kit(ui, larg, superficie)
@@ -3635,6 +4095,16 @@ function faixaArvore(ui: any, superficie: string, modo: 'auto' | 'on' | 'off', f
   // R31: the open stop leads line 2, in error, before the alerts
   const pa = orq ? f.parada ?? null : null
   if (pa) segunda.push(linha2('parada', pa.titulo === 'pausado' ? pa.motivo : `parada: ${pa.motivo}`, 'error'))
+  // C06-S02 (R8, R32, R34): a merge that waits for the click owns the band until someone clicks, with no timer
+  if (orq && f.merge && !f.parada && !f.alertas.length && acoes.verMerge) {
+    return faixa({
+      titulo: 'espera seu clique',
+      status: `${f.merge.C} pronto para merge · PR #${f.merge.pr ?? '?'} · ${f.merge.gate}`,
+      segunda: [<Text key="clique" size="footnote" color="warning" wrap="truncate-end">👆 o perfil deste projeto pede aprovação humana no merge</Text>, ...(f.goPendente ?? []).map(C => linha2(`gp-${C}`, `GO pendente: ${C}`, 'error'))],
+      direita: [...selo, k.botao({ key: 'ver-merge', primario: true, hotkey: '1', onPress: acoes.verMerge, children: 'ver merge' })],
+    })
+  }
+  for (const C of orq ? (f.goPendente ?? []) : []) segunda.push(linha2(`gp-${C}`, `GO pendente: ${C}`, 'error')) // R26
   f.alertas.forEach((a, i) =>
     segunda.push(i === 0 && k.temClient ? <Client key="pulso" module="./pulse.tsx" props={{ label: a }} /> : linha2(`al-${i}`, a, 'error')),
   )
@@ -3708,6 +4178,8 @@ type DadosPainel = {
   /** C06-S01: the plan held in memory and this run's id (the Configuração tab). */
   plano: Plano | null
   runId: string | null
+  /** C06-S02: the orchestrator's cycle view (belt, merge cards, sets closed by the cycle); absent elsewhere. */
+  ciclo?: CicloPainel
   /** C06-S01 (R57): the open stops, their cards first in every tab. */
   paradas: ParadaAberta[]
   acoes: {
@@ -3725,6 +4197,7 @@ type DadosPainel = {
     recado: Parameters<typeof cartaoRecado>[2]['acoes']
     cancelarCartao: Acao
     liberar: (escopo: EscopoContinuo) => Acao
+    fazerMerge?: (C: string) => Acao
   }
 }
 
@@ -3750,6 +4223,47 @@ function cobrancas(d: DadosPainel): Map<string, Envio> {
     if (e) out.set(a.chave, e)
   }
   return out
+}
+
+/** C06-S02 (R18, R19, R31): the production belt in the orchestrator's order; the caption alone when the queue is empty. */
+function esteiraPainel(ui: any, k: Kit, ls: LinhaEsteira[]): any[] {
+  const { Box, Text } = ui
+  if (!ls.length) return [<Text key="esteira-vazia" size="footnote" color="subtle">esteira de produção · nada na fila</Text>]
+  const r = resumoEsteira(ls)
+  const sinal = { feito: '✅', rodando: '⏳', pendente: '⚪', falhou: '🔴' } as const
+  return [
+    k.titulo('esteira de produção · ordem do orquestrador'),
+    k.quadro('esteira', [
+      <Box key="esteira-barra">{k.sv(barraSegmentosM(r.segmentos), r.alt, 0, 8, r.terminal)}</Box>,
+      ...ls.map(l => (
+        <Box key={`est-${l.k}`} flexDirection="row" gap="sm" alignItems="center">
+          <Text color="subtle">{`${l.k}.`}</Text>
+          <Text>{l.status === 'falhou' ? '🔴' : l.emoji}</Text>
+          <Box flexDirection="column" flexGrow={1} width={0}>
+            <Text bold={l.status === 'rodando'} color={l.status === 'falhou' ? 'error' : undefined} wrap="truncate-end">{l.titulo}</Text>
+            <Text size="footnote" color={l.status === 'falhou' ? 'error' : 'subtle'} wrap="truncate-end">{l.status === 'falhou' ? `falhou: ${l.erro}` : l.sub}</Text>
+          </Box>
+          <Text>{sinal[l.status]}</Text>
+        </Box>
+      )),
+      <Text key="esteira-nota" size="footnote" color="subtle">um por vez · falhou, para e avisa · sem revert automático · redeploy só do último</Text>,
+    ]),
+  ]
+}
+
+/** C06-S02 (R6-R8, R30, R33): the merge card of a set in its Execução detail; the Button only when the model allows it. */
+function caixaMerge(ui: any, k: Kit, C: string, cm: CartaoMerge, fazer: Acao | undefined): any {
+  const { Box, Text } = ui
+  return k.quadro('mrg', [
+    <Box flexDirection="row" gap="sm" alignItems="center"><Text>{cm.emoji}</Text><Text bold>{cm.titulo}</Text></Box>,
+    <Text size="footnote" color="subtle" wrap="truncate-end">{cm.sub}</Text>,
+    cm.ultima ? (
+      <Box flexDirection="row" gap="sm" alignItems="center">
+        <Box flexGrow={1} width={0}><Text size="footnote" color={cm.borda === 'warning' ? 'warning' : 'subtle'} wrap="truncate-end">{cm.ultima}</Text></Box>
+        {cm.botao && fazer ? k.botao({ key: 'fazer-merge', primario: true, onPress: fazer, children: '👆 fazer merge' }) : null}
+      </Box>
+    ) : null,
+  ], { faixa: COR_CONJ[C] ?? 'promptBorder', ...(cm.borda === 'warning' ? { cor: 'warning' } : {}) })
 }
 
 /** The Locks e filas tab (R15, R16): KPIs, held resources, the orchestrator's slots, the session signals, the thresholds. */
@@ -3846,6 +4360,7 @@ function abaLocks(ui: any, d: DadosPainel, k: Kit): any[] {
       )
     }
   }
+  if (papel === 'orquestrador') out.push(...esteiraPainel(ui, k, d.ciclo?.esteira ?? []))
   const normal = (n: number | null) => (n === null ? '—' : String(Math.round(n)))
   out.push(k.titulo('limiares'))
   out.push(
@@ -4019,7 +4534,11 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
       ...k.filas('exk', [
         k.kpi('exk-1', '🏁', `${feitas}/${todas.length}`, 'specs em DONE'),
         nVazias ? k.kpi('exk-2', '⏳', String(nVazias), 'aguardando GO') : k.kpi('exk-2', '🧵', String(vivas), 'sessões de spec vivas'),
-        lista.length ? k.kpi('exk-3', '🚨', String(lista.length), cobertos ? `${nLocks} ${nLocks === 1 ? 'lock órfão' : 'locks órfãos'} e ${nOutros} ${nOutros === 1 ? 'bloqueio' : 'bloqueios'} · já cobrados` : 'pede atenção', 'error') : k.kpi('exk-3', '✅', '0', 'nada exige você agora'),
+        lista.length
+          ? k.kpi('exk-3', '🚨', String(lista.length), cobertos ? `${nLocks} ${nLocks === 1 ? 'lock órfão' : 'locks órfãos'} e ${nOutros} ${nOutros === 1 ? 'bloqueio' : 'bloqueios'} · já cobrados` : 'pede atenção', 'error')
+          : d.ciclo?.segue.length
+            ? k.kpi('exk-3', '✅', '0', `${d.ciclo.segue.join(', ')} segue a fila sozinho`) // C06-S02 R5
+            : k.kpi('exk-3', '✅', '0', 'nada exige você agora'),
       ], 18),
     ]
     if (!orq) out.push(<Text key="ledger" size="footnote" color="subtle">{d.ex.ledgerDir ? `ledger ${d.ex.ledgerDir}` : 'ledger ainda não visto nesta sessão'}</Text>)
@@ -4134,6 +4653,7 @@ function corpoAba(ui: any, k: Kit, d: DadosPainel, aba: string): any[] {
           ...raias(det, 'det', `etapas das specs de ${c.id}`),
           c.raias.length > det.length ? <Text key="mais-det" size="footnote" color="subtle">{`mais ${c.raias.length - det.length}`}</Text> : null,
           caixa,
+          d.ciclo?.cards[c.id] ? caixaMerge(ui, k, c.id, d.ciclo.cards[c.id]!, d.acoes.fazerMerge?.(c.id)) : null,
           ...(d.posse ?? []).map(p => caixaPosse(ui, k, p)),
           ...sessoes(c.id),
         ], { faixa: COR_CONJ[c.id] ?? 'promptBorder' }),
@@ -4503,7 +5023,33 @@ export const registerMaestro: Register = on => {
 
   // Fork -> main checkpoint messages: the lane moves the moment the fork reports, before any ledger read.
   on('session.send', async ($, e, next) => {
-    const r = await next(e)
+    // C06-S02 (R4, R22): the keyed row of an automatic FECHA or a GO inicio exists before the send, or the send is refused
+    let k: ReturnType<typeof chaveDoCiclo> = null
+    let versao: number | null = null
+    try {
+      const l1 = String(e.text ?? '').trim().split(/\r?\n/)[0]!
+      if (e.origin?.kind === 'model' && !e.agentId && /^(FECHA|GO) /.test(l1) && ultimoExec?.papel === 'orquestrador') {
+        cicloModo = ((await ler($, 'maestroContinuo')) as MaestroContinuo).doc
+        k = chaveDoCiclo(l1, ultimoExec)
+        if (k) {
+          const res = await reservarAntes($, l1, k)
+          if (!res.seguir) {
+            $.ui.toast(`Maestro: ${l1.split(/\s+/).slice(0, 3).join(' ')} não enviada: ${res.motivo}`)
+            return { isDelivered: false, reason: `Maestro: ${l1} não enviada: ${res.motivo} (chave ${k.chave})` }
+          }
+          versao = res.versao
+        }
+      }
+    } catch {
+      k = null // the reservation is bookkeeping around the send; a fault here sends as before
+    }
+    let r: any
+    try {
+      r = await next(e)
+    } finally {
+      if (k) emEnvio.delete(k.chave)
+    }
+    if (k && r?.isDelivered) void marcarEntregue($, k, versao).catch(() => {})
     try {
       const cp = e.agentId ? checkpoint(e.text) : null
       if (cp) {
@@ -4531,6 +5077,7 @@ export const registerMaestro: Register = on => {
           const limpa = linha.replace(/local_[0-9A-Za-z-]+/g, 'local_…') // A10: no session id in a text field
           // off the hook path: in the orchestrator a line the mod would send takes its key, else the observed row
           void (async () => {
+            if (k) return // C06-S02: its keyed row is its record
             if (papel === 'orquestrador' && (await registrarDoAgente($, linha))) return
             await auditar($, { acao, alvo: alvo.includes('local_') ? '' : (idDaBranch(alvo) ?? alvo), motivo, regra: regraDaDiretiva(linha), linha: limpa, origem: 'agente' })
           })().catch(() => {})
@@ -4726,6 +5273,17 @@ export const registerMaestro: Register = on => {
             if (relato) receberRelato($, String(e.text).split(/\r?\n/)[0]!.trim())
             await gravarExec($, { ...ex, conjuntos: { ...ex.conjuntos, [lc.conjunto]: novo } })
             await registrar($)
+            // C06-S02 (R6): the PR of a set's close-out, and its merge report, kept until the git proof decides it
+            await semearCiclo($)
+            const pr = lc.etapa === 'pr-aberto' ? Number(String(e.text).match(ESTAGIO_PR)?.[1]) || null : null
+            if (pr !== null) mudarCiclo($, c => ({ ...c, merges: { ...c.merges, [lc.conjunto]: { ...(c.merges[lc.conjunto] ?? { ci: null, merged: false, mergedAt: null, toast: null }), pr } } }))
+            const mg = lc.etapa === 'merge' ? lc.resto.trim().split(/\s+/) : null
+            const sha7 = mg?.find(t => /^[0-9a-f]{7,40}$/i.test(t))
+            if (mg && sha7 && !cicloAtual.merges[lc.conjunto]?.merged) {
+              const ids = mg.filter(t => /^C\d{2}-S\d{2}$/.test(t))
+              mudarCiclo($, c => ({ ...c, pendentes: [...c.pendentes.filter(x => !(x.C === lc.conjunto && x.sha7 === sha7)), { C: lc.conjunto, sha7, ids, tentativas: 0, at: Date.now() }] }))
+              void passoCiclo($, geracao).catch(() => {}) // off the hook path: the proof runs git
+            }
           }
         }
       }
@@ -4877,6 +5435,8 @@ export const registerMaestro: Register = on => {
       painel: async () => { await garantirSessao($); await olharAgora($); await abrirPainel($) },
       ver: async () => { await garantirSessao($); await $.state.set(ABA, 'locks'); await olharAgora($); await abrirPainel($) },
       verPend: async () => { await garantirSessao($); await $.state.set(ABA, 'pendencias'); await abrirPainel($) },
+      // C06-S02 (R34): Execução with the waiting set in the detail
+      verMerge: async () => { await garantirSessao($); await $.state.set(ABA, 'execucao'); if (fv.merge) await $.state.set(SEL, fv.merge.C); await abrirPainel($) },
     })
   }).catch(($, e, next) => next(e))
 
@@ -4912,6 +5472,7 @@ export const registerMaestro: Register = on => {
           return false
         }
       }
+      const ciclo = ex.papel === 'orquestrador' ? dadosCiclo(plano ?? null) : undefined
       return painelArvore(ui, {
         aba,
         ex,
@@ -4931,7 +5492,7 @@ export const registerMaestro: Register = on => {
         leitura: (await ler($, 'maestroLeitura')) as Leitura,
         // R9: the plan's short name, else the run's project, else the cwd folder
         projeto: plano?.projeto?.nomeCurto ?? (ex as any).projeto ?? (cwdSessao.split(/[\\/]/).filter(Boolean).pop() || 'Maestro'),
-        sino: contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf, abertas.length),
+        sino: contaSino(ex.papel, al, ex.papel === 'orquestrador' ? pend : null, nSemConf, abertas.length) + (ciclo?.aguardando.length ?? 0), // C06-S02 R35
         envios,
         mapa,
         notas: notasOrq(ex.papel === 'orquestrador' ? eventosOrq : []),
@@ -4948,8 +5509,10 @@ export const registerMaestro: Register = on => {
         continuo: { modo, doc: cont.doc, ui: contUi, podeLiberar: ex.papel === 'orquestrador' && contUi.cartao ? (await lerRegrasLocais($)).continuo : false },
         plano: plano ?? null,
         runId,
+        ciclo,
         paradas: abertas,
         acoes: {
+          fazerMerge: C => async () => { await garantirSessao($); await fazerMerge($, plano ?? null, C) },
           cancelarCartao: async () => { await $.state.set(CONTINUO_UI, { ...((await ler($, 'maestroContinuoUi')) as MaestroContinuoUi), cartao: false, erro: null, pedidoEm: null }) },
           // R12: the press is the person's grant turn: the token first, then their words to the orchestrator agent
           liberar: escopo => async () => {
