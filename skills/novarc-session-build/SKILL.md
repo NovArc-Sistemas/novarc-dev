@@ -1,6 +1,6 @@
 ---
 name: novarc-session-build
-description: Use when a NOVARC planning artifact drives the build - "/novarc-session-build conjunto <link> C01", "/novarc-session-build orquestrar <link>", "roda o conjunto", "orquestra os conjuntos". Mode conjunto builds one set (conjunto) of specs by running the original session-build by reference with a short override list, writing milestones to the artifact database. Mode orquestrar coordinates the set sessions (builder budget, one verify slot at a time, visual validation against the simulator). NOT for a build without a NOVARC planning artifact (use a plain session-build flow), NOT for planning or writing specs (NOVARC's planning skills do that), NOT for closing a branch (use novarc-session-end).
+description: Use when a NOVARC planning artifact drives the build - "/novarc-session-build conjunto <link> C01", "roda o conjunto". Mode conjunto builds one set (conjunto) of specs by running the original session-build by reference with a short override list, writing milestones to the artifact database. NOT for a build without a NOVARC planning artifact (use a plain session-build flow), NOT for planning or writing specs (NOVARC's planning skills do that), NOT for closing a branch (use novarc-session-end).
 ---
 
 # NOVARC Session Build
@@ -26,14 +26,13 @@ test -e "<skills>/novarc-codex-review/SKILL.md" && echo ok novarc-codex-review |
 ```
 
 Any `MISSING`: stop and tell the user (pt-BR): "O plugin novarc está incompleto. Reinstale o plugin novarc
-(marketplace novarc-skills) e rode de novo."
+(marketplace novarc-dev) e rode de novo."
 
 ## Modes
 
 | Invocation | Mode | Read next |
 |---|---|---|
 | `/novarc-session-build conjunto <artifact url> <C0x>` (the set prompt) | `conjunto` | `steps/conjunto-load.md` |
-| `/novarc-session-build orquestrar <artifact url> [C01 C02 ...]` | `orquestrar` | `steps/orquestrar.md` |
 
 No mode, or a mode without an artifact url: ask once for the set prompt or the url.
 
@@ -104,9 +103,7 @@ Reply to an incoming message by copying its `from` attribute as `to`.
 Identical to session-build's (invariant 1 of the original), for the specs of this set only, plus: writes to the
 artifact database collections `execucao` and `specs`, own documents only, with the field ownership above. A spec
 session is authorized for its own `specs/{id}` document only. Never a PR,
-never a delivery merge, never a hook bypass. The orchestrator mode builds nothing and writes no code; its one write to
-the client's system is moving the plan's own tickets to resolved once all their changes are merged, through the
-project's documented status path (`steps/orquestrar.md` §5.2).
+never a delivery merge, never a hook bypass.
 
 ## Red flags - stop
 

@@ -17,8 +17,8 @@ node "$H" --session "$CLAUDE_CODE_SESSION_ID" --execucao
 node "$H" --session "$CLAUDE_CODE_SESSION_ID"
 ```
 
-The first prints execution hours (Claude's work time, subagents summed), the second active hours (Willian's
-attention, from his typed prompts). Record both, every time. Active hours count only what Willian typed in the composer,
+The first prints execution hours (Claude's work time, subagents summed), the second active hours (the user's
+attention, from their typed prompts). Record both, every time. Active hours count only what the user typed in the composer,
 mid-turn messages included; what the harness delivers (cross-session messages, task notifications, system reminders,
 side-session events, subagent hand-backs) never counts, so a spec session he never typed in prints no day for active
 hours. Both print `{sessao, transcript, dias: [{data, minutos, ...}]}`; each `--execucao` day also carries `tokens`
@@ -40,7 +40,7 @@ One document per session per São Paulo day, so a rerun replaces the day's numbe
   The page groups both kinds by `sessao` into one row per session (active, execution and tokens side by side);
   documents written before 2026-10-26 have no `tokens`/`transcript` and show `-` there.
 - `fase`: the set's `fase` in plano.json (`conjuntos[].fase`). The orchestrator spans every phase: `null`.
-- `pessoa`: `"Willian"` (the owner of the session that generated the hours).
+- `pessoa`: the name of the owner of the session that generated the hours.
 - `branch`: the spec branch for a spec session, `null` for the set session and the orchestrator.
 - `resumo` (pt-BR): `"Build <C>-<S> (novarc-session-build)"` for a spec session, `"Build <C> (novarc-session-build)"`
   for the set session, `"Fechamento <C> (novarc-session-end)"` when written from session-end, `"Orquestração

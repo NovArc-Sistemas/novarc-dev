@@ -24,7 +24,7 @@ test -e "<skills>/novarc-session-build/references/milestones.md" && echo ok mile
 
 `<skills>` is the parent of this skill's base directory (the path Claude Code states when the skill loads): the novarc
 plugin's `skills/` folder. Any `MISSING`: stop and tell the user (pt-BR): "O plugin novarc está incompleto. Reinstale
-o plugin novarc (marketplace novarc-skills) e rode de novo."
+o plugin novarc (marketplace novarc-dev) e rode de novo."
 
 ## Run order
 

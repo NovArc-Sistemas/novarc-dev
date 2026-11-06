@@ -1,0 +1,733 @@
+{
+  "schema": "novarc-planejamento/1",
+  "template": true,
+  "organizacao": {
+    "nome": "NOVARC",
+    "emailProjetos": "projetos@novarcsistemas.com"
+  },
+  "projeto": {
+    "cliente": "Exemplo Utilidades",
+    "nome": "Compras guiadas por cobertura",
+    "nomeCurto": "Compras",
+    "codigo": "EXM-ERP-COMPRAS",
+    "versao": "v1.0",
+    "data": "12/10/2026",
+    "responsavel": "Willian Pagane",
+    "resumo": "Projeto fictício que demonstra o template: o ERP da Exemplo Utilidades passa a mostrar quantos dias de estoque cada SKU ainda tem, a sugerir quanto comprar de cada fornecedor e a gerar o pedido a partir da sugestão revisada pelo comprador.",
+    "objetivo": "Comprar antes de faltar e parar de comprar o que não gira, com o comprador no controle de cada pedido.",
+    "repositorio": "exemplo/erp"
+  },
+  "fluxo": {
+    "aprovacao": [
+      "interna",
+      "cliente"
+    ],
+    "execucao": "interna",
+    "aprovadorInterno": "Willian Pagane",
+    "aprovadorCliente": "Diretoria da Exemplo",
+    "timeCliente": "Time da Exemplo"
+  },
+  "simuladores": [
+    {
+      "id": "compras",
+      "titulo": "Compras no ERP Exemplo",
+      "descricao": "Painel de compras com cobertura, cadastro de fornecedores, sugestão de compra e pedido, com os perfis de comprador e gestor e, ao lado, o e-mail que o fornecedor recebe.",
+      "arquivo": "sims/compras.html",
+      "nTelas": 6,
+      "fonte": "Componentes e tokens de um ERP fictício (Tailwind, lucide)",
+      "telas": [
+        {
+          "id": "painel",
+          "nome": "Painel de compras",
+          "fase": "f1",
+          "superficie": "erp",
+          "existe": true
+        },
+        {
+          "id": "fornecedores",
+          "nome": "Fornecedores",
+          "fase": "f1",
+          "superficie": "erp",
+          "existe": true
+        },
+        {
+          "id": "sugestao",
+          "nome": "Sugestão de compra",
+          "fase": "f2",
+          "superficie": "erp"
+        },
+        {
+          "id": "pedidos",
+          "nome": "Pedidos de compra",
+          "fase": null,
+          "superficie": "erp",
+          "existe": true
+        },
+        {
+          "id": "pedido",
+          "nome": "Pedido de compra",
+          "fase": "f2",
+          "superficie": "erp",
+          "existe": true
+        },
+        {
+          "id": "email",
+          "nome": "Caixa de entrada do fornecedor",
+          "fase": "f2",
+          "existe": true,
+          "superficie": "fornecedor"
+        }
+      ],
+      "hoje": true,
+      "superficies": [
+        {
+          "id": "erp",
+          "nome": "ERP (comprador e gestor)"
+        },
+        {
+          "id": "fornecedor",
+          "nome": "E-mail do fornecedor",
+          "descricao": "Caixa de entrada de quem recebe o pedido, ao lado do ERP quando ligada na faixa do protótipo."
+        }
+      ]
+    }
+  ],
+  "fases": [
+    {
+      "id": "f1",
+      "nome": "Base de cobertura",
+      "objetivo": "O comprador vê a cobertura de cada SKU e o que está em risco, comparado ao prazo de cada fornecedor.",
+      "executor": "NOVARC",
+      "inicio": "2026-10-19",
+      "fim": "2026-10-20",
+      "horasPrevistas": 7,
+      "conjuntos": [
+        "C01",
+        "C02"
+      ],
+      "pronto": [
+        "Painel mostra cobertura em dias e \"sem giro\" para todos os SKUs ativos",
+        "Filtro \"Em risco\" usa o lead time do fornecedor",
+        "Todo fornecedor ativo tem lead time ou o padrão definido"
+      ],
+      "horasAtivasPrevistas": 2.0,
+      "responsavel": "Willian"
+    },
+    {
+      "id": "f2",
+      "nome": "Sugestão e pedido",
+      "objetivo": "O sistema sugere a compra e o comprador gera o pedido revisado, com aprovação do gestor acima da alçada.",
+      "executor": "NOVARC",
+      "inicio": "2026-10-21",
+      "fim": "2026-10-23",
+      "horasPrevistas": 8,
+      "conjuntos": [
+        "C03"
+      ],
+      "pronto": [
+        "Sugestão calculada para os SKUs em risco, agrupada por fornecedor",
+        "Ajuste manual exige motivo e guarda a sugestão original",
+        "Pedido gerado segue o fluxo de status atual"
+      ],
+      "horasAtivasPrevistas": 2.0,
+      "responsavel": "Jean"
+    }
+  ],
+  "mudancas": [
+    {
+      "id": "m-cob-coluna",
+      "n": 1,
+      "tipo": "NOVO",
+      "tela": "Painel de compras",
+      "telaId": "painel",
+      "fase": "f1",
+      "titulo": "Coluna de cobertura em dias",
+      "porque": "O comprador vê, em cada SKU, por quantos dias o estoque ainda dura no ritmo atual de venda, sem cruzar duas telas.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/web/src/views/PainelCompras.tsx:48"
+        },
+        {
+          "tipo": "dados",
+          "ref": "Vendas por SKU nos últimos 30 dias (consulta de exemplo)"
+        }
+      ],
+      "decisoes": [
+        "d-janela-30"
+      ],
+      "pendencias": [],
+      "spec": "C01-S01",
+      "revisoes": [
+        "rev-1"
+      ]
+    },
+    {
+      "id": "m-cob-semgiro",
+      "n": 2,
+      "tipo": "NOVO",
+      "tela": "Painel de compras",
+      "telaId": "painel",
+      "fase": "f1",
+      "titulo": "Selo \"sem giro\"",
+      "porque": "SKU sem venda no período mostra \"sem giro\" em vez de uma cobertura infinita, que esconderia estoque parado.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "reunião",
+          "ref": "Reunião de descoberta, 06/10/2026"
+        }
+      ],
+      "decisoes": [
+        "d-semgiro"
+      ],
+      "pendencias": [],
+      "spec": "C01-S01"
+    },
+    {
+      "id": "m-cob-recalcular",
+      "n": 3,
+      "tipo": "NOVO",
+      "tela": "Painel de compras",
+      "telaId": "painel",
+      "fase": "f1",
+      "titulo": "Botão Recalcular com a data do cálculo",
+      "porque": "O cálculo roda toda madrugada; o botão permite refazer depois de uma entrada grande de nota, e a data deixa claro de quando é o número.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/api/src/jobs/index.ts:22"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C01-S01"
+    },
+    {
+      "id": "m-cob-risco",
+      "n": 4,
+      "tipo": "ALTERADO",
+      "tela": "Painel de compras",
+      "telaId": "painel",
+      "fase": "f1",
+      "titulo": "Filtro \"Em risco\"",
+      "porque": "O filtro de situação ganha a opção que lista só o que vai acabar antes de o fornecedor conseguir entregar.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/web/src/components/FiltroSituacao.tsx:12"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C01-S01",
+      "revisoes": [
+        "rev-1"
+      ]
+    },
+    {
+      "id": "m-forn-leadtime",
+      "n": 5,
+      "tipo": "ALTERADO",
+      "tela": "Fornecedores",
+      "telaId": "fornecedores",
+      "fase": "f1",
+      "titulo": "Campo de lead time no cadastro",
+      "porque": "Sem o prazo de entrega de cada fornecedor não dá para saber se a cobertura é curta demais.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/api/prisma/schema.prisma:212"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [
+        "p-leadtime-padrao"
+      ],
+      "spec": "C02-S01",
+      "revisoes": [
+        "rev-1"
+      ]
+    },
+    {
+      "id": "m-nav-sugestao",
+      "n": 6,
+      "tipo": "NOVO",
+      "tela": "Menu",
+      "telaId": "*",
+      "fase": "f2",
+      "titulo": "Item de menu Sugestão de compra",
+      "porque": "A sugestão ganha uma entrada própria no menu de compras, ao lado de Pedidos.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/web/src/components/MenuCompras.tsx:18"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C03-S01"
+    },
+    {
+      "id": "m-sug-tabela",
+      "n": 7,
+      "tipo": "NOVO",
+      "tela": "Sugestão de compra",
+      "telaId": "sugestao",
+      "fase": "f2",
+      "titulo": "Tabela de sugestão por fornecedor",
+      "porque": "A sugestão já vem agrupada por fornecedor, que é como o pedido vai sair.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "documento",
+          "ref": "Política de compras da Exemplo, seção 3"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C03-S01"
+    },
+    {
+      "id": "m-sug-ajuste",
+      "n": 8,
+      "tipo": "NOVO",
+      "tela": "Sugestão de compra",
+      "telaId": "sugestao",
+      "fase": "f2",
+      "titulo": "Ajuste manual com motivo",
+      "porque": "O comprador conhece promoções e sazonalidade que o histórico não mostra; o motivo fica registrado ao lado da sugestão original.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "reunião",
+          "ref": "Reunião de descoberta, 06/10/2026"
+        }
+      ],
+      "decisoes": [
+        "d-sem-compra-automatica"
+      ],
+      "pendencias": [],
+      "spec": "C03-S01"
+    },
+    {
+      "id": "m-sug-gerar",
+      "n": 9,
+      "tipo": "NOVO",
+      "tela": "Sugestão de compra",
+      "telaId": "sugestao",
+      "fase": "f2",
+      "titulo": "Gerar pedido a partir da sugestão",
+      "porque": "Um clique transforma a sugestão revisada em um pedido por fornecedor, sem redigitar.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/api/src/domains/compras/use-cases/criarPedido.ts:30"
+        }
+      ],
+      "decisoes": [
+        "d-sem-compra-automatica"
+      ],
+      "pendencias": [],
+      "spec": "C03-S02"
+    },
+    {
+      "id": "m-ped-status",
+      "n": 10,
+      "tipo": "REAPROVEITA",
+      "tela": "Pedido de compra",
+      "telaId": "pedido",
+      "fase": "f2",
+      "titulo": "Fluxo de status do pedido",
+      "porque": "O pedido gerado segue o mesmo fluxo que a equipe já usa hoje, sem tela nova para aprender.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/web/src/views/PedidoCompra.tsx:85"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C03-S02"
+    },
+    {
+      "id": "m-ped-aprovacao",
+      "n": 11,
+      "tipo": "EM DISCUSSÃO",
+      "tela": "Pedido de compra",
+      "telaId": "pedido",
+      "fase": "f2",
+      "titulo": "Aprovação do gestor acima da alçada",
+      "porque": "Pedidos grandes passam pelo gestor antes do envio. Falta definir a partir de qual valor.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "reunião",
+          "ref": "Reunião de descoberta, 06/10/2026"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [
+        "p-alcada"
+      ],
+      "spec": "C03-S02"
+    },
+    {
+      "id": "m-email-pedido",
+      "n": 12,
+      "tipo": "ALTERADO",
+      "tela": "Caixa de entrada do fornecedor",
+      "telaId": "email",
+      "fase": "f2",
+      "titulo": "Pedido ao fornecedor com tabela, prazo e confirmação",
+      "porque": "Hoje o fornecedor recebe o pedido em texto corrido e confirma respondendo o e-mail. O pedido passa a sair com a tabela de itens, o total, o prazo esperado pelo lead time cadastrado e um botão para confirmar, que muda o status do pedido sozinho.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "erp/compras/pedido_email.py:12"
+        },
+        {
+          "tipo": "reunião",
+          "ref": "Reunião de compras de 08/10/2026 (fictícia)"
+        }
+      ],
+      "decisoes": [],
+      "pendencias": [],
+      "spec": "C03-S02"
+    },
+    {
+      "id": "m-ruptura-legado",
+      "n": 13,
+      "tipo": "ALTERADO",
+      "tela": "Em todas as telas",
+      "telaId": "*",
+      "fase": "f2",
+      "tecnica": true,
+      "titulo": "Relatório de ruptura lê a mesma cobertura",
+      "porque": "O relatório antigo de ruptura calcula a cobertura com outra regra e passaria a mostrar números diferentes do painel. Ele passa a ler o mesmo cálculo de cobertura da fase 1. Trabalho técnico, sem tela nova.",
+      "sim": "compras",
+      "refs": [
+        {
+          "tipo": "código",
+          "ref": "apps/api/src/relatorios/ruptura.ts:31"
+        }
+      ],
+      "decisoes": [
+        "d-janela-30"
+      ],
+      "pendencias": [],
+      "spec": "C03-S01"
+    }
+  ],
+  "decisoes": [
+    {
+      "id": "d-janela-30",
+      "titulo": "Venda média dos últimos 30 dias",
+      "texto": "A cobertura usa a venda média de 30 dias corridos. Janelas maiores escondem queda recente; menores oscilam demais em itens de giro baixo.",
+      "data": "06/10/2026",
+      "fonte": "Reunião de descoberta",
+      "mudancas": [
+        "m-cob-coluna",
+        "m-ruptura-legado"
+      ]
+    },
+    {
+      "id": "d-semgiro",
+      "titulo": "\"Sem giro\" no lugar de cobertura infinita",
+      "texto": "Sem venda em 30 dias, o painel mostra \"sem giro\". Assim o estoque parado aparece como problema, não como folga.",
+      "data": "06/10/2026",
+      "fonte": "Reunião de descoberta",
+      "mudancas": [
+        "m-cob-semgiro"
+      ]
+    },
+    {
+      "id": "d-sem-compra-automatica",
+      "titulo": "Nenhuma compra sai sozinha",
+      "texto": "O sistema sugere, o comprador revisa e gera. Não existe envio automático de pedido, nem para itens em falta.",
+      "data": "08/10/2026",
+      "fonte": "Decisão da diretoria da Exemplo",
+      "mudancas": [
+        "m-sug-ajuste",
+        "m-sug-gerar"
+      ]
+    }
+  ],
+  "pendencias": [
+    {
+      "id": "p-leadtime-padrao",
+      "titulo": "Lead time padrão para fornecedor sem cadastro",
+      "texto": "O que já sabemos: 37 dos 120 fornecedores ativos não têm prazo de entrega cadastrado (consulta de exemplo). A pergunta: que lead time usar para eles até o cadastro ser completado?",
+      "quem": "Compras da Exemplo",
+      "fase": "f1",
+      "mudancas": [
+        "m-forn-leadtime"
+      ]
+    },
+    {
+      "id": "p-alcada",
+      "titulo": "Valor da alçada de aprovação",
+      "texto": "O que já sabemos: hoje o gestor aprova por e-mail pedidos \"grandes\", sem valor definido. A pergunta: a partir de qual valor total o pedido precisa da aprovação do gestor?",
+      "quem": "Diretoria da Exemplo",
+      "fase": "f2",
+      "mudancas": [
+        "m-ped-aprovacao"
+      ]
+    }
+  ],
+  "mensagens": [
+    {
+      "id": "pedido-fornecedor",
+      "canal": "email",
+      "titulo": "Pedido de compra ao fornecedor",
+      "gatilho": "Pedido enviado, dentro da alçada ou aprovado pelo gestor",
+      "para": "Fornecedor",
+      "remetente": "automatico",
+      "origem": "alterada",
+      "resumo": "Hoje sai em texto corrido; passa a sair com a tabela de itens, o prazo esperado e um botão para confirmar.",
+      "sim": "compras",
+      "tela": "email",
+      "mudancas": [
+        "m-email-pedido"
+      ]
+    },
+    {
+      "id": "aviso-alcada",
+      "canal": "sistema",
+      "titulo": "Pedido acima da alçada",
+      "gatilho": "Total do pedido acima da alçada de aprovação",
+      "para": "Comprador e gestor de compras",
+      "remetente": "automatico",
+      "origem": "nova",
+      "resumo": "Aviso na tela do pedido: o comprador vê que espera aprovação e o gestor vê o botão de aprovar.",
+      "sim": "compras",
+      "tela": "pedido",
+      "mudancas": [
+        "m-ped-aprovacao"
+      ]
+    }
+  ],
+  "abertos": [
+    {
+      "id": "a-relatorio-legado",
+      "titulo": "Relatório de ruptura legado",
+      "texto": "O relatório antigo de ruptura calcula cobertura com outra regra. Depois da fase 1 ele deve ser desligado ou passar a ler o mesmo cálculo.",
+      "mudanca": "m-ruptura-legado"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "FB-0412",
+      "titulo": "Não dá para ver quais itens vão faltar",
+      "tipo": "bug",
+      "severidade": "alta",
+      "data": "03/10/2026",
+      "origem": "/compras/painel",
+      "descricao": "Toda segunda eu exporto o estoque e a venda para uma planilha só para descobrir o que vai acabar. O painel mostra o estoque mas não diz se ele chega até a próxima entrega.",
+      "achado": "O painel lê estoque e venda de 30 dias, mas nenhum cálculo cruza os dois com o prazo do fornecedor; o relatório legado de ruptura usa outra regra (ver aberto a-relatorio-legado).",
+      "solucao": "Coluna de cobertura em dias em cada SKU e o filtro Em risco, que lista só o que acaba antes de o fornecedor entregar.",
+      "decisao": "entra",
+      "mudancas": [
+        "m-cob-coluna",
+        "m-cob-risco"
+      ]
+    },
+    {
+      "id": "FB-0419",
+      "titulo": "Aprovar pedido grande pelo celular",
+      "tipo": "improvement",
+      "severidade": null,
+      "data": "08/10/2026",
+      "origem": "/compras/pedidos",
+      "descricao": "Quando estou fora o pedido grande fica parado esperando eu chegar no computador para aprovar.",
+      "achado": "Hoje não existe aprovação de pedido; a alçada que define o que é pedido grande ainda está em aberto (pendência p-alcada).",
+      "solucao": "Depende do valor da alçada. Com ele definido, a aprovação do pedido pode ganhar um aviso no celular do gestor.",
+      "decisao": "decidir",
+      "mudancas": []
+    }
+  ],
+  "revisoes": [
+    {
+      "id": "rev-1",
+      "titulo": "Reunião de aprovação interna",
+      "data": "08/10/2026",
+      "versao": "v0.2",
+      "resumo": "Cobertura em dias e prazo de reposição revistos com o comprador."
+    }
+  ],
+  "conjuntos": [
+    {
+      "id": "C01",
+      "titulo": "Base de cobertura",
+      "fase": "f1",
+      "ordem": 1,
+      "specs": [
+        "C01-S01"
+      ],
+      "dependeDe": [],
+      "paraleloCom": [
+        "C02"
+      ],
+      "estimativaHoras": 4.5,
+      "prompt": "/novarc-session-build conjunto https://claude.ai/artifact/Q3UMRWUdB25AXzDRBFGRLf C01\n\nConjunto C01 (Base de cobertura) do planejamento EXM-ERP-COMPRAS, fase 1 (Base de cobertura).\nSpecs: C01-S01 (Cobertura de estoque por SKU). Arquivos em .novarc/specs/EXM-ERP-COMPRAS/ no commit 7c3e91a.\nPode correr junto com: C02.\nOrquestrador: novarc-orq-EXM-ERP-COMPRAS.\nBranches: prefixo feature/, data 20261019, uma por spec no formato feature/<id do spec em minúsculas>-<slug>-20261019.\nFechamento: quando o orquestrador mandar FECHA C01, rode /novarc-session-end nas branches deste conjunto, com as migrations e o deploy de functions que elas carregam, pelo processo do projeto. Vale só para este conjunto; o CLAUDE.md do repositório prevalece."
+    },
+    {
+      "id": "C02",
+      "titulo": "Lead time do fornecedor",
+      "fase": "f1",
+      "ordem": 2,
+      "specs": [
+        "C02-S01"
+      ],
+      "dependeDe": [],
+      "paraleloCom": [
+        "C01"
+      ],
+      "estimativaHoras": 2.5,
+      "prompt": "/novarc-session-build conjunto https://claude.ai/artifact/Q3UMRWUdB25AXzDRBFGRLf C02\n\nConjunto C02 (Lead time do fornecedor) do planejamento EXM-ERP-COMPRAS, fase 1 (Base de cobertura).\nSpecs: C02-S01 (Lead time no cadastro do fornecedor). Arquivos em .novarc/specs/EXM-ERP-COMPRAS/ no commit 7c3e91a.\nPode correr junto com: C01.\nBloqueio: C02-S01 só pode ser construído depois da resposta à pendência p-leadtime-padrao (Compras da Exemplo).\nOrquestrador: novarc-orq-EXM-ERP-COMPRAS.\nBranches: prefixo feature/, data 20261019, uma por spec no formato feature/<id do spec em minúsculas>-<slug>-20261019.\nFechamento: quando o orquestrador mandar FECHA C02, rode /novarc-session-end nas branches deste conjunto, com as migrations e o deploy de functions que elas carregam, pelo processo do projeto. Vale só para este conjunto; o CLAUDE.md do repositório prevalece."
+    },
+    {
+      "id": "C03",
+      "titulo": "Sugestão e pedido",
+      "fase": "f2",
+      "ordem": 3,
+      "specs": [
+        "C03-S01",
+        "C03-S02"
+      ],
+      "dependeDe": [
+        "C01",
+        "C02"
+      ],
+      "paraleloCom": [],
+      "estimativaHoras": 8,
+      "prompt": "/novarc-session-build conjunto https://claude.ai/artifact/Q3UMRWUdB25AXzDRBFGRLf C03\n\nConjunto C03 (Sugestão e pedido) do planejamento EXM-ERP-COMPRAS, fase 2 (Sugestão e pedido).\nSpecs: C03-S01 (Sugestão de compra), C03-S02 (Pedido de compra a partir da sugestão). Arquivos em .novarc/specs/EXM-ERP-COMPRAS/ no commit 7c3e91a.\nDepende de: C01, C02 (precisa estar mergeado).\nBloqueio: C03-S02 só pode ser construído depois da resposta à pendência p-alcada (Diretoria da Exemplo).\nOrquestrador: novarc-orq-EXM-ERP-COMPRAS.\nBranches: prefixo feature/, data 20261019, uma por spec no formato feature/<id do spec em minúsculas>-<slug>-20261019.\nFechamento: quando o orquestrador mandar FECHA C03, rode /novarc-session-end nas branches deste conjunto, com as migrations e o deploy de functions que elas carregam, pelo processo do projeto. Vale só para este conjunto; o CLAUDE.md do repositório prevalece."
+    }
+  ],
+  "specs": [
+    {
+      "id": "C01-S01",
+      "conjunto": "C01",
+      "titulo": "Cobertura de estoque por SKU",
+      "slug": "cobertura-sku",
+      "mudancas": [
+        "m-cob-coluna",
+        "m-cob-semgiro",
+        "m-cob-recalcular",
+        "m-cob-risco"
+      ],
+      "bloqueadoPor": [],
+      "arquivos": {
+        "repo": ".novarc/specs/EXM-ERP-COMPRAS/C01-S01-cobertura-sku/",
+        "commit": "7c3e91a",
+        "itens": [
+          {
+            "nome": "spec.md",
+            "sha256": "840a084d9cbbd49bea3a01a9d01b0f8d261f11baa26eda3f1a447c9093badf1e"
+          }
+        ]
+      },
+      "espelho": "specs/C01-S01/"
+    },
+    {
+      "id": "C02-S01",
+      "conjunto": "C02",
+      "titulo": "Lead time no cadastro do fornecedor",
+      "slug": "lead-time-fornecedor",
+      "mudancas": [
+        "m-forn-leadtime"
+      ],
+      "bloqueadoPor": [
+        "p-leadtime-padrao"
+      ],
+      "arquivos": {
+        "repo": ".novarc/specs/EXM-ERP-COMPRAS/C02-S01-lead-time-fornecedor/",
+        "commit": "7c3e91a",
+        "itens": [
+          {
+            "nome": "spec.md",
+            "sha256": "d3f9878e7e3c40a39fdf4d99679bce5ed0dd7dd891cc147bbb8bbc345c75e43e"
+          }
+        ]
+      },
+      "espelho": "specs/C02-S01/"
+    },
+    {
+      "id": "C03-S01",
+      "conjunto": "C03",
+      "titulo": "Sugestão de compra",
+      "slug": "sugestao-compra",
+      "mudancas": [
+        "m-nav-sugestao",
+        "m-sug-tabela",
+        "m-sug-ajuste",
+        "m-ruptura-legado"
+      ],
+      "bloqueadoPor": [],
+      "arquivos": {
+        "repo": ".novarc/specs/EXM-ERP-COMPRAS/C03-S01-sugestao-compra/",
+        "commit": "7c3e91a",
+        "itens": [
+          {
+            "nome": "spec.md",
+            "sha256": "929e47adfe85668f951fe14ce2e12f610ab3faea58ceece1c14b69c0c71ddf41"
+          }
+        ]
+      },
+      "espelho": "specs/C03-S01/"
+    },
+    {
+      "id": "C03-S02",
+      "conjunto": "C03",
+      "titulo": "Pedido de compra a partir da sugestão",
+      "slug": "pedido-da-sugestao",
+      "mudancas": [
+        "m-sug-gerar",
+        "m-ped-status",
+        "m-ped-aprovacao",
+        "m-email-pedido"
+      ],
+      "bloqueadoPor": [
+        "p-alcada"
+      ],
+      "arquivos": {
+        "repo": ".novarc/specs/EXM-ERP-COMPRAS/C03-S02-pedido-da-sugestao/",
+        "commit": "7c3e91a",
+        "itens": [
+          {
+            "nome": "spec.md",
+            "sha256": "9124766038d917abcafca59d69edf67145432112dccf58db40371ea3f9de5ffb"
+          }
+        ]
+      },
+      "espelho": "specs/C03-S02/"
+    }
+  ],
+  "execucao": {
+    "branchPrefixo": "feature/",
+    "ramoDocs": "direct-main",
+    "orquestrador": "novarc-orq-EXM-ERP-COMPRAS",
+    "perfil": {
+      "hostGit": "github",
+      "mergePath": "pr",
+      "formato": "app",
+      "gate": { "comandos": ["pnpm lint", "pnpm test", "pnpm build"], "expect": null },
+      "migracao": { "ferramenta": "prisma", "aplicaNoMerge": false, "ordem": "migração antes do deploy" },
+      "deploys": [{ "alvo": "exemplo-homolog", "dispara": "merge", "comando": null }],
+      "merge": { "quem": "novarc", "clique": false },
+      "teto": { "ate": "merge", "migracaoProducao": false, "deploy": false, "porAcao": false },
+      "stack": "Next.js, Prisma",
+      "base": "main",
+      "fontes": { "gate": "package.json", "hostGit": "git remote", "merge": "CLAUDE.md", "migracao": "prisma/migrations" },
+      "geradoEm": "2026-10-28"
+    }
+  }
+}

@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "novarc-planejamento/1",
+  "title": "Planejamento NOVARC (plano.json)",
+  "description": "Conteúdo de um artefato de planejamento NOVARC. A página (index.html) é fixa e lê tudo daqui. Ids são estáveis: notas, respostas e citações no banco do artefato apontam para eles, então um id publicado nunca muda de nome.",
+  "type": "object",
+  "required": ["schema", "organizacao", "projeto", "fluxo", "simuladores", "fases", "mudancas", "decisoes", "pendencias", "abertos"],
+  "properties": {
+    "schema": { "const": "novarc-planejamento/1" },
+    "template": { "type": "boolean", "description": "Só no template publicado. Mostra a faixa de template. Planejamento real não leva este campo." },
+    "organizacao": {
+      "type": "object", "required": ["nome", "emailProjetos"],
+      "properties": {
+        "nome": { "const": "NOVARC" },
+        "emailProjetos": { "type": "string", "description": "E-mail que recebe todo planejamento como Editor, compartilhado à mão pelo menu Compartilhar. Hoje: projetos@novarcsistemas.com." }
+      }
+    },
+    "exibicao": {
+      "type": "object", "description": "Formato inicial. Editores trocam em Configurações (fica no banco, config/exibicao).",
+      "properties": { "modo": { "enum": ["cliente", "interno", "dev"] }, "fasesPorSimulador": { "type": "boolean", "description": "Opcional. Cada simulador é uma fase e as fases do plano viram slices dela (Fase 1 · Slice 2). Exige que cada fase tenha mudanças de um simulador só." } }
+    },
+    "projeto": {
+      "type": "object", "required": ["cliente", "nome", "codigo", "versao", "data", "responsavel", "resumo", "repositorio"],
+      "properties": {
+        "cliente": { "type": "string" },
+        "nome": { "type": "string", "description": "Título da capa." },
+        "nomeCurto": { "type": "string", "description": "Nome curto do projeto para o título do artefato: Planejamento <cliente> · <nomeCurto>, 2 a 5 palavras no total. Sem ele, usa nome." },
+        "codigo": { "type": "string", "description": "CLIENTE-SISTEMA-TEMA em maiúsculas, ex.: EXM-ERP-COMPRAS. Prefixo das citações [CODIGO#m-id]." },
+        "versao": { "type": "string", "description": "v0.x enquanto não aprovado." },
+        "data": { "type": "string", "description": "dd/mm/aaaa da versão." },
+        "responsavel": { "type": "string" },
+        "resumo": { "type": "string", "description": "Um parágrafo: o que o projeto entrega." },
+        "objetivo": { "type": "string" },
+        "repositorio": { "type": "string", "description": "Nome e stack do repositório que vai receber o código." }
+      }
+    },
+    "fluxo": {
+      "type": "object", "description": "Quem aprova e quem desenvolve. Definido no planejamento e fixo: a página só mostra.",
+      "required": ["aprovacao", "execucao", "aprovadorInterno"],
+      "properties": {
+        "aprovacao": { "type": "array", "items": { "enum": ["interna", "cliente"] }, "description": "[\"interna\"] ou [\"interna\", \"cliente\"]." },
+        "execucao": { "enum": ["interna", "cliente"], "description": "interna = NOVARC desenvolve (specs e prompts do /session-build); cliente = time do cliente (pacotes de repasse)." },
+        "aprovadorInterno": { "type": "string" },
+        "aprovadorCliente": { "type": "string" },
+        "timeCliente": { "type": "string", "description": "Nome exibido quando execucao = cliente, ex.: \"Time do cliente\"." }
+      }
+    },
+    "simuladores": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["id", "titulo", "descricao", "arquivo", "telas"],
+        "properties": {
+          "id": { "type": "string" },
+          "titulo": { "type": "string" },
+          "descricao": { "type": "string" },
+          "arquivo": { "type": "string", "pattern": "^sims/.+\\.html$", "description": "Caminho publicado do simulador. Segue o contrato do simulador em TEMPLATE.md." },
+          "nTelas": { "type": "integer" },
+          "fonte": { "type": "string", "description": "De onde veio cada tela: os componentes reais com arquivo:linha (layout, menu, cabeçalho, telas tocadas), ex.: \"src/components/Layout.tsx:12, src/pages/Compras.tsx:40 (Tailwind, lucide)\". Regras em referencias/simulador-fiel.md." },
+          "hoje": { "type": "boolean", "description": "Opcional. true quando o simulador sabe mostrar o sistema como é hoje: a bancada ganha a versão Hoje (antes da F1) e chama versaoSimulador('hoje') no simulador, que desenha o que era diferente antes (o e-mail antigo, o texto que mudou)." },
+          "superficies": {
+            "type": "array", "minItems": 1, "description": "Opcional. Partes do sistema que o simulador mostra ao mesmo tempo, cada uma com as próprias telas: o site do cliente, o painel do operador, o WhatsApp e o e-mail de quem recebe. Com superfícies, o simulador expõe state.telas = { superfície: tela } das visíveis, cada raiz de superfície leva data-superficie e toda tela declara a sua.",
+            "items": {
+              "type": "object", "required": ["id", "nome"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+                "nome": { "type": "string", "description": "Como aparece na bancada, ex.: \"Cliente (site)\", \"Operador (admin)\", \"WhatsApp do cliente\"." },
+                "descricao": { "type": "string" }
+              }
+            }
+          },
+          "telas": {
+            "type": "array", "description": "Toda tela do simulador. id = valor de state.screen (ou de um valor de state.telas, com superfícies), único no simulador. Use \"*\" para mudanças de navegação geral.",
+            "items": {
+              "type": "object", "required": ["id", "nome"],
+              "properties": {
+                "id": { "type": "string" },
+                "nome": { "type": "string" },
+                "fase": { "type": ["string", "null"], "description": "Fase em que a tela passa a existir. Telas que já existem hoje: a fase da primeira mudança nela. Na versão de uma fase anterior, links data-go para ela somem (menos quando existe é true)." },
+                "existe": { "type": "boolean", "description": "Opcional. true quando a tela já existe no sistema hoje: nunca sai do menu nas versões por fase nem na versão Hoje, mesmo que a primeira mudança nela seja de uma fase posterior." },
+                "superficie": { "type": "string", "description": "id da superfície da tela. Obrigatório quando o simulador declara superficies." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fases": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["id", "nome", "objetivo", "executor", "pronto"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^f[0-9]+$" },
+          "nome": { "type": "string" },
+          "objetivo": { "type": "string" },
+          "executor": { "type": "string", "description": "NOVARC ou o nome do time do cliente." },
+          "inicio": { "type": "string", "format": "date" },
+          "fim": { "type": "string", "format": "date" },
+          "horasPrevistas": { "type": "number", "description": "Horas de execução previstas para a fase (tempo de trabalho do Claude: sessões de build, forks, sessões ligadas): soma de conjuntos[].estimativaHoras da fase. O realizado são os documentos de horas com tipo execucao." },
+          "horasAtivasPrevistas": { "type": "number", "description": "Opcional. Horas ativas previstas de quem conduz as sessões (aprovar plano, revisar PR, validar no navegador, deploy): 0,5 h por spec da fase mais 1 h por fase, arredondado para cima em meia hora (medir-specs.js), recalibrável pelas horas reais. Aparece na linha do tempo e no cartão da fase; o realizado são os documentos de horas com tipo ativa." },
+          "responsavel": { "type": "string", "description": "Opcional. Pessoa responsável pela fase (Willian, Jean, Marciano). Com mais de uma pessoa no plano, o previsto da fase conta para ela na quebra por pessoa da seção de horas." },
+          "pronto": { "type": "array", "items": { "type": "string" }, "description": "Critérios de pronto, verificáveis." },
+          "conjuntos": { "type": "array", "items": { "type": "string" }, "description": "ids dos conjuntos da fase. Com specs[], todo conjunto aparece em exatamente uma fase, a mesma de conjuntos[].fase." }
+        }
+      }
+    },
+    "mudancas": {
+      "type": "array", "description": "Cada mudança é um marcador numerado no simulador.",
+      "items": {
+        "type": "object", "required": ["id", "n", "tipo", "tela", "telaId", "fase", "titulo", "porque", "sim", "refs", "decisoes", "pendencias"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "Igual ao data-chg do elemento no simulador." },
+          "n": { "type": "integer", "description": "Número do marcador, único por simulador." },
+          "tipo": { "enum": ["NOVO", "ALTERADO", "REAPROVEITA", "EM DISCUSSÃO"] },
+          "tela": { "type": "string", "description": "Nome da tela (exibição)." },
+          "telaId": { "type": "string", "description": "id da tela em simuladores[].telas, ou \"*\"." },
+          "fase": { "type": "string" },
+          "titulo": { "type": "string" },
+          "porque": { "type": "string", "description": "O que muda e por quê, em linguagem de negócio." },
+          "sim": { "type": "string" },
+          "oculta": { "type": "boolean", "description": "false quando a mudança é um contêiner com itens de fases anteriores: na versão por fase ela perde o marcador mas não some." },
+          "tecnica": { "type": "boolean", "description": "true para trabalho sem tela (dívida técnica, segurança, limpeza de código): usa telaId \"*\" e não tem marcador no simulador. Entra nas fases e nos specs como qualquer mudança." },
+          "refs": {
+            "type": "array", "items": { "type": "object", "required": ["tipo", "ref"], "properties": { "tipo": { "enum": ["simulador", "código", "documento", "reunião", "dados"] }, "ref": { "type": "string" } } },
+            "description": "Provas: arquivo:linha, doc do repositório, consulta ao banco, reunião."
+          },
+          "decisoes": { "type": "array", "items": { "type": "string" }, "description": "ids das decisões que sustentam a mudança." },
+          "pendencias": { "type": "array", "items": { "type": "string" }, "description": "ids das pendências que seguram a mudança." },
+          "revisoes": { "type": "array", "items": { "type": "string" }, "description": "Opcional. Ids de revisoes[] em que esta mudança entrou ou foi alterada. Alimenta o filtro Revisão da bancada." },
+          "spec": { "type": "string", "pattern": "^C[0-9]{2}-S[0-9]{2}$", "description": "id do spec que entrega a mudança. Obrigatório quando specs[] existe (o validador cobra); espelho de specs[].mudancas." }
+        }
+      }
+    },
+    "decisoes": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "titulo", "texto", "data", "fonte", "mudancas"],
+        "properties": {
+          "id": { "type": "string" }, "titulo": { "type": "string" }, "texto": { "type": "string" },
+          "data": { "type": "string", "description": "dd/mm/aaaa" },
+          "fonte": { "type": "string", "description": "Sessão, reunião (com link do Fathom quando houver) ou documento." },
+          "mudancas": { "type": "array", "items": { "type": "string" }, "description": "Espelho de mudancas[].decisoes." }
+        }
+      }
+    },
+    "pendencias": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "titulo", "texto", "quem", "fase", "mudancas"],
+        "properties": {
+          "id": { "type": "string" }, "titulo": { "type": "string" },
+          "texto": { "type": "string", "description": "O que já se sabe (com a fonte) e a pergunta exata." },
+          "quem": { "type": "string", "description": "Quem responde: Operação, Financeiro, Contador, Comercial, nome do aprovador..." },
+          "fase": { "type": ["string", "null"], "description": "Fase que a pendência segura. Aberta, bloqueia a fase." },
+          "mudancas": { "type": "array", "items": { "type": "string" }, "description": "Espelho de mudancas[].pendencias." }
+        }
+      }
+    },
+    "mensagens": {
+      "type": "array", "description": "Opcional. Catálogo das comunicações que o sistema manda (WhatsApp, e-mail, SMS, push, aviso no sistema), cada uma com prévia dentro do simulador. A bancada ganha a aba Mensagens; o detalhe da mudança lista as mensagens que ela cria ou altera. Contrato: go(tela, { mensagem: id }) mostra a prévia, com data-msg=\"<id>\" na raiz.",
+      "items": {
+        "type": "object", "required": ["id", "canal", "titulo", "origem", "sim", "tela", "mudancas"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "canal": { "enum": ["whatsapp", "email", "sms", "push", "sistema"] },
+          "titulo": { "type": "string", "description": "Nome da mensagem, ex.: \"Proposta liberada\"." },
+          "gatilho": { "type": "string", "description": "Quando sai, ex.: \"Todos os itens da parte 1 têm preço\"." },
+          "para": { "type": "string", "description": "Quem recebe, ex.: \"Cliente\", \"Fornecedor\"." },
+          "remetente": { "enum": ["automatico", "agente", "equipe", "pessoa"], "description": "Quem manda: o sistema sozinho, um agente de IA, a equipe ou uma pessoa específica." },
+          "origem": { "enum": ["existe", "alterada", "nova"], "description": "existe = já sai hoje igual; alterada = já sai hoje e o plano muda; nova = não existe hoje. Na versão Hoje, nova some." },
+          "resumo": { "type": "string" },
+          "sim": { "type": "string", "description": "id do simulador que mostra a prévia." },
+          "tela": { "type": "string", "description": "id da tela do simulador onde a prévia abre." },
+          "mudancas": { "type": "array", "items": { "type": "string" }, "description": "ids das mudanças que criam ou alteram a mensagem; vazio só quando origem é existe." }
+        }
+      }
+    },
+    "abertos": {
+      "type": "array", "description": "Dívida técnica e o que falta organizar. Não bloqueia. Com mudanca, mostra em que fase o plano resolve.",
+      "items": { "type": "object", "required": ["id", "titulo", "texto"], "properties": { "id": { "type": "string" }, "titulo": { "type": "string" }, "texto": { "type": "string" },
+        "mudanca": { "type": "string", "description": "id da mudança que resolve esta dívida no plano (em geral uma mudança técnica)." } } }
+    },
+    "tickets": {
+      "type": "array", "description": "Opcional. Tickets de feedback do cliente triados no plano. Na bancada, o seletor de ticket mostra o cartão do ticket no painel e só as mudanças que o entregam no simulador. Plano sem tickets fica igual.",
+      "items": {
+        "type": "object", "required": ["id", "titulo", "tipo", "descricao", "decisao", "mudancas"],
+        "properties": {
+          "id": { "type": "string", "description": "Id do ticket na origem (ex.: o número no sistema de feedback). Único no plano." },
+          "titulo": { "type": "string" },
+          "tipo": { "enum": ["bug", "improvement"] },
+          "severidade": { "type": ["string", "null"], "description": "Como veio na origem, ou null." },
+          "data": { "type": "string", "description": "Data de abertura, DD/MM/AAAA." },
+          "origem": { "type": "string", "description": "Caminho da página onde o ticket foi aberto, ex.: /compras/pedidos." },
+          "descricao": { "type": "string", "description": "Texto original do ticket, sem reescrever." },
+          "achado": { "type": "string", "description": "O que a investigação achou no código e nos dados (com arquivo:linha quando couber)." },
+          "solucao": { "type": "string", "description": "O que o plano faz para resolver." },
+          "decisao": { "enum": ["entra", "fora", "decidir"], "description": "entra = entregue por este plano; fora = não entra (diga por quê na solução); decidir = ainda sem decisão." },
+          "mudancas": { "type": "array", "items": { "type": "string" }, "description": "ids das mudanças que entregam o ticket; a primeira é para onde a bancada leva. Vazio enquanto decisao não é entra. O ticket aparece só nos simuladores dessas mudanças." },
+          "sim": { "type": "string", "description": "Opcional. id do simulador a que o ticket pertence. Sem ele, valem os simuladores das mudanças; com ele, todas as mudanças devem ser desse simulador. Necessário para ticket ainda sem mudança num plano com mais de um simulador. O seletor de ticket da bancada só mostra os tickets do simulador aberto." }
+        }
+      }
+    },
+    "revisoes": {
+      "type": "array",
+      "description": "Opcional. Rodadas de revisão conjunta do planejamento (uma reunião, um lote de feedback). Na bancada, a lista de mudanças ganha o filtro Revisão, que mostra só as mudanças que entraram ou mudaram naquela rodada.",
+      "items": {
+        "type": "object",
+        "required": ["id", "titulo"],
+        "properties": {
+          "id": { "type": "string", "description": "Id estável, citado em mudancas[].revisoes. Nunca muda depois de publicado." },
+          "titulo": { "type": "string", "description": "Nome da rodada, como o filtro mostra (ex.: Feedback do time, 14 e 15/10)." },
+          "data": { "type": "string", "description": "DD/MM/AAAA em que a rodada entrou no plano." },
+          "versao": { "type": "string", "description": "Versão do plano que trouxe a rodada (ex.: v0.15)." },
+          "resumo": { "type": "string", "description": "Uma frase sobre o que a rodada mudou." }
+        }
+      }
+    },
+    "conjuntos": {
+      "type": "array", "description": "Escrito só pela novarc-session-plan. Cada conjunto é uma sessão de desenvolvimento com um ou mais specs, numerada na ordem de implementação. Opcional: plano sem specs continua válido.",
+      "items": {
+        "type": "object", "required": ["id", "titulo", "fase", "ordem", "specs", "dependeDe", "prompt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^C[0-9]{2}$", "description": "C mais dois dígitos, ex.: C01." },
+          "titulo": { "type": "string" },
+          "fase": { "type": "string", "description": "Fase do conjunto. Toda mudança dos seus specs tem esta fase." },
+          "ordem": { "type": "integer", "description": "Posição na ordem de implementação." },
+          "specs": { "type": "array", "items": { "type": "string" }, "description": "ids dos specs do conjunto. Espelho de specs[].conjunto." },
+          "dependeDe": { "type": "array", "items": { "type": "string" }, "description": "ids dos conjuntos que precisam estar mergeados antes deste começar. Sem ciclo." },
+          "paraleloCom": { "type": "array", "items": { "type": "string" }, "description": "Conjuntos que podem rodar ao mesmo tempo que este. É permissão, não instrução, e nunca inclui um conjunto da cadeia de dependência." },
+          "estimativaHoras": { "type": "number", "description": "Horas de execução (sessão do Claude), não de pessoas: por spec, 1,25 h fixas mais 0,2 h por tarefa estimada, arredondado para cima em meia hora (medir-specs.js)." },
+          "estimativaHorasAtivas": { "type": "number", "description": "Opcional. Horas ativas previstas do conjunto (0,5 h por spec); a fase soma 1 h de validação e deploy." },
+          "responsavel": { "type": "string", "description": "Opcional. Pessoa que conduz o conjunto; sem ele vale o responsavel da fase. Conta o previsto de execução por pessoa." },
+          "prompt": { "type": "string", "description": "Prompt pronto para colar na sessão do conjunto (novarc-session-build conjunto), em pt-BR." }
+        }
+      }
+    },
+    "specs": {
+      "type": "array", "description": "Escrito só pela novarc-session-plan. A fonte do spec é o repositório do cliente; specs/ no artefato é o espelho para leitura e nunca é editado à mão. Quando existe, o validador liga as invariantes de specs e conjuntos.",
+      "items": {
+        "type": "object", "required": ["id", "conjunto", "titulo", "slug", "mudancas", "arquivos", "espelho"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^C[0-9]{2}-S[0-9]{2}$", "description": "<conjunto>-S mais dois dígitos, ex.: C01-S02. Também é o id do documento specs/{id} no banco." },
+          "conjunto": { "type": "string" },
+          "titulo": { "type": "string" },
+          "slug": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "Único no plano. Entra no nome da pasta no repositório e no nome da branch." },
+          "mudancas": { "type": "array", "items": { "type": "string" }, "description": "ids das mudanças que o spec entrega, ao menos uma. Espelho de mudancas[].spec." },
+          "sdd": { "type": "boolean", "description": "Spec de risco (dinheiro, documento fiscal, autenticação ou autorização, RLS, migration destrutiva): a sessão ligada que o constrói usa SDD. Ausente vale false. Vira a linha SDD: do prompt do conjunto." },
+          "bloqueadoPor": { "type": "array", "items": { "type": "string" }, "description": "ids das pendências abertas que seguram o spec; vazio quando livre. Resposta parcial não destrava." },
+          "arquivos": {
+            "type": "object", "required": ["repo", "commit", "itens"],
+            "properties": {
+              "repo": { "type": "string", "description": "Pasta do spec no repositório do cliente, com barra no fim, ex.: .novarc/specs/EXM-ERP-COMPRAS/C01-S01-sop-base-estoque/." },
+              "commit": { "type": "string", "description": "sha do commit que escreveu estes arquivos (procedência)." },
+              "itens": {
+                "type": "array", "minItems": 1, "description": "Arquivos do spec. Sempre inclui spec.md.",
+                "items": {
+                  "type": "object", "required": ["nome", "sha256"],
+                  "properties": {
+                    "nome": { "type": "string", "pattern": "^[a-z0-9-]+\\.md$" },
+                    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Hash do arquivo como está no repositório e no espelho." }
+                  }
+                }
+              }
+            }
+          },
+          "espelho": { "type": "string", "pattern": "^specs/C[0-9]{2}-S[0-9]{2}/$", "description": "Prefixo publicado do espelho dentro do artefato, ex.: specs/C01-S01/." }
+        }
+      }
+    },
+    "execucao": {
+      "type": "object", "description": "Definido uma vez pela novarc-session-plan a partir do perfil do projeto. Obrigatório quando specs[] existe (o validador cobra).",
+      "required": ["branchPrefixo", "ramoDocs", "orquestrador"],
+      "properties": {
+        "branchPrefixo": { "type": "string", "description": "Convenção de branch do projeto do cliente, ex.: feature/." },
+        "ramoDocs": { "enum": ["direct-main", "docs-pr"], "description": "Como os specs chegam ao repositório: direto na branch principal ou por PR de documentação." },
+        "orquestrador": { "type": "string", "description": "Nome (SendMessage) da sessão orquestradora, ex.: novarc-orq-EXM-ERP-COMPRAS." },
+        "perfil": {
+          "type": "object", "description": "Opcional. Perfil de execução do projeto do cliente, lido do repositório pela novarc-session-plan: só tipos, comandos e sim/não, nunca segredo; campo ausente = o orquestrador pergunta. Nenhum subcampo é obrigatório.",
+          "properties": {
+            "hostGit": { "enum": ["github", "gitlab", "bitbucket"], "description": "Onde o repositório do cliente está hospedado." },
+            "mergePath": { "enum": ["pr", "local-merge"], "description": "Como o trabalho chega à base: pull request ou merge local." },
+            "formato": { "enum": ["app", "docs-only", "infra-no-suite", "library"], "description": "Formato do projeto, que decide o gate aplicável." },
+            "gate": {
+              "type": "object", "description": "Comandos que precisam passar antes do merge.",
+              "properties": {
+                "comandos": { "type": "array", "items": { "type": "string" }, "description": "Comandos do gate, na ordem de execução." },
+                "expect": { "type": ["string", "null"], "description": "Saída esperada do gate, quando houver; null = só o código de saída." }
+              }
+            },
+            "migracao": {
+              "type": "object", "description": "Como as migrações de banco chegam ao ambiente.",
+              "properties": {
+                "ferramenta": { "type": ["string", "null"], "description": "Ferramenta de migração, ex.: supabase; null = o projeto não migra." },
+                "aplicaNoMerge": { "type": "boolean", "description": "Se a migração é aplicada pelo próprio merge." },
+                "ordem": { "type": "string", "description": "Ordem entre migração e deploy, em texto curto." }
+              }
+            },
+            "deploys": {
+              "type": "array", "description": "Alvos de deploy e o que os dispara.",
+              "items": {
+                "type": "object", "required": ["alvo", "dispara"],
+                "properties": {
+                  "alvo": { "type": "string", "description": "Nome do alvo, ex.: novarc-dev." },
+                  "dispara": { "enum": ["merge", "manual", "comando"], "description": "O que dispara o deploy." },
+                  "comando": { "type": ["string", "null"], "description": "Comando do deploy quando dispara = comando." }
+                }
+              }
+            },
+            "merge": {
+              "type": "object", "description": "Quem faz o merge do projeto.",
+              "properties": {
+                "quem": { "enum": ["novarc", "cliente"], "description": "Quem aperta o merge." },
+                "clique": { "type": "boolean", "description": "Se o merge exige um clique humano." }
+              }
+            },
+            "teto": {
+              "type": "object", "description": "Até onde o modo contínuo pode ir sem perguntar.",
+              "properties": {
+                "ate": { "enum": ["pr-aberto", "merge", "deploy"], "description": "Última etapa que o contínuo pode concluir." },
+                "migracaoProducao": { "type": "boolean", "description": "Se o contínuo pode aplicar migração em produção." },
+                "deploy": { "type": "boolean", "description": "Se o contínuo pode fazer deploy." },
+                "porAcao": { "type": "boolean", "description": "Se o CLAUDE.md do cliente exige autorização por ação." }
+              }
+            },
+            "stack": { "type": "string", "description": "Stack do projeto, em texto curto." },
+            "base": { "type": "string", "description": "Branch base do repositório, ex.: main." },
+            "janelaDeploy": { "type": "string", "description": "Janela de deploy, em texto curto." },
+            "fontes": { "type": "object", "description": "Arquivo de onde veio cada campo do perfil.", "additionalProperties": { "type": "string" } },
+            "geradoEm": { "type": "string", "description": "Data ISO em que o perfil foi lido do repositório." }
+          }
+        }
+      }
+    }
+  }
+}

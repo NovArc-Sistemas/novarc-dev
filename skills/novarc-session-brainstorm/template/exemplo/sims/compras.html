@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulador · Compras no ERP Exemplo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+    colors: { marca: { 50: '#eef6f3', 100: '#d5ebe3', 500: '#1f8a6a', 600: '#18765a', 700: '#125c46' } },
+  } } };
+</script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root { --mk-novo: #c026d3; --mk-alt: #d97706; --mk-reuso: #0d9488; --mk-disc: #64748b; --proto: #4a044e; --proto-fg: #fdf4ff; }
+  html, body { height: 100%; }
+  body { font-family: Inter, system-ui, sans-serif; }
+  .mk [data-chg] { position: relative; outline: 2px dashed var(--c); outline-offset: 3px; border-radius: 8px; }
+  .mk [data-chg]::after { content: attr(data-n); position: absolute; top: -10px; left: -10px; z-index: 5; min-width: 22px; height: 22px;
+    padding: 0 6px; border-radius: 999px; background: var(--c); color: #fff; font: 700 11px/22px Inter, sans-serif; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
+  [data-t="NOVO"] { --c: var(--mk-novo); } [data-t="ALTERADO"] { --c: var(--mk-alt); }
+  [data-t="REAPROVEITA"] { --c: var(--mk-reuso); } [data-t="EM DISCUSSÃO"] { --c: var(--mk-disc); }
+  .proto-bar { background: var(--proto); color: var(--proto-fg); }
+  .tabular { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<div id="app" class="mk h-full flex flex-col">
+  <div class="proto-bar flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs">
+    <svg viewBox="0 0 181 56" role="img" aria-label="NovArc" style="height:16px;width:auto;flex:none"><path d="M19 6 H6 V50 H19 V44 H12 V12 H19 Z" fill="#fff"/><path d="M162 6 H175 V50 H162 V44 H169 V12 H162 Z" fill="#fff"/><text x="85" y="38" text-anchor="end" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#fff">Nov</text><path d="M95 12 H103 L95 44 H87 Z" fill="#9cc4ff"/><text x="105" y="38" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#9cc4ff">Arc</text></svg>
+    <span class="font-semibold tracking-wide uppercase">Protótipo de planejamento</span>
+    <span class="opacity-80">Compras guiadas por cobertura no ERP Exemplo · dados de exemplo, não são números reais</span>
+    <label class="ml-auto flex items-center gap-1.5">Perfil
+      <select id="papel" class="text-slate-800 rounded px-1 py-0.5 text-xs">
+        <option value="comprador">Comprador</option><option value="gestor">Gestor de compras</option>
+      </select>
+    </label>
+    <label class="flex items-center gap-1.5 cursor-pointer" title="Mostra, ao lado do ERP, a caixa de entrada do fornecedor"><input id="tgl-email" type="checkbox"> E-mail do fornecedor</label>
+    <label class="flex items-center gap-1.5 cursor-pointer"><input id="tgl-markers" type="checkbox" checked> Marcações</label>
+  </div>
+  <div class="flex flex-1 min-h-0">
+  <div class="flex flex-1 min-h-0 min-w-0" data-superficie="erp">
+    <aside class="w-60 flex-none bg-slate-900 text-slate-300 flex flex-col">
+      <div class="px-5 py-4 flex items-center gap-2 border-b border-slate-800">
+        <!-- num planejamento real: o arquivo do logo copiado do repositório do cliente, nunca texto ou desenho -->
+      <img data-chrome="logo" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%231f8a6a%22%2F%3E%3Cpath%20d%3D%22M10%209h12v3h-8.5v2.6H21v3h-7.5V20H22v3H10z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E" alt="ERP Exemplo" class="w-8 h-8">
+        <div><p class="text-white font-semibold text-sm leading-tight">ERP Exemplo</p><p class="text-[11px] text-slate-400">Exemplo Utilidades</p></div>
+      </div>
+      <nav id="nav" data-chrome="nav" class="p-3 space-y-1 text-sm"></nav>
+      <div class="mt-auto p-4 text-[11px] text-slate-500 border-t border-slate-800" id="quem"></div>
+    </aside>
+    <main id="main" class="flex-1 min-w-0 overflow-y-auto">
+      <header class="sticky top-0 z-10 h-14 flex items-center justify-end px-8 bg-white border-b border-slate-200">
+        <div data-chrome="header-actions" class="flex items-center gap-3">
+          <button class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Notificações"><i data-lucide="bell" class="w-5 h-5"></i><span class="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] leading-4 text-center">3</span></button>
+          <div class="w-8 h-8 rounded-full bg-marca-100 text-marca-700 grid place-items-center text-xs font-semibold">AC</div>
+        </div>
+      </header>
+      <div id="view" class="max-w-6xl mx-auto px-8 py-6"></div>
+    </main>
+  </div>
+  <!-- segunda superfície: a caixa de entrada do fornecedor, ao lado do ERP quando ligada na faixa -->
+  <section id="email" data-superficie="fornecedor" class="hidden w-[460px] flex-none border-l border-slate-200 bg-white overflow-y-auto"></section>
+  </div>
+</div>
+<div id="modal" class="fixed inset-0 bg-slate-900/40 hidden items-center justify-center z-50"></div>
+
+<script>
+// ---- data (fictitious)
+const FORNECEDORES = [
+  { id: 'dm', nome: 'Distribuidora Modelo', cnpj: '00.000.000/0001-01', lead: 15, contato: 'compras@modelo.exemplo' },
+  { id: 'ic', nome: 'Indústria Casa Fictícia', cnpj: '00.000.000/0001-02', lead: 25, contato: 'vendas@casaficticia.exemplo' },
+  { id: 'im', nome: 'Importadora Amostra', cnpj: '00.000.000/0001-03', lead: null, contato: 'pedidos@amostra.exemplo' },
+];
+const LEAD_PADRAO = 20;
+const SKUS = [
+  { sku: 'EXM-0042', nome: 'Garrafa térmica 1 L', forn: 'dm', estoque: 300, vendas30: 90, custo: 38.9 },
+  { sku: 'EXM-0105', nome: 'Jogo de potes herméticos 5 peças', forn: 'dm', estoque: 36, vendas30: 120, custo: 54.0 },
+  { sku: 'EXM-0118', nome: 'Panela de pressão 4,5 L', forn: 'ic', estoque: 48, vendas30: 75, custo: 129.0 },
+  { sku: 'EXM-0077', nome: 'Porta-temperos giratório', forn: 'ic', estoque: 140, vendas30: 0, custo: 46.5 },
+  { sku: 'EXM-0203', nome: 'Kit utensílios de silicone', forn: 'im', estoque: 22, vendas30: 66, custo: 31.2 },
+  { sku: 'EXM-0214', nome: 'Tábua de corte bambu G', forn: 'im', estoque: 410, vendas30: 60, custo: 27.8 },
+];
+const PEDIDOS = [{ id: 'PC-1187', forn: 'ic', itens: [{ sku: 'EXM-0118', qtd: 60 }], status: 'confirmado', criado: '02/10/2026' }];
+const STATUS = ['rascunho', 'enviado', 'confirmado', 'recebido'];
+const ALCADA_PLACEHOLDER = 10000; // valor em discussão (pendência p-alcada)
+
+// state.screen: tela do ERP. state.telas: superfícies visíveis agora (ERP e, ligado na faixa, o e-mail do fornecedor).
+// state.versao: 'hoje', id de fase ou 'all', recebido da bancada por versaoSimulador().
+const state = { screen: 'painel', telas: { erp: 'painel' }, papel: 'comprador', filtro: 'todos', calculadoEm: '12/10/2026 03:00', pedidoId: 'PC-1187',
+  ajustes: {}, motivos: {}, selecionados: {}, verEmail: false, emailId: null, versao: 'all' };
+
+// ---- markers from plano.json (one source of truth for number and type)
+let MARK = {};
+fetch('../plano.json').then((r) => r.json()).then((p) => { MARK = Object.fromEntries(p.mudancas.map((m) => [m.id, m])); render(); }).catch(() => {});
+const M = (id) => MARK[id] ? `data-chg="${id}" data-n="${MARK[id].n}" data-t="${MARK[id].tipo}"` : `data-chg="${id}"`;
+
+// ---- helpers
+const forn = (id) => FORNECEDORES.find((f) => f.id === id);
+const leadDe = (f) => (f.lead == null ? LEAD_PADRAO : f.lead);
+const media = (s) => s.vendas30 / 30;
+const cobertura = (s) => (s.vendas30 === 0 ? null : Math.round(s.estoque / media(s)));
+const emRisco = (s) => { const c = cobertura(s); return c !== null && c < leadDe(forn(s.forn)); };
+const sugestao = (s) => Math.max(0, Math.ceil(media(s) * (leadDe(forn(s.forn)) + 30) - s.estoque));
+const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const icon = (n, c = 'w-4 h-4') => `<i data-lucide="${n}" class="${c}"></i>`;
+const card = (inner, extra = '') => `<div class="bg-white rounded-xl border border-slate-200 shadow-sm ${extra}">${inner}</div>`;
+const header = (titulo, sub, acoes = '') => `<div class="flex items-end justify-between gap-4 mb-5"><div>
+  <p class="text-xs text-slate-500">Compras</p><h1 class="text-2xl font-semibold text-slate-900">${titulo}</h1>
+  <p class="text-sm text-slate-500 mt-1">${sub}</p></div><div class="flex items-center gap-2">${acoes}</div></div>`;
+const btn = (label, attrs = '', kind = 'primary') => `<button ${attrs} class="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ${
+  kind === 'primary' ? 'bg-marca-600 text-white hover:bg-marca-700' : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'}">${label}</button>`;
+
+// ---- screens
+function viewPainel() {
+  const lista = SKUS.filter((s) => state.filtro === 'todos' || (state.filtro === 'risco' && emRisco(s)));
+  const nRisco = SKUS.filter(emRisco).length, nParado = SKUS.filter((s) => s.vendas30 === 0).length;
+  const kpi = (t, v, cor) => card(`<div class="p-4"><p class="text-xs text-slate-500">${t}</p><p class="text-2xl font-semibold tabular ${cor}">${v}</p></div>`);
+  return header('Painel de compras', 'Estoque, venda e cobertura de cada SKU ativo.',
+      `<span ${M('m-cob-recalcular')} class="flex items-center gap-2 text-xs text-slate-500">Calculado em ${state.calculadoEm}
+        ${btn(icon('refresh-cw') + 'Recalcular', 'data-act="recalcular"', 'secondary')}</span>`) +
+    `<div class="grid grid-cols-3 gap-4 mb-5">${kpi('SKUs ativos', SKUS.length, 'text-slate-900')}${kpi('Em risco de ruptura', nRisco, 'text-rose-600')}${kpi('Sem giro em 30 dias', nParado, 'text-amber-600')}</div>` +
+    card(`<div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+        <p class="font-medium text-slate-900">Itens</p>
+        <div ${M('m-cob-risco')} class="inline-flex rounded-lg border border-slate-300 p-0.5 text-xs">
+          ${[['todos', 'Todos'], ['risco', 'Em risco']].map(([v, l]) => `<button data-act="filtro" data-v="${v}" class="px-3 py-1 rounded-md ${state.filtro === v ? 'bg-slate-900 text-white' : 'text-slate-600'}">${l}</button>`).join('')}
+        </div></div>
+      <table class="w-full text-sm"><thead class="text-xs text-slate-500 bg-slate-50"><tr>
+        <th class="text-left font-medium px-4 py-2">SKU</th><th class="text-left font-medium px-4 py-2">Produto</th>
+        <th class="text-left font-medium px-4 py-2">Fornecedor</th><th class="text-right font-medium px-4 py-2">Estoque</th>
+        <th class="text-right font-medium px-4 py-2">Venda 30 d</th>
+        <th class="text-right font-medium px-4 py-2"><span ${M('m-cob-coluna')} class="px-1">Cobertura</span></th></tr></thead>
+      <tbody>${lista.map((s, i) => { const c = cobertura(s), risco = emRisco(s);
+        const cel = c === null ? `<span ${i === 0 || !lista.slice(0, i).some((x) => x.vendas30 === 0) ? M('m-cob-semgiro') : ''} class="inline-block rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-xs font-medium">sem giro</span>`
+          : `<span class="tabular font-medium ${risco ? 'text-rose-600' : 'text-slate-800'}">${c} dias</span>`;
+        return `<tr class="border-t border-slate-100"><td class="px-4 py-2.5 font-mono text-xs">${s.sku}</td><td class="px-4 py-2.5">${s.nome}</td>
+          <td class="px-4 py-2.5 text-slate-500">${forn(s.forn).nome}</td><td class="px-4 py-2.5 text-right tabular">${s.estoque}</td>
+          <td class="px-4 py-2.5 text-right tabular">${s.vendas30}</td><td class="px-4 py-2.5 text-right">${cel}</td></tr>`; }).join('') ||
+        `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Nenhum item em risco agora.</td></tr>`}</tbody></table>`);
+}
+
+function viewFornecedores() {
+  return header('Fornecedores', 'Cadastro dos fornecedores ativos.') +
+    card(`<table class="w-full text-sm"><thead class="text-xs text-slate-500 bg-slate-50"><tr>
+      <th class="text-left font-medium px-4 py-2">Fornecedor</th><th class="text-left font-medium px-4 py-2">CNPJ</th>
+      <th class="text-left font-medium px-4 py-2">Contato</th><th class="text-right font-medium px-4 py-2"><span ${M('m-forn-leadtime')} class="px-1">Lead time</span></th></tr></thead>
+      <tbody>${FORNECEDORES.map((f) => `<tr class="border-t border-slate-100"><td class="px-4 py-2.5 font-medium">${f.nome}</td>
+        <td class="px-4 py-2.5 text-slate-500 tabular">${f.cnpj}</td><td class="px-4 py-2.5 text-slate-500">${f.contato}</td>
+        <td class="px-4 py-2.5 text-right">${f.lead == null
+          ? `<span class="tabular">${LEAD_PADRAO} dias</span> <span class="ml-1 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[11px]">padrão</span>`
+          : `<span class="tabular">${f.lead} dias</span>`}</td></tr>`).join('')}</tbody></table>`);
+}
+
+function viewSugestao() {
+  const itens = SKUS.filter(emRisco);
+  const porForn = FORNECEDORES.map((f) => ({ f, itens: itens.filter((s) => s.forn === f.id) })).filter((g) => g.itens.length);
+  const qtd = (s) => (state.ajustes[s.sku] ?? sugestao(s));
+  const nSel = Object.values(state.selecionados).filter(Boolean).length;
+  return header('Sugestão de compra', 'Quanto comprar para cobrir o lead time do fornecedor mais 30 dias de venda.',
+      `<span ${M('m-sug-gerar')}>${btn(icon('file-plus') + `Gerar pedido${nSel ? ` (${nSel})` : ''}`, `data-act="gerar" ${nSel ? '' : 'disabled style="opacity:.5;cursor:not-allowed"'}`)}</span>`) +
+    `<div ${M('m-sug-tabela')} class="space-y-4">${porForn.map(({ f, itens }) => card(`
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200"><p class="font-medium text-slate-900">${f.nome}</p>
+        <p class="text-xs text-slate-500">lead time ${leadDe(f)} dias${f.lead == null ? ' (padrão)' : ''}</p></div>
+      <table class="w-full text-sm"><thead class="text-xs text-slate-500 bg-slate-50"><tr><th class="px-4 py-2 w-8"></th>
+        <th class="text-left font-medium px-4 py-2">SKU</th><th class="text-left font-medium px-4 py-2">Produto</th>
+        <th class="text-right font-medium px-4 py-2">Cobertura</th><th class="text-right font-medium px-4 py-2">Sugerido</th>
+        <th class="text-right font-medium px-4 py-2">Comprar</th><th class="text-right font-medium px-4 py-2">Valor</th></tr></thead>
+      <tbody>${itens.map((s, i) => { const ajustado = state.ajustes[s.sku] != null;
+        return `<tr class="border-t border-slate-100 align-top"><td class="px-4 py-2.5"><input type="checkbox" data-act="sel" data-sku="${s.sku}" ${state.selecionados[s.sku] ? 'checked' : ''}></td>
+          <td class="px-4 py-2.5 font-mono text-xs">${s.sku}</td><td class="px-4 py-2.5">${s.nome}</td>
+          <td class="px-4 py-2.5 text-right tabular text-rose-600">${cobertura(s)} dias</td><td class="px-4 py-2.5 text-right tabular text-slate-500">${sugestao(s)}</td>
+          <td class="px-4 py-2.5 text-right"><span ${f.id === porForn[0].f.id && i === 0 ? M('m-sug-ajuste') : ''} class="inline-flex flex-col items-end gap-1">
+            <button data-act="ajustar" data-sku="${s.sku}" class="tabular font-medium underline decoration-dotted ${ajustado ? 'text-marca-700' : ''}">${qtd(s)}</button>
+            ${ajustado ? `<span class="text-[11px] text-slate-500 max-w-[160px] text-right">${state.motivos[s.sku]}</span>` : ''}</span></td>
+          <td class="px-4 py-2.5 text-right tabular">${brl(qtd(s) * s.custo)}</td></tr>`; }).join('')}</tbody></table>`)).join('')}</div>`;
+}
+
+function viewPedido() {
+  const p = PEDIDOS.find((x) => x.id === state.pedidoId) || PEDIDOS[0];
+  const total = p.itens.reduce((t, it) => t + it.qtd * SKUS.find((s) => s.sku === it.sku).custo, 0);
+  const acima = total > ALCADA_PLACEHOLDER, iSt = STATUS.indexOf(p.status);
+  const gestor = state.papel === 'gestor';
+  return header(`Pedido ${p.id}`, `${forn(p.forn).nome} · criado em ${p.criado}`) +
+    card(`<div ${M('m-ped-status')} class="p-5"><ol class="flex items-center gap-2 text-xs">${STATUS.map((st, i) => `<li class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full grid place-items-center ${i <= iSt ? 'bg-marca-600 text-white' : 'bg-slate-200 text-slate-500'}">${i + 1}</span>
+      <span class="${i === iSt ? 'font-semibold text-slate-900' : 'text-slate-500'}">${st}</span>${i < STATUS.length - 1 ? '<span class="w-8 h-px bg-slate-300"></span>' : ''}</li>`).join('')}</ol></div>`, 'mb-4') +
+    card(`<table class="w-full text-sm"><thead class="text-xs text-slate-500 bg-slate-50"><tr><th class="text-left font-medium px-4 py-2">SKU</th>
+      <th class="text-left font-medium px-4 py-2">Produto</th><th class="text-right font-medium px-4 py-2">Quantidade</th><th class="text-right font-medium px-4 py-2">Valor</th></tr></thead>
+      <tbody>${p.itens.map((it) => { const s = SKUS.find((x) => x.sku === it.sku); return `<tr class="border-t border-slate-100"><td class="px-4 py-2.5 font-mono text-xs">${s.sku}</td>
+        <td class="px-4 py-2.5">${s.nome}</td><td class="px-4 py-2.5 text-right tabular">${it.qtd}</td><td class="px-4 py-2.5 text-right tabular">${brl(it.qtd * s.custo)}</td></tr>`; }).join('')}
+      <tr class="border-t border-slate-200 font-semibold"><td colspan="3" class="px-4 py-2.5 text-right">Total</td><td class="px-4 py-2.5 text-right tabular">${brl(total)}</td></tr></tbody></table>`, 'mb-4') +
+    `<div ${M('m-ped-aprovacao')} ${acima ? 'data-msg="aviso-alcada"' : ''} class="flex items-center justify-between gap-4 rounded-xl border ${acima ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'} p-4">
+      <p class="text-sm ${acima ? 'text-amber-900' : 'text-slate-600'}">${acima
+        ? `Acima da alçada de aprovação (valor em discussão, ${brl(ALCADA_PLACEHOLDER)} no protótipo). ${gestor ? 'Você pode aprovar este pedido.' : 'Aguardando aprovação do gestor.'}`
+        : 'Dentro da alçada: o comprador pode enviar.'}</p>
+      ${p.status === 'rascunho' ? (acima && !gestor ? btn('Enviar ao fornecedor', 'disabled style="opacity:.5;cursor:not-allowed"')
+        : btn(acima ? 'Aprovar e enviar' : 'Enviar ao fornecedor', 'data-act="enviar"')) : ''}</div>`;
+}
+
+function viewPedidos() {
+  return header('Pedidos de compra', 'Pedidos por fornecedor, do rascunho ao recebimento.') +
+    card(`<table class="w-full text-sm"><thead class="text-xs text-slate-500 bg-slate-50"><tr><th class="text-left font-medium px-4 py-2">Pedido</th>
+      <th class="text-left font-medium px-4 py-2">Fornecedor</th><th class="text-left font-medium px-4 py-2">Criado em</th>
+      <th class="text-right font-medium px-4 py-2">Itens</th><th class="text-left font-medium px-4 py-2">Status</th><th class="px-4 py-2"></th></tr></thead>
+      <tbody>${PEDIDOS.slice().reverse().map((p) => `<tr class="border-t border-slate-100">
+        <td class="px-4 py-2.5 font-medium">${p.id}</td><td class="px-4 py-2.5">${forn(p.forn).nome}</td><td class="px-4 py-2.5 text-slate-500">${p.criado}</td>
+        <td class="px-4 py-2.5 text-right tabular">${p.itens.length}</td><td class="px-4 py-2.5"><span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs">${p.status}</span></td>
+        <td class="px-4 py-2.5 text-right"><a href="#" data-go="pedido" data-act="abrir" data-id="${p.id}" class="text-marca-700 text-sm font-medium hover:underline">Ver</a></td></tr>`).join('')}</tbody></table>`);
+}
+
+// ---- superfície do fornecedor: a caixa de entrada que recebe o pedido enviado pelo ERP
+function viewEmail() {
+  const enviados = PEDIDOS.filter((p) => p.status !== 'rascunho').slice().reverse();
+  const p = PEDIDOS.find((x) => x.id === state.emailId && x.status !== 'rascunho') || enviados[0];
+  const hoje = state.versao === 'hoje';
+  const lista = enviados.map((x) => `<button data-act="email" data-id="${x.id}" class="w-full text-left px-5 py-3 border-b border-slate-100 ${p && x.id === p.id ? 'bg-marca-50' : 'hover:bg-slate-50'}">
+    <p class="text-sm font-medium text-slate-900">Pedido de compra ${x.id}</p><p class="text-xs text-slate-500">ERP Exemplo · ${x.criado}</p></button>`).join('');
+  let corpo = '<p class="p-5 text-sm text-slate-500">Nenhum pedido enviado ainda. Envie um pedido no ERP para ver o e-mail chegar aqui.</p>';
+  if (p) {
+    const f = forn(p.forn), total = p.itens.reduce((t, it) => t + it.qtd * SKUS.find((s) => s.sku === it.sku).custo, 0);
+    corpo = `<article data-msg="pedido-fornecedor" class="p-5 space-y-3 text-sm">
+      <div><p class="text-xs text-slate-500">De: compras@exemplo-utilidades.exemplo · Para: ${f.contato}</p><p class="font-semibold text-slate-900 mt-1">Pedido de compra ${p.id}</p></div>
+      ${hoje
+        ? `<p class="font-mono text-xs leading-relaxed text-slate-700 whitespace-pre-line">Prezados,\nSegue pedido ${p.id}: ${p.itens.map((it) => `${it.sku} x${it.qtd}`).join(', ')}.\nFavor confirmar.\nAtt, Compras</p>`
+        : `<div ${M('m-email-pedido')} class="space-y-3"><table class="w-full text-xs"><thead class="text-slate-500"><tr><th class="text-left py-1">SKU</th><th class="text-left py-1">Produto</th><th class="text-right py-1">Qtd</th><th class="text-right py-1">Valor</th></tr></thead>
+          <tbody>${p.itens.map((it) => { const s = SKUS.find((x) => x.sku === it.sku); return `<tr class="border-t border-slate-100"><td class="py-1.5 font-mono">${s.sku}</td><td class="py-1.5">${s.nome}</td><td class="py-1.5 text-right tabular">${it.qtd}</td><td class="py-1.5 text-right tabular">${brl(it.qtd * s.custo)}</td></tr>`; }).join('')}
+          <tr class="border-t border-slate-200 font-semibold"><td colspan="3" class="py-1.5 text-right">Total</td><td class="py-1.5 text-right tabular">${brl(total)}</td></tr></tbody></table>
+          <p class="text-slate-600">Entrega esperada em até ${leadDe(f)} dias${f.lead == null ? ' (prazo padrão)' : ''}.</p>
+          <span class="inline-flex rounded-lg bg-marca-600 text-white px-3 py-2 text-sm font-medium">Confirmar o pedido</span></div>`}
+    </article>`;
+  }
+  return `<div class="px-5 py-3 border-b border-slate-200 bg-slate-50"><p class="text-xs text-slate-500">E-mail do fornecedor</p><p class="font-semibold text-slate-900">Caixa de entrada</p></div>${lista}${corpo}`;
+}
+
+const SCREENS = { painel: viewPainel, fornecedores: viewFornecedores, sugestao: viewSugestao, pedidos: viewPedidos, pedido: viewPedido };
+const NAV = [['painel', 'layout-dashboard', 'Painel de compras'], ['sugestao', 'sparkles', 'Sugestão de compra'], ['pedidos', 'file-text', 'Pedidos'], ['fornecedores', 'truck', 'Fornecedores']];
+
+// go() aceita a tela de qualquer superfície: 'email' liga a caixa do fornecedor ao lado, sem trocar a tela do ERP.
+// opts.mensagem abre a prévia de uma mensagem do catálogo (mensagens[] do plano.json).
+function go(screen, opts = {}) {
+  if (screen === 'email') { state.verEmail = true; if (opts.mensagem && !PEDIDOS.some((p) => p.status !== 'rascunho')) PEDIDOS[0].status = 'enviado'; return render(); }
+  if (opts.mensagem === 'aviso-alcada') { let p = PEDIDOS.find((x) => x.id === 'PC-1190');
+    if (!p) { p = { id: 'PC-1190', forn: 'ic', status: 'rascunho', criado: '12/10/2026', itens: [{ sku: 'EXM-0118', qtd: 90 }] }; PEDIDOS.push(p); }
+    Object.assign(state, { screen, pedidoId: p.id }); return render(); }
+  Object.assign(state, opts, { screen }); render();
+}
+// Versão escolhida na bancada: em 'hoje' o e-mail do fornecedor volta ao texto corrido de hoje.
+window.versaoSimulador = (v) => { state.versao = v; render(); };
+function render() {
+  state.telas = Object.assign({ erp: state.screen }, state.verEmail ? { fornecedor: 'email' } : {});
+  const box = document.getElementById('email'); box.classList.toggle('hidden', !state.verEmail); box.innerHTML = state.verEmail ? viewEmail() : '';
+  document.getElementById('tgl-email').checked = state.verEmail;
+  document.getElementById('nav').innerHTML = NAV.map(([id, ic, label]) => {
+    const ativo = state.screen === id || (id === 'pedidos' && state.screen === 'pedido'), novo = id === 'sugestao';
+    return `<a href="#" data-go="${id}" ${novo ? M('m-nav-sugestao') : ''} class="flex items-center gap-2.5 rounded-lg px-3 py-2 ${ativo ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/60'}">${icon(ic)}<span>${label}</span></a>`;
+  }).join('');
+  document.getElementById('quem').textContent = state.papel === 'gestor' ? 'Conectado como gestor de compras' : 'Conectado como comprador';
+  document.getElementById('view').innerHTML = (SCREENS[state.screen] || viewPainel)();
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function modalAjuste(sku) {
+  const s = SKUS.find((x) => x.sku === sku), m = document.getElementById('modal');
+  m.innerHTML = `<div class="bg-white rounded-xl shadow-xl w-[420px] p-5 space-y-3">
+    <p class="font-semibold text-slate-900">Ajustar ${s.sku}</p><p class="text-sm text-slate-500">Sugerido: ${sugestao(s)} unidades.</p>
+    <label class="block text-sm">Quantidade<input id="aj-qtd" type="number" min="0" value="${state.ajustes[sku] ?? sugestao(s)}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"></label>
+    <label class="block text-sm">Motivo<textarea id="aj-mot" rows="2" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="Ex.: promoção prevista para novembro">${state.motivos[sku] || ''}</textarea></label>
+    <p id="aj-erro" class="text-xs text-rose-600 hidden">Informe o motivo do ajuste.</p>
+    <div class="flex justify-end gap-2">${btn('Cancelar', 'data-act="fechar"', 'secondary')}${btn('Salvar', `data-act="salvar-ajuste" data-sku="${sku}"`)}</div></div>`;
+  m.classList.remove('hidden'); m.classList.add('flex');
+}
+const fechar = () => { const m = document.getElementById('modal'); m.classList.add('hidden'); m.classList.remove('flex'); m.innerHTML = ''; };
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-go],[data-act]'); if (!t) return;
+  if (t.tagName === 'A') e.preventDefault();
+  const a = t.dataset.act;
+  if (a === 'abrir') return go('pedido', { pedidoId: t.dataset.id });
+  if (a === 'email') { state.emailId = t.dataset.id; return render(); }
+  if (t.dataset.go) return go(t.dataset.go);
+  if (a === 'recalcular') { state.calculadoEm = 'agora há pouco'; return render(); }
+  if (a === 'filtro') { state.filtro = t.dataset.v; return render(); }
+  if (a === 'ajustar') return modalAjuste(t.dataset.sku);
+  if (a === 'fechar') return fechar();
+  if (a === 'salvar-ajuste') { const mot = document.getElementById('aj-mot').value.trim();
+    if (!mot) { document.getElementById('aj-erro').classList.remove('hidden'); return; }
+    state.ajustes[t.dataset.sku] = +document.getElementById('aj-qtd').value; state.motivos[t.dataset.sku] = mot; fechar(); return render(); }
+  if (a === 'gerar') { const sel = SKUS.filter((s) => state.selecionados[s.sku]); if (!sel.length) return;
+    const grupos = [...new Set(sel.map((s) => s.forn))]; let ultimo;
+    for (const f of grupos) { ultimo = `PC-${1188 + PEDIDOS.length}`;
+      PEDIDOS.push({ id: ultimo, forn: f, status: 'rascunho', criado: '12/10/2026', itens: sel.filter((s) => s.forn === f).map((s) => ({ sku: s.sku, qtd: state.ajustes[s.sku] ?? sugestao(s) })) }); }
+    state.selecionados = {}; return go('pedido', { pedidoId: ultimo }); }
+  if (a === 'enviar') { const p = PEDIDOS.find((x) => x.id === state.pedidoId); p.status = 'enviado'; return render(); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.dataset.act === 'sel') { state.selecionados[e.target.dataset.sku] = e.target.checked; render(); }
+  if (e.target.id === 'papel') { state.papel = e.target.value; render(); }
+  if (e.target.id === 'tgl-email') { state.verEmail = e.target.checked; render(); }
+});
+document.getElementById('tgl-markers').addEventListener('change', (e) => document.getElementById('app').classList.toggle('mk', e.target.checked));
+render();
+</script>
+</body>
+</html>

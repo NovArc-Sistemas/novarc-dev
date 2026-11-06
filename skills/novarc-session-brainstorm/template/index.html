@@ -1,0 +1,1549 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: documento claro NOVARC (direção Clara, só modo claro), índice lateral fixo em tela larga, bancada técnica do simulador em tela cheia. */
+:root {
+  color-scheme: light;
+  --navy-900: #04122e; --navy-700: #0b2350; --navy-500: #1b3e78; --navy-300: #5b7ba6; --navy-100: #b9c6da;
+  --signal-600: #0554cc; --signal-500: #0a6cff; --signal-300: #6ba6ff; --signal-100: #d3e4ff; --signal-50: #eef4ff;
+  --gray-900: #1f2937; --gray-700: #374151; --gray-500: #6b7280; --gray-300: #cbd5e1; --gray-200: #e5e7eb; --gray-100: #eef0f3; --gray-50: #f4f5f7; --white: #ffffff;
+  --ok: #047857; --ok-50: #e7f5ef; --ok-200: #bfe3d1; --warn: #b45309; --warn-50: #fdf3e7; --warn-200: #f3d9b6; --bad: #b91c1c; --bad-50: #fbe9e9;
+  --line: rgba(4, 18, 46, 0.09); --line-2: rgba(4, 18, 46, 0.16);
+  --sans: "Sora", "Helvetica Neue", Helvetica, sans-serif; --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; --term: "JetBrains Mono", "IBM Plex Mono", Menlo, monospace;
+  --r-control: 8px; --r-card: 12px; --r-panel: 16px;
+  --shadow-card: 0 1px 2px rgba(4, 18, 46, 0.06), 0 8px 24px -12px rgba(4, 18, 46, 0.10);
+  --shadow-raised: 0 2px 4px rgba(4, 18, 46, 0.08), 0 18px 40px -16px rgba(4, 18, 46, 0.18);
+  --shadow-overlay: 0 24px 64px rgba(4, 18, 46, 0.22);
+  --focus: 0 0 0 3px rgba(10, 108, 255, 0.28);
+}
+* { box-sizing: border-box }
+html { scroll-behavior: smooth }
+body { background: var(--white); color: var(--gray-700); font-family: var(--sans); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased }
+h1, h2, h3, h4 { color: var(--navy-900); font-weight: 600; text-wrap: balance; margin: 0 }
+p { margin: 0; text-wrap: pretty }
+a { color: var(--signal-600); text-underline-offset: 3px }
+button, input, select, textarea { font: inherit; color: inherit }
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 6px }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500; color: var(--signal-600) }
+.lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray-500) }
+.tnum { font-variant-numeric: tabular-nums }
+.small { font-size: 13px } .muted { color: var(--gray-500) }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round }
+
+/* casca: índice lateral + página */
+.shell { display: block }
+.toc { display: none; font-family: var(--mono); font-size: 12px }
+.page { max-width: 1080px; margin: 0 auto; padding: 32px 24px 96px }
+@media (min-width: 1180px) {
+  .shell { display: grid; grid-template-columns: 210px minmax(0, 1080px); gap: 40px; justify-content: center; padding-inline: 24px }
+  .toc { display: block; position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; padding-top: 40px; max-height: 100vh; overflow-y: auto }
+  .page { margin: 0; padding-inline: 0 }
+}
+@media (max-width: 640px) { .page { padding: 20px 16px 72px } }
+.toc a { display: grid; grid-template-columns: 28px 1fr auto; gap: 0 6px; align-items: baseline; padding: 6px 0 6px 12px; color: var(--gray-500); text-decoration: none; border-left: 2px solid var(--line) }
+.toc a .n { font-size: 11px; color: var(--navy-300) }
+.toc a:hover { color: var(--navy-900); border-left-color: var(--line-2) }
+.toc a.on { color: var(--navy-900); border-left-color: var(--signal-500) } .toc a.on .n { color: var(--signal-600) }
+.toc .badge { font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--warn-50); color: var(--warn) }
+.toc .cap { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray-500); margin: 0 0 10px 14px }
+.toc .gear { margin: 18px 0 0 12px }
+
+/* cabeçalho */
+.masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding-bottom: 20px; border-bottom: 2px solid var(--navy-900) }
+.masthead svg.logo { display: block; width: 140px; height: auto }
+.masthead .mh-r { display: flex; flex-direction: column; align-items: flex-end; gap: 10px }
+.quem { display: flex; align-items: center }
+.quem .av { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--white); margin-left: -6px; background: var(--c, var(--navy-300)); color: #fff; font: 600 11px/22px var(--sans, inherit); text-align: center; overflow: hidden; flex: none }
+.quem .av:first-child { margin-left: 0 }
+.quem .av img { width: 100%; height: 100%; object-fit: cover; display: block }
+.quem .n { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--gray-500) }
+#cursores { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 70 }
+#cursores .cur { position: absolute; left: 0; top: 0; will-change: transform; transition: transform 90ms linear }
+#cursores .cur svg { display: block; filter: drop-shadow(0 1px 1px rgba(4, 18, 46, .3)) }
+#cursores .cur span { position: absolute; left: 14px; top: 14px; background: var(--c); color: #fff; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap }
+#cursores.fixo { position: fixed }
+.vendo { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--signal-600); background: var(--signal-50); border: 1px solid var(--signal-100); border-radius: 999px; padding: 2px 10px; margin-top: 6px }
+.vendo i { width: 8px; height: 8px; border-radius: 50%; background: var(--c) }
+@media (prefers-reduced-motion: reduce) { #cursores .cur { transition: none } }
+.masthead .meta { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray-500); text-align: right; line-height: 1.8 }
+.hero { padding: 36px 0 28px; position: relative }
+.hero h1 { font-size: clamp(34px, 5vw, 56px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin: 6px 0 16px; max-width: 18ch }
+.hero .lead { font-size: 20px; line-height: 1.35; letter-spacing: -0.015em; color: var(--navy-900); max-width: 46em; margin-bottom: 16px }
+.byline { display: flex; flex-wrap: wrap; gap: 6px 22px; font-family: var(--mono); font-size: 13px; color: var(--gray-500) }
+.byline b { color: var(--navy-900); font-weight: 500 }
+.slash { display: inline-block; width: 8px; height: 22px; background: var(--signal-500); transform: skewX(-14deg); margin-right: 12px; vertical-align: -4px }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 24px 0 8px }
+@media (max-width: 760px) { .stats { grid-template-columns: 1fr 1fr } }
+.stat { border-top: 2px solid var(--navy-900); padding-top: 12px }
+.stat .v { font-size: 32px; line-height: 1.1; letter-spacing: -0.025em; font-weight: 600; color: var(--navy-900); font-variant-numeric: tabular-nums }
+.stat .v small { font-size: 14px; color: var(--gray-500); font-weight: 500; letter-spacing: 0; margin-left: 4px }
+.stat .k { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--signal-600); margin-top: 6px }
+.stat .meter { height: 6px; border-radius: 999px; background: var(--signal-100); overflow: hidden; margin-top: 8px } .stat .meter i { display: block; height: 100%; background: var(--signal-500) }
+.stat .meter.ok { background: var(--ok-50) } .stat .meter.ok i { background: var(--ok) }
+
+/* seções */
+section.sec { padding: 40px 0; border-top: 1px solid var(--line); scroll-margin-top: 16px }
+section.sec[hidden] { display: none }
+.sec-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; margin-bottom: 20px }
+.sec-head h2 { font-size: 30px; letter-spacing: -0.025em; line-height: 1.15; margin-top: 4px }
+.sec-head p { color: var(--gray-500); max-width: 46em; margin-top: 6px }
+.card { background: var(--white); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-card) }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 16px }
+/* Quatro cartões em três colunas deixam um sozinho na linha: com quatro, dois por linha. */
+.grid2:has(> :nth-child(4):last-child) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)) }
+.callout { border: 1px solid var(--line); border-left: 4px solid var(--signal-500); border-radius: var(--r-card); padding: 14px 18px; background: var(--gray-50) }
+.callout.warn { border-left-color: var(--warn) } .callout.bad { border-left-color: var(--bad) }
+.empty { padding: 20px; border: 1px dashed var(--line-2); border-radius: var(--r-card); color: var(--gray-500); font-size: 14px }
+.empty b { display: block; color: var(--navy-900); font-weight: 600; margin-bottom: 4px }
+
+/* controles */
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--white); color: var(--navy-900); font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.02em; cursor: pointer; text-decoration: none; white-space: nowrap; transition: border-color .12s, transform .12s }
+.btn:hover { border-color: var(--navy-300); transform: translateY(-1px) }
+.btn.primary { background: var(--signal-500); border-color: var(--signal-500); color: #fff; box-shadow: 0 1px 2px rgba(5, 84, 204, 0.30), 0 10px 24px -8px rgba(10, 108, 255, 0.45) }
+.btn.dark { background: var(--navy-900); border-color: var(--navy-900); color: #fff }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--gray-500) } .btn.ghost:hover { color: var(--navy-900); background: var(--gray-100) }
+.btn.sm { height: 30px; padding: 0 11px; font-size: 12px }
+.btn.icon { width: 32px; padding: 0; justify-content: center }
+.btn[disabled] { opacity: .4; pointer-events: none }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; border: 1px solid transparent }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor }
+.pill.neutral { background: var(--gray-100); color: var(--gray-700) } .pill.info { background: var(--signal-50); color: var(--signal-600); border-color: var(--signal-100) }
+.pill.ok { background: var(--ok-50); color: var(--ok); border-color: var(--ok-200) } .pill.warn { background: var(--warn-50); color: var(--warn); border-color: var(--warn-200) } .pill.bad { background: var(--bad-50); color: var(--bad) }
+.chip { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--gray-500); white-space: nowrap }
+.chip.t-NOVO { color: var(--signal-600); background: var(--signal-50); border-color: var(--signal-100) } .chip.t-ALTERADO { color: var(--warn); background: var(--warn-50); border-color: var(--warn-200) } .chip.t-REAPROVEITA, .chip.ok { color: var(--ok); background: var(--ok-50); border-color: var(--ok-200) }
+.nmark { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; background: var(--navy-900); color: #fff; font-family: var(--mono); font-size: 12px; font-weight: 500 }
+.ref { font-family: var(--mono); font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--gray-100); color: var(--gray-700); word-break: break-all }
+input[type=text], input[type=url], input[type=date], input[type=number], select, textarea { background: var(--white); border: 1px solid var(--line-2); border-radius: var(--r-control); padding: 8px 10px; min-height: 36px; width: 100% }
+textarea { min-height: 84px; resize: vertical }
+label.f { display: grid; gap: 4px; font-size: 13px; color: var(--gray-500) }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; overflow-x: auto; background: var(--white); flex-wrap: nowrap; width: max-content; max-width: 100%; justify-self: start; align-self: start }
+.seg button { white-space: nowrap }
+.seg button { border: 0; background: transparent; padding: 6px 12px; font-family: var(--mono); font-size: 12px; color: var(--gray-700); cursor: pointer }
+.seg button + button { border-left: 1px solid var(--line) }
+.seg button[aria-pressed=true] { background: var(--navy-900); color: #fff }
+.seg button:disabled { cursor: default; opacity: .55 }
+
+.opts { display: flex; flex-wrap: wrap; gap: 6px }
+.opts button { border: 1px solid var(--line-2); background: var(--white); border-radius: 999px; padding: 4px 11px; font-family: var(--mono); font-size: 11.5px; color: var(--gray-700); cursor: pointer }
+.opts button[aria-pressed=true] { background: var(--navy-900); border-color: var(--navy-900); color: #fff }
+.fsel { width: auto; min-width: 150px; min-height: 32px; padding: 4px 8px; font-size: 13px }
+
+/* explorador de mudanças */
+.health { display: flex; height: 12px; border-radius: 999px; overflow: hidden; gap: 2px; background: var(--gray-100) }
+.health i { display: block; height: 100% }
+.legend { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13px; margin-top: 10px }
+.legend button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--gray-700); display: inline-flex; align-items: center; gap: 6px }
+.legend button:hover { color: var(--navy-900); text-decoration: underline; text-underline-offset: 3px }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block }
+.legend b { font-family: var(--mono); font-weight: 500; color: var(--navy-900) }
+.fbar { display: grid; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line) }
+.fbar .row { gap: 10px }
+.srch { position: relative; flex: 1 1 220px; max-width: 320px } .srch svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--gray-500) } .srch input { padding-left: 32px }
+.active-f { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--gray-50); align-items: center }
+.fchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--signal-100); background: var(--signal-50); color: var(--signal-600); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12px; cursor: pointer }
+.fchip span { width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center; font-family: var(--mono) } .fchip:hover span { background: var(--signal-100) }
+.ex { display: grid; grid-template-columns: minmax(0, 1fr) }
+@media (min-width: 960px) { .ex { grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr) } }
+.ex-list { max-height: 78vh; overflow: auto; border-right: 1px solid var(--line) }
+.ex-det { max-height: 78vh; overflow: auto; background: #fcfcfd }
+@media (max-width: 959px) { .ex-det { display: none } .ex-list { max-height: none; border-right: 0 } }
+.exg { position: sticky; top: 0; z-index: 1; background: var(--gray-50); border-bottom: 1px solid var(--line); padding: 8px 16px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray-500); display: flex; justify-content: space-between; gap: 8px }
+.exr { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: start; width: 100%; text-align: left; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--line); background: none; cursor: pointer }
+.exr:hover { background: var(--gray-50) }
+.exr.sel { background: var(--signal-50); box-shadow: inset 3px 0 0 var(--signal-500) }
+.exr .tt { color: var(--navy-900); font-weight: 500; font-size: 14px; line-height: 1.35 }
+.exr .mt { font-size: 12px; color: var(--gray-500); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.flags { display: flex; gap: 4px; align-items: center; padding-top: 2px }
+.flag { display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 999px; white-space: nowrap }
+.flag svg.i { width: 12px; height: 12px }
+.flag.p { background: var(--warn-50); color: var(--warn) } .flag.d { background: var(--ok-50); color: var(--ok) } .flag.n { background: var(--signal-50); color: var(--signal-600) }
+.det { padding: 20px; display: grid; gap: 18px; align-content: start }
+.det h3 { font-size: 22px; letter-spacing: -0.015em; line-height: 1.25 }
+.det h3 .mid { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--gray-500); font-weight: 500 }
+.det .blk { display: grid; gap: 8px }
+.lk { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: start; text-align: left; border: 1px solid var(--line); border-radius: var(--r-control); padding: 10px 12px; background: var(--white); font-size: 13px; width: 100% }
+button.lk { cursor: pointer } button.lk:hover { border-color: var(--navy-300) }
+.lk b { color: var(--navy-900); font-weight: 600 } .lk .tx { grid-column: 2; color: var(--gray-500); font-size: 12.5px; line-height: 1.5 }
+.lk .tx.ans { color: var(--ok) }
+.mini { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center }
+.mini button { border: 1px solid var(--line-2); background: var(--white); border-radius: 999px; padding: 2px 10px 2px 3px; font-size: 12px; color: var(--navy-900); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; max-width: 100% }
+.mini button:hover { border-color: var(--navy-300) }
+.mini button .nm { width: 20px; height: 20px; border-radius: 999px; background: var(--navy-900); color: #fff; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; flex: none }
+.mini button span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.flash { animation: flash 1.4s ease-out }
+@keyframes flash { 0% { background: var(--signal-100) } 100% { background: transparent } }
+.bench-top svg.logo { width: 78px; height: auto; flex: none }
+.bench-side .det, .bench-side .bx, .bench-side .bm .tt { font-family: var(--sans) }
+.bt-n { font-size: 10.5px; color: var(--gray-500); margin-left: 2px }
+.bench-tabs button[aria-pressed=true] .bt-n { color: var(--signal-600) }
+.bx { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; font-size: 13px; color: var(--gray-700) }
+.bx b { color: var(--navy-900); font-weight: 600 }
+.mini button.here { border-color: var(--signal-300); background: var(--signal-50) }
+.ready.neutral { background: var(--gray-100); color: var(--gray-700) }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px }
+.fact { border-top: 2px solid var(--navy-900); padding-top: 12px; display: grid; gap: 4px }
+.fact .fv { font-size: 20px; font-weight: 600; color: var(--navy-900); letter-spacing: -0.015em }
+button.stat { border: 0; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; border-radius: 0 }
+button.stat:hover .k { text-decoration: underline; text-underline-offset: 3px }
+.simx { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden }
+@media (max-width: 860px) { .simx { grid-template-columns: 1fr } }
+.simx .pv { position: relative; border: 0; cursor: pointer; padding: 32px; display: grid; place-items: center; background: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.10) 1px, transparent 0) 0 0 / 18px 18px, linear-gradient(160deg, #04122e, #0b2350 70%, #1b3e78) }
+.simx .pv .shot { width: 100%; max-width: 440px; box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.5); border-color: rgba(255, 255, 255, 0.12); transition: transform .2s }
+.simx .pv:hover .shot { transform: translateY(-3px) }
+.pv-cta { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #fff; font-family: var(--mono); font-size: 12px; backdrop-filter: blur(4px) }
+.simx .info { padding: 24px; display: grid; gap: 14px; align-content: start }
+.simx .info h3 { font-size: 24px; letter-spacing: -0.02em }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px }
+@media (max-width: 520px) { .kpis { grid-template-columns: 1fr 1fr } }
+.kpi { border: 1px solid var(--line); border-radius: 10px; background: var(--white); padding: 10px 12px; text-align: left; cursor: pointer; display: grid; gap: 2px }
+.kpi:hover { border-color: var(--navy-300) } .kpi b { font-size: 22px; font-weight: 600; color: var(--navy-900); font-variant-numeric: tabular-nums; line-height: 1.1 } .kpi span { font-size: 12px; color: var(--gray-500) }
+.kpi.warn { border-color: var(--warn-200); background: var(--warn-50) } .kpi.warn b { color: var(--warn) }
+.legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-700) }
+.simv { grid-column: 1 / -1; border-top: 1px solid var(--line); padding: 16px 24px 20px; display: grid; gap: 10px; background: var(--gray-50) }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px }
+.vcard { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); text-decoration: none; color: inherit }
+.vcard:hover { border-color: var(--navy-300) } .vcard .play { width: 44px; height: 44px; border-radius: 10px } .vcard b { display: block; color: var(--navy-900); font-weight: 600; font-size: 14px }
+.vcard > span:last-child { display: grid; gap: 2px }
+.lnk { border: 0; background: none; padding: 0; color: var(--signal-600); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; text-align: left }
+.bfil { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; font-family: var(--sans) }
+.bfil .srch { max-width: none } .bfil .fsel { flex: 1 1 140px; min-width: 0 } .bfil .legend { margin-top: 0; font-size: 12px }
+.legend button[aria-pressed=true] { color: var(--navy-900); font-weight: 600; text-decoration: underline; text-underline-offset: 3px }
+.bench-body { grid-template-columns: minmax(0, 1fr) 440px }
+/* .seg vem com align-self: start (para não esticar em grade); na barra flex da bancada isso o colava no topo */
+#bench-versao { align-self: center }
+.sim-fonte { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100% }
+/* ticket escolhido na bancada: cartão no painel com o pedido original, o achado e a solução */
+/* o seletor encolhe antes de a barra passar da tela (com largura mínima, empurraria a lateral para fora) */
+#bench { grid-template-columns: minmax(0, 1fr) } #bench-ticket { align-self: center; flex: 0 1 260px; min-width: 0 }
+.tk-card { border: 1px solid var(--line-2); border-radius: var(--r-card); padding: 12px; display: grid; gap: 8px } .tk-card h4 { font-size: 15px; line-height: 1.3 } .tk-card .q { border-left: 3px solid var(--signal-500); padding-left: 10px; font-style: italic }
+.bench-top .btn[aria-pressed=true] { background: var(--navy-900); border-color: var(--navy-900); color: #fff }
+#bench.sem-painel .bench-body { grid-template-columns: minmax(0, 1fr) }
+#bench.sem-painel .bench-side { display: none }
+#bench-versao button { padding: 4px 10px; font-size: 11.5px }
+/* a lateral não pode crescer pela largura mínima das abas: sem isso o painel passa da tela e corta o texto */
+.bench-side { grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: hidden }
+.bench-side > * { min-width: 0 }
+.bench-tabs { flex-wrap: wrap; overflow: visible }
+.bench-tabs button { border-bottom-width: 2px }
+/* superfícies do simulador (cliente, operador, WhatsApp, e-mail) e canais de mensagem: cabeçalho de grupo na lista */
+.bsup { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; gap: 8px; padding: 7px 14px; background: var(--gray-50); border-bottom: 1px solid var(--line); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray-500) }
+.bsup span:first-child { color: var(--navy-900) }
+
+/* status */
+.flow { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(130px, 1fr); gap: 12px; overflow-x: auto; padding: 4px 2px 10px }
+.node { position: relative; border: 1px solid var(--line); border-radius: var(--r-card); padding: 14px; background: var(--white); box-shadow: var(--shadow-card); font-size: 13px; line-height: 1.4 }
+.node .who { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray-500); margin-bottom: 6px }
+.node .t { font-weight: 600; color: var(--navy-900) }
+.node::after { content: ""; position: absolute; right: -13px; top: 50%; width: 10px; border-top: 2px dashed var(--navy-100) }
+.node:last-child::after { display: none }
+.node.done { border-color: var(--ok-200); background: var(--ok-50) } .node.done .who { color: var(--ok) }
+.node.now { border-color: var(--signal-300); background: var(--signal-50); box-shadow: var(--shadow-raised) } .node.now .who { color: var(--signal-600) }
+.choice { display: grid; gap: 10px; padding: 16px }
+
+/* simuladores */
+.sim { display: grid; grid-template-columns: 220px 1fr; gap: 22px; padding: 20px; align-items: center }
+.shot { aspect-ratio: 16/10; border-radius: 10px; background: #f8fafc; display: grid; grid-template-columns: 26% 1fr; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-card) }
+.shot i { background: #0f172a; display: grid; align-content: start; gap: 5px; padding: 10px 8px } .shot i b { height: 5px; border-radius: 3px; background: #334155 } .shot i b:nth-child(2) { background: #2563eb }
+.shot div { display: grid; gap: 7px; padding: 12px; align-content: start } .shot div b { display: block; height: 7px; border-radius: 3px; background: #dbe3ee }
+.shot div b.k { height: 26px; background: #fff; border: 1px solid #e2e8f0 } .shot div .ks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px }
+.shot .mk { width: 14px; height: 14px; border-radius: 50%; background: #c026d3; position: relative; justify-self: end; margin-top: -10px }
+@media (max-width: 620px) { .sim { grid-template-columns: 1fr } }
+
+/* fases */
+.tl { overflow-x: auto; padding: 16px 16px 10px }
+.tl-in { min-width: 680px }
+.trow { display: grid; grid-template-columns: 210px 1fr; align-items: center; gap: 12px; height: 42px }
+.trow .gl { color: var(--navy-900); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis } .trow .gl b { font-family: var(--mono); font-weight: 500; color: var(--signal-600); margin-right: 8px }
+.track { position: relative; height: 26px; background: var(--gray-100); border-radius: 6px }
+.tb { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: var(--signal-500); color: #fff; font-family: var(--mono); font-size: 11.5px; display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden }
+.tb.cli { background: var(--navy-700) } .tb.done { background: var(--ok) }
+.today { position: absolute; top: -6px; bottom: -6px; width: 2px; background: var(--bad) }
+.ticks { position: relative; height: 18px; font-family: var(--mono); font-size: 11px; color: var(--gray-500) } .ticks span { position: absolute; transform: translateX(-50%) }
+.phase { display: flex; flex-direction: column; gap: 12px; padding: 20px }
+/* Cartões da mesma linha têm a mesma altura: as ações ficam no pé, alinhadas entre eles. */
+.phase > .row:last-child { margin-top: auto }
+.phase .ph { display: flex; justify-content: space-between; align-items: center; gap: 10px }
+.phase h3 { font-size: 20px; letter-spacing: -0.015em; line-height: 1.3 }
+.phase ul { margin: 0; padding-left: 18px; font-size: 14px } .phase li { margin-block: 2px } .phase li::marker { color: var(--signal-600) }
+.meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px }
+.mtr { font-size: 12px; color: var(--gray-500) } .mtr b { display: block; font-family: var(--mono); font-size: 13px; color: var(--navy-900); font-weight: 500 }
+.mtr .bar { height: 5px; border-radius: 999px; background: var(--gray-100); overflow: hidden; margin-top: 4px } .mtr .bar i { display: block; height: 100%; background: var(--signal-500) } .mtr .bar.ok i { background: var(--ok) } .mtr .bar.warn i { background: var(--warn) }
+.ready { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-control); font-size: 14px }
+.ready.ok { background: var(--ok-50); color: var(--ok) } .ready.block { background: var(--warn-50); color: var(--warn) }
+.dist { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--gray-100); gap: 2px }
+.dist i { display: block; height: 100% }
+
+/* listas */
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line) }
+.toolbar input[type=text] { max-width: 260px }
+details.grp { border-top: 1px solid var(--line) }
+details.grp > summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--navy-900) }
+details.grp > summary::-webkit-details-marker { display: none }
+details.grp > summary::before { content: ""; width: 8px; height: 8px; border-right: 2px solid var(--signal-600); border-bottom: 2px solid var(--signal-600); transform: rotate(-45deg); transition: transform .12s; flex: none }
+details.grp[open] > summary::before { transform: rotate(45deg) }
+.item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 14px 16px; border-top: 1px solid var(--line) }
+.item:first-child { border-top: 0 }
+.item h4 { font-size: 15px; font-weight: 600; line-height: 1.4 }
+.item p { font-size: 14px; margin-top: 2px; max-width: 72em }
+.refs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px }
+.acts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end }
+.answer { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-control); background: var(--ok-50); color: var(--ok); font-size: 14px }
+.group-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray-500); padding: 18px 16px 6px; display: flex; align-items: center; gap: 8px }
+.notecount { font-family: var(--mono); font-size: 11px; color: var(--signal-600) }
+
+/* biblioteca, horas, vídeos, histórico */
+.doc { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line) }
+.doc:first-child { border-top: 0 }
+.dico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--signal-50); color: var(--signal-600) }
+.dico.plano { background: var(--gray-100); color: var(--navy-900) } .dico.revisao { background: var(--ok-50); color: var(--ok) } .dico.reuniao { background: var(--warn-50); color: var(--warn) }
+.bars { display: grid; gap: 8px }
+.brow { display: grid; grid-template-columns: minmax(150px, 220px) 1fr 110px; gap: 12px; align-items: center; font-size: 13px }
+.brow .bt { position: relative; height: 10px; background: var(--signal-100); border-radius: 999px; overflow: hidden } .brow .bt i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--signal-500); border-radius: 999px } .brow .bt i.over { background: var(--bad) }
+.hnum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px } .hnum div { border-top: 2px solid var(--navy-900); padding-top: 6px } .hnum b { display: block; font-size: 22px; font-weight: 600; color: var(--navy-900); font-variant-numeric: tabular-nums } .hnum b.over { color: var(--bad) } .hnum span { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--gray-500) }
+.hpess { margin: -4px 0 4px; font-size: 12px }
+.brow .bv { font-family: var(--mono); font-size: 12px; color: var(--navy-900); text-align: right; font-variant-numeric: tabular-nums }
+.brow .bv small { color: var(--gray-500); font-size: 11px }
+/* Rótulo e número numa linha, a barra embaixo em largura total: lida contra o previsto da própria fase. */
+.hbloco .brow { grid-template-columns: 1fr auto; row-gap: 4px } .hbloco .brow .bt { grid-column: 1 / -1; order: 3 }
+.brow .bt i.over { border-radius: 0 999px 999px 0 } .brow .bt b.prev { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--navy-900) }
+.brow .bt.sem { background: var(--gray-100) } .brow .bt.sem i { background: var(--navy-300) } .brow.fora > span:first-child { color: var(--gray-500) } .brow.fora > span:nth-child(2) { white-space: nowrap }
+.hsess .sid { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--gray-200); border-radius: 6px; background: var(--gray-50, #fff); color: var(--navy-900); font-family: var(--mono); font-size: 11.5px; cursor: pointer; word-break: break-all; text-align: left }
+@media (max-width: 640px) { .brow { grid-template-columns: 1fr auto } .brow .bt { grid-column: 1 / -1; order: 3 } }
+.brow.fora > span:nth-child(2) { order: 3; grid-column: 1 / -1 }
+.hsess .sid:hover { border-color: var(--signal-500) } .hsess .hpath { display: block; font-family: var(--mono); font-size: 11px; word-break: break-all; margin-top: 2px }
+table.t { width: 100%; border-collapse: collapse; font-size: 13.5px }
+table.t th { text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500; color: var(--gray-500); padding: 8px 12px; border-bottom: 2px solid var(--navy-900); white-space: nowrap }
+table.t td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top } table.t td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+.tbl { overflow-x: auto }
+.vid { display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line) }
+.vid:first-child { border-top: 0 }
+.play { width: 52px; height: 52px; border-radius: 12px; background: var(--navy-900); display: grid; place-items: center; color: #fff }
+.hist { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 14px } .hist:first-child { border-top: 0 }
+
+/* modal, gaveta, avisos */
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(4, 18, 46, 0.45); display: grid; place-items: center; padding: 16px }
+.modal[hidden] { display: none }
+.panel { background: var(--white); border-radius: var(--r-panel); box-shadow: var(--shadow-overlay); width: min(760px, 100%); max-height: 88vh; overflow: auto; padding: 24px; display: grid; gap: 14px }
+.panel h3 { font-size: 20px }
+.panel pre, .code { font-family: var(--term); font-size: 12.5px; line-height: 1.65; background: var(--navy-900); color: var(--navy-100); padding: 16px; border-radius: var(--r-card); white-space: pre-wrap; word-break: break-word; max-height: 52vh; overflow: auto; margin: 0; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12) }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); z-index: 65; background: var(--white); box-shadow: var(--shadow-overlay); border-left: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr; padding-top: env(safe-area-inset-top, 0px) }
+.drawer[hidden] { display: none }
+.drawer header { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line) }
+.drawer .body { overflow: auto; padding: 20px; display: grid; gap: 20px; align-content: start }
+.tog { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px }
+.tog input { width: 18px; height: 18px; accent-color: var(--signal-500) }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--navy-900); color: #fff; padding: 10px 16px; border-radius: var(--r-card); box-shadow: var(--shadow-overlay); font-size: 14px; z-index: 90 }
+
+/* bancada técnica do simulador */
+.bench { position: fixed; inset: 0; z-index: 70; background: var(--gray-50); display: grid; grid-template-rows: 48px 1fr; font-family: var(--term) }
+.bench[hidden] { display: none }
+.bench-top { display: flex; align-items: center; gap: 12px; padding: 0 12px; padding-top: env(safe-area-inset-top, 0px); background: var(--white); border-bottom: 1px solid var(--line-2); font-size: 12px; color: var(--gray-700) }
+.bench-top .crumb { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 } .bench-top .crumb b { color: var(--navy-900); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.bench-top .sep { width: 3px; height: 16px; background: var(--signal-500); transform: skewX(-14deg) }
+.bench-body { display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 0 }
+@media (max-width: 900px) { .bench-body { grid-template-columns: 1fr; grid-template-rows: 1fr 45% } }
+.bench-frame { position: relative; min-height: 0; border-right: 1px solid var(--line-2); background: #fff }
+.bench-frame iframe { width: 100%; height: 100%; border: 0; display: block }
+.bench-side { display: grid; grid-template-rows: auto auto 1fr; min-height: 0; background: var(--white) }
+.bench-tabs { display: flex; border-bottom: 1px solid var(--line-2) }
+.bench-tabs { overflow-x: auto }
+.bench-tabs button { padding-inline: 6px; flex: 1 0 auto; white-space: nowrap; border: 0; background: transparent; padding: 10px 8px; font-family: var(--term); font-size: 11.5px; color: var(--gray-500); cursor: pointer; border-bottom: 2px solid transparent }
+.bench-tabs button[aria-pressed=true] { color: var(--navy-900); border-bottom-color: var(--signal-500) }
+.bench-screen { padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 11.5px; color: var(--gray-500); display: flex; justify-content: space-between; gap: 8px }
+.bench-screen b { color: var(--navy-900); font-weight: 500 }
+.bench-list { overflow: auto; min-height: 0 }
+.bm { display: grid; grid-template-columns: 30px 1fr; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 12px; line-height: 1.45 }
+.bm:hover { background: var(--gray-50) } .bm.sel { background: var(--signal-50); box-shadow: inset 3px 0 0 var(--signal-500) }
+.bm .nm { width: 24px; height: 24px; border-radius: 999px; background: var(--navy-900); color: #fff; display: grid; place-items: center; font-size: 11px }
+.bm .tt { color: var(--navy-900); font-weight: 500; font-family: var(--sans); font-size: 13px }
+.bm .mt { color: var(--gray-500); margin-top: 2px }
+.bdet { padding: 14px; display: grid; gap: 12px; font-size: 12.5px }
+.bdet h4 { font-family: var(--sans); font-size: 16px }
+.bdet .why { font-family: var(--sans); font-size: 13.5px; color: var(--gray-700) }
+.note { border: 1px solid var(--line); border-radius: var(--r-control); padding: 10px 12px; display: grid; gap: 4px }
+.note .nt { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase }
+.note.logica .nt { color: var(--signal-600) } .note.prova .nt { color: var(--ok) } .note.regra .nt { color: var(--navy-700) } .note.duvida .nt { color: var(--warn) }
+.note p { font-family: var(--sans); font-size: 13px; color: var(--gray-700) }
+.note .who { color: var(--gray-500); font-size: 11px }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important } }
+/* ============================================================ PRANCHA E MOVIMENTO
+   Conceito: o plano como prancha técnica. Linhas finas, numeração em mono, poucos volumes.
+   Movimento: cada peça se desenha uma vez, quando entra na tela (classe .in). Só roda com html.anim,
+   que o script liga quando o sistema não pede menos movimento; sem ela, tudo aparece pronto. */
+.page { counter-reset: sec }
+section.sec { border-top: 0; position: relative; padding: 56px 0 }
+section.sec:not([hidden]) { counter-increment: sec }
+section.sec::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: var(--line-2); transform-origin: left; transition: transform 1.1s cubic-bezier(.2, .7, .2, 1) }
+.sec-head h2 { font-size: 34px; letter-spacing: -0.03em }
+.sec-head .kicker::before { content: counter(sec, decimal-leading-zero) " /"; color: var(--navy-300); margin-right: 10px }
+.card { box-shadow: none }
+.card.phase { transition: border-color .2s, transform .25s cubic-bezier(.2, .7, .2, 1) }
+.card.phase:hover { border-color: var(--line-2); transform: translateY(-2px) }
+
+/* capa */
+.hero { padding: 48px 0 32px; isolation: isolate }
+.hero::before, .hero::after { content: ""; position: absolute; inset: 0 -24px; z-index: -1; pointer-events: none;
+  background-image: radial-gradient(rgba(4, 18, 46, 0.11) 1px, transparent 1.3px); background-size: 18px 18px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 92%); mask-image: linear-gradient(to bottom, #000 30%, transparent 92%) }
+.hero::after { background-image: radial-gradient(rgba(10, 108, 255, 0.55) 1.2px, transparent 1.6px);
+  -webkit-mask-image: radial-gradient(240px circle at var(--mx, -999px) var(--my, -999px), #000, transparent 70%); mask-image: radial-gradient(240px circle at var(--mx, -999px) var(--my, -999px), #000, transparent 70%) }
+.hero h1.frame { position: relative; display: inline-block; margin-left: 0.42em; margin-right: 0.42em; font-size: clamp(38px, 6.2vw, 84px); line-height: 1.02; letter-spacing: -0.035em; max-width: 16ch }
+.hero h1.frame .br { position: absolute; top: 0.06em; bottom: 0.02em; width: 0.2em; border: 0.065em solid var(--navy-900); transition: transform .9s cubic-bezier(.2, .7, .2, 1) .1s, opacity .4s .1s }
+.hero h1.frame .br.l { left: -0.42em; border-right: 0 } .hero h1.frame .br.r { right: -0.42em; border-left: 0 }
+.hero h1.frame .tx { display: block; transition: clip-path 1s cubic-bezier(.2, .7, .2, 1) .35s; clip-path: inset(-0.2em -0.2em -0.2em -0.2em) }
+.sweep { display: block; height: 6px; width: 132px; background: var(--signal-500); transform: skewX(-14deg); transform-origin: left; margin: 0 0 22px 0.42em; transition: transform .8s cubic-bezier(.2, .7, .2, 1) .9s }
+#hero .kicker, #hero .lead, #hero .byline, #hero .callout { transition: opacity .7s, transform .7s cubic-bezier(.2, .7, .2, 1) }
+#hero .lead { transition-delay: .7s } #hero .byline { transition-delay: .85s }
+.stat { border-top: 0; position: relative; padding-top: 14px; transition: opacity .6s, transform .6s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(1s + var(--i, 0) * 90ms) }
+.stat::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--navy-900); transform-origin: left; transition: transform .9s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(1s + var(--i, 0) * 90ms) }
+.stat .v { font-size: 40px }
+.dist, .stat .meter, .health, .mtr .bar { transition: clip-path 1s cubic-bezier(.2, .7, .2, 1) .35s; clip-path: inset(0 0 0 0 round 999px) }
+#hero .dist, #hero .stat .meter { transition-delay: 1.4s }
+
+/* status: linha com marcos */
+.flow { gap: 0; padding: 10px 2px 6px }
+.node, .node.done, .node.now { border: 0; border-radius: 0; background: none; box-shadow: none; padding: 26px 18px 0 0 }
+.node::after { display: none }
+.node::before { content: ""; position: absolute; top: 7px; left: 0; right: 0; height: 2px; background: var(--line-2); transform-origin: left; transition: transform .6s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i, 0) * 110ms) }
+.node.done::before { background: var(--ok) } .node.now::before { background: linear-gradient(90deg, var(--signal-500) 0 40%, var(--line-2) 40%) }
+.node .pt { position: absolute; top: 2px; left: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--white); border: 2px solid var(--navy-100); z-index: 1; transition: transform .4s cubic-bezier(.3, 1.6, .5, 1); transition-delay: calc(var(--i, 0) * 110ms + .15s) }
+.node.done .pt { background: var(--ok); border-color: var(--ok) }
+.node.now .pt { background: var(--signal-500); border-color: var(--signal-500); animation: pulso 2.4s ease-out infinite }
+.node.now .t { color: var(--signal-600) }
+@keyframes pulso { 0% { box-shadow: 0 0 0 0 rgba(10, 108, 255, 0.45) } 70%, 100% { box-shadow: 0 0 0 10px rgba(10, 108, 255, 0) } }
+.facts .fact { border-top-width: 2px }
+
+/* simuladores: prévia ao vivo */
+.card.simx { box-shadow: var(--shadow-raised) }
+.simx .pv { padding: 36px 28px 48px }
+.live { position: relative; width: 100%; max-width: 560px; aspect-ratio: 16 / 10; border-radius: 12px; overflow: hidden; background: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 34px 70px -22px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(4, 18, 46, 0.25);
+  transform: perspective(1600px) rotateX(5deg) rotateY(-9deg); transition: transform .7s cubic-bezier(.2, .7, .2, 1), opacity .7s }
+.simx .pv:hover .live { transform: perspective(1600px) rotateX(0) rotateY(0) translateY(-4px) }
+.live iframe { position: absolute; top: 0; left: 0; width: 1440px; height: 900px; border: 0; transform-origin: 0 0; transform: scale(var(--s, 0.36)); pointer-events: none; opacity: 0; transition: opacity .6s }
+.live.ok iframe { opacity: 1 }
+.live .shot { position: absolute; inset: 0; border: 0; border-radius: 0; box-shadow: none; transition: opacity .6s }
+.live.ok .shot { opacity: 0 }
+.pv-tag { position: absolute; left: 28px; bottom: 16px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: rgba(255, 255, 255, 0.62); display: inline-flex; align-items: center; gap: 8px }
+.pv-tag i { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18) }
+.kpi b { font-size: 26px }
+
+/* fases */
+.tb { transform-origin: left; transition: transform .9s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i, 0) * 120ms + .2s) }
+.today { animation: pulso 2.4s ease-out infinite; border-radius: 2px }
+
+/* specs e execução: faixa de conjuntos e linhas de spec */
+/* planta de execução: régua de horas, uma linha por conjunto, chave de fase acima de cada grupo */
+.planta { border: 1px solid var(--line-2); border-radius: var(--r-card); padding: 4px 18px 14px; overflow-x: auto; background: var(--white) }
+.pl-eixo, .pl-fase, .pl-linha { display: grid; grid-template-columns: 280px minmax(420px, 1fr); gap: 0 18px; align-items: center }
+.pl-reg { position: relative; height: 100% }
+.pl-eixo { height: 34px; border-bottom: 1px solid var(--line-2) }
+.pl-eixo .pl-reg span { position: absolute; top: 11px; transform: translateX(-50%); font-family: var(--mono); font-size: 10.5px; color: var(--gray-500); white-space: nowrap }
+.pl-eixo .pl-reg span:first-child { transform: none }
+.pl-fase { height: 42px; margin-top: 8px }
+.pl-fn { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--navy-900); display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.pl-fn b { color: var(--signal-600); font-weight: 500 }
+.pl-chave { position: absolute; top: 22px; height: 10px; border: 1.5px solid var(--navy-900); border-bottom: 0; border-radius: 2px 2px 0 0 }
+.pl-chave em { position: absolute; bottom: 13px; left: 0; font-style: normal; font-family: var(--mono); font-size: 10.5px; color: var(--gray-500); white-space: nowrap }
+.pl-linha { min-height: 52px; text-decoration: none; color: inherit; border-top: 1px dashed var(--line); transition: background .15s }
+.pl-linha:hover { background: var(--gray-50) } .pl-linha:hover .pl-rot b { color: var(--signal-600) }
+.pl-rot { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: center; min-width: 0; padding: 8px 0 }
+.pl-rot b { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--navy-900); transition: color .15s }
+.pl-rot > span { font-size: 13px; color: var(--navy-900); line-height: 1.3; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.pl-rot small { display: block; font-size: 11.5px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis }
+.pl-grade { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line) }
+.pl-barra { position: absolute; top: 50%; height: 22px; margin-top: -11px; border-radius: 4px; overflow: hidden; display: flex; align-items: center; min-width: 26px;
+  border: 1.5px solid var(--navy-300); background: repeating-linear-gradient(135deg, var(--white) 0 5px, var(--gray-100) 5px 7px);
+  transform-origin: left; transition: transform .8s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i, 0) * 80ms + .2s) }
+.pl-barra i { position: absolute; inset: 0 auto 0 0; width: var(--p, 0%); background: var(--signal-100); border-right: 2px solid var(--signal-500) }
+.pl-barra em { position: relative; font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--navy-900); padding: 0 8px; white-space: nowrap }
+.pl-barra.nao-iniciado i { border-right: 0 }
+.pl-barra.em-andamento { border-color: var(--signal-500) }
+.pl-barra.concluido { border-color: var(--ok) } .pl-barra.concluido i { width: 100%; background: var(--ok); border-right: 0 } .pl-barra.concluido em { color: var(--white) }
+.pl-barra.bloqueado { border-color: var(--bad); background: repeating-linear-gradient(135deg, var(--white) 0 5px, var(--bad-50) 5px 7px) } .pl-barra.bloqueado i { background: var(--bad-50); border-right-color: var(--bad) }
+.pl-leg { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-top: 12px; margin-top: 4px; border-top: 1px solid var(--line-2); font-size: 12px; color: var(--gray-700) }
+.pl-leg span { display: inline-flex; align-items: center; gap: 6px }
+.pl-amostra { width: 18px; height: 10px; border-radius: 2px; border: 1.5px solid var(--navy-300); background: repeating-linear-gradient(135deg, var(--white) 0 3px, var(--gray-100) 3px 5px) }
+.pl-amostra.em-andamento { border-color: var(--signal-500); background: linear-gradient(90deg, var(--signal-100) 55%, var(--signal-500) 55% 65%, var(--white) 65%) }
+.pl-amostra.concluido { border-color: var(--ok); background: var(--ok) }
+.pl-amostra.bloqueado { border-color: var(--bad); background: repeating-linear-gradient(135deg, var(--white) 0 3px, var(--bad-50) 3px 5px) }
+@media (max-width: 760px) { .pl-eixo, .pl-fase, .pl-linha { grid-template-columns: 170px minmax(380px, 1fr) } }
+
+/* conjuntos agrupados por fase */
+.fase-cab { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(180px, 240px); align-items: end; gap: 8px 20px; padding: 44px 0 14px; border-bottom: 2px solid var(--navy-900) }
+.fase-n { font-family: var(--mono); font-size: 40px; line-height: .9; color: var(--signal-500); letter-spacing: -0.03em }
+.fase-tx h3 { font-size: 22px; letter-spacing: -0.02em; line-height: 1.2 }
+.fase-prog { display: grid; gap: 6px; justify-items: end }
+.fase-prog .bar { width: 100%; height: 5px; border-radius: 999px; background: var(--gray-100); overflow: hidden }
+.fase-prog .bar i { display: block; height: 100%; background: var(--signal-500) } .fase-prog .bar.ok i { background: var(--ok) }
+@media (max-width: 760px) { .fase-cab { grid-template-columns: auto minmax(0, 1fr) } .fase-prog { grid-column: 1 / -1; justify-items: start } }
+.conj { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 24px; padding: 22px 0; border-bottom: 1px solid var(--line) }
+.conj-id { font-family: var(--mono); font-size: 30px; line-height: 1; color: var(--navy-900); letter-spacing: -0.02em }
+.conj-id small { display: block; margin-top: 8px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray-500) }
+.conj-corpo { display: grid; gap: 12px; min-width: 0 }
+.conj-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px 20px; flex-wrap: wrap }
+.conj-top h3 { font-size: 20px; letter-spacing: -0.015em; line-height: 1.3 }
+.conj-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-family: var(--mono); font-size: 12px; color: var(--gray-500); margin-top: 4px }
+.conj-meta b { color: var(--navy-900); font-weight: 500 }
+.conj-est { display: grid; justify-items: end; gap: 8px }
+.motivo { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--bad) }
+.locks-vivo { padding: 16px 20px; margin: 24px 0 0 } .locks-vivo .lv-linha { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; font-size: 13px; padding: 4px 0 } .locks-vivo .orf, .locks-vivo .parado { color: var(--bad) }
+
+/* trilho de etapas: iniciado, plano, código, branch, PR, merge */
+.trilho { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 18px; align-items: center }
+.trilho i { height: 10px; position: relative; display: block }
+.trilho i::before { content: ""; position: absolute; left: 0; right: 0; top: 4px; height: 2px; background: var(--line-2) }
+.trilho i::after { content: ""; position: absolute; left: 50%; top: 1px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--white); border: 1.5px solid var(--navy-100) }
+.trilho i.feito::before { background: var(--ok) } .trilho i.feito::after { background: var(--ok); border-color: var(--ok) }
+.trilho i.agora::after { background: var(--signal-500); border-color: var(--signal-500); box-shadow: 0 0 0 3px var(--signal-100) }
+.trilho.bloq i.agora::after { background: var(--bad); border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-50) }
+.etapa-lbl { font-family: var(--mono); font-size: 11.5px; color: var(--gray-500); white-space: nowrap }
+
+/* tabela de specs do conjunto */
+.specs { border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden }
+.spec-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) 132px minmax(0, 250px) auto; align-items: center; gap: 8px 16px; padding: 10px 14px; border-top: 1px solid var(--line); min-width: 0 }
+.spec-row:first-child { border-top: 0 }
+.spec-row .sid { font-family: var(--mono); font-size: 12px; color: var(--signal-600) }
+.spec-row .t { color: var(--navy-900); font-weight: 500; font-size: 14px; line-height: 1.35; min-width: 0 }
+.spec-row .t small { display: block; font-weight: 400; font-size: 12px; color: var(--gray-500) }
+.spec-row .ep { display: grid; gap: 4px }
+.spec-row .sit { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0 }
+.trava { grid-column: 2 / -1; font-size: 13px }
+.trava summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-weight: 500 }
+.trava summary::-webkit-details-marker { display: none }
+.trava summary::after { content: "ver"; font-family: var(--mono); font-size: 11px; color: var(--gray-500); text-decoration: underline; text-underline-offset: 3px }
+.trava[open] summary::after { content: "fechar" }
+.trava ul { margin: 8px 0 2px; padding-left: 18px; display: grid; gap: 4px } .trava li::marker { color: var(--warn) }
+.conj-pe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between }
+.conj-pe .branches { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0 }
+.orq { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 14px 18px; border: 1px dashed var(--line-2); border-radius: var(--r-card) }
+.orq > div { min-width: 0; flex: 1 1 320px }
+@media (max-width: 760px) {
+  .conj { grid-template-columns: 1fr; gap: 12px } .conj-id { font-size: 24px } .conj-id small { display: inline; margin-left: 10px }
+  .conj-est { justify-items: start }
+  .spec-row { grid-template-columns: 70px minmax(0, 1fr); } .spec-row .ep, .spec-row .sit, .spec-row > .btn { grid-column: 2 }
+}
+
+/* spec aberto: markdown renderizado como prancha de leitura */
+/* O spec rola junto com o painel (sem rolagem própria): tabela em grade com altura limitada encolhia até sumir as linhas. */
+.panel:has(.md) { width: min(1120px, 100%) }
+.md { font-size: 14px; line-height: 1.6; color: var(--gray-700); overflow-wrap: anywhere }
+.md > * + * { margin-top: 12px }
+.md h1 { font-size: 22px } .md h2 { font-size: 17px; padding-top: 14px; margin-top: 22px; border-top: 1px solid var(--line) } .md h3 { font-size: 15px; margin-top: 18px }
+.md ul, .md ol { margin: 0; padding-left: 20px; display: grid; gap: 4px }
+.md code { font-family: var(--mono); font-size: 12px; background: var(--gray-100); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere }
+.md pre { margin: 0 }
+.md .tbl { overflow-x: auto; border: 1px solid var(--line-2); border-radius: var(--r-card); background: var(--white) }
+.md table { border-collapse: collapse; width: 100%; font-size: 13px; line-height: 1.5 }
+.md th { text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 500; color: var(--navy-500); padding: 9px 12px; border-bottom: 2px solid var(--navy-900); background: var(--gray-50); white-space: nowrap; vertical-align: bottom }
+.md td { padding: 9px 12px; border-top: 1px solid var(--line); vertical-align: top; min-width: 9em; max-width: 34em }
+.md tbody tr:nth-child(even) td { background: #fafbfc }
+.md tbody tr:hover td { background: var(--signal-50) }
+.md td:first-child { color: var(--navy-900); font-weight: 500 }
+.md td code { white-space: normal; font-size: 11.5px }
+
+/* rodapé: carimbo de prancha */
+.rodape { margin-top: 56px }
+.carimbo { display: grid; grid-template-columns: 170px repeat(4, minmax(0, 1fr)); border: 1.5px solid var(--navy-900); font-size: 13px }
+.carimbo > div { padding: 10px 12px; border-left: 1px solid var(--line-2); border-top: 1px solid var(--line-2); min-width: 0 }
+.carimbo .cb-logo { grid-row: span 2; border-left: 0; border-top: 0; display: grid; place-items: center } .carimbo .cb-logo svg { width: 120px; height: auto }
+.carimbo > div:nth-child(-n+5) { border-top: 0 }
+.carimbo .lb { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray-500) }
+.carimbo .vl { display: block; color: var(--navy-900); font-weight: 500; overflow-wrap: anywhere }
+@media (max-width: 760px) { .carimbo { grid-template-columns: 1fr 1fr } .carimbo .cb-logo { grid-column: span 2; grid-row: auto } .carimbo > div { border-top: 1px solid var(--line-2) } }
+.rodape .nota { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--gray-500) }
+
+/* bancada abre com um leve assentamento */
+.bench:not([hidden]) { animation: assenta .35s cubic-bezier(.2, .7, .2, 1) }
+@keyframes assenta { from { opacity: 0; transform: scale(.985) } }
+
+/* estados iniciais: só com html.anim e antes de .in */
+.anim section.sec:not(.in)::before { transform: scaleX(0) }
+.anim section.sec:not(.in) > * { opacity: 0; transform: translateY(18px) }
+section.sec > * { transition: opacity .7s cubic-bezier(.2, .7, .2, 1), transform .7s cubic-bezier(.2, .7, .2, 1) }
+section.sec > *:nth-child(2) { transition-delay: .1s } section.sec > *:nth-child(3) { transition-delay: .18s } section.sec > *:nth-child(n+4) { transition-delay: .26s }
+.anim #hero:not(.in) .br.l { transform: translateX(1.6em); opacity: 0 } .anim #hero:not(.in) .br.r { transform: translateX(-1.6em); opacity: 0 }
+.anim #hero:not(.in) h1.frame .tx { clip-path: inset(0 100% 0 0) }
+.anim #hero:not(.in) .sweep { transform: skewX(-14deg) scaleX(0) }
+.anim #hero:not(.in) .kicker, .anim #hero:not(.in) .lead, .anim #hero:not(.in) .byline, .anim #hero:not(.in) .callout, .anim #hero:not(.in) .stat { opacity: 0; transform: translateY(14px) }
+.anim #hero:not(.in) .stat::before { transform: scaleX(0) }
+.anim #hero:not(.in) .dist, .anim #hero:not(.in) .stat .meter, .anim section.sec:not(.in) .health, .anim section.sec:not(.in) .mtr .bar { clip-path: inset(0 100% 0 0 round 999px) }
+.anim #status:not(.in) .node::before { transform: scaleX(0) } .anim #status:not(.in) .node .pt { transform: scale(0) }
+.anim #fases:not(.in) .tb { transform: scaleX(0) }
+.anim #execucao:not(.in) .pl-barra { transform: scaleX(0) }
+.anim #simuladores:not(.in) .live { opacity: 0; transform: perspective(1600px) rotateX(22deg) translateY(36px) }
+@media (prefers-reduced-motion: reduce) { .node.now .pt, .today { animation: none } }
+
+</style>
+
+<div class="shell">
+  <nav class="toc" id="toc" aria-label="Índice"></nav>
+  <div class="page">
+    <header class="masthead">
+      <svg class="logo" viewBox="0 0 181 56" role="img" aria-label="NovArc"><path d="M19 6 H6 V50 H19 V44 H12 V12 H19 Z" fill="#04122E"/><path d="M162 6 H175 V50 H162 V44 H169 V12 H162 Z" fill="#04122E"/><text x="85" y="38" text-anchor="end" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#04122E">Nov</text><path d="M95 12 H103 L95 44 H87 Z" fill="#0A6CFF"/><text x="105" y="38" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#0A6CFF">Arc</text></svg>
+      <div class="mh-r"><div class="quem" id="quem" hidden></div><div class="meta" id="meta">Planejamento</div></div>
+    </header>
+    <div class="hero" id="hero"><p class="kicker">Planejamento</p><h1>Carregando o planejamento</h1></div>
+    <section class="sec" id="status"></section>
+    <section class="sec" id="simuladores"></section>
+    <section class="sec" id="fases"></section>
+    <section class="sec" id="execucao"></section>
+    <section class="sec" id="biblioteca"></section>
+    <section class="sec" id="aberto"></section>
+    <section class="sec" id="horas"></section>
+    <section class="sec" id="historico"></section>
+    <footer class="rodape" id="rodape"></footer>
+  </div>
+</div>
+
+<div id="cursores" aria-hidden="true"></div>
+<div class="modal" id="modal" hidden><div class="panel" id="modal-panel" role="dialog" aria-modal="true"></div></div>
+<aside class="drawer" id="drawer" hidden aria-label="Configurações"><header><span class="kicker" style="flex:1">Configurações</span><button class="btn sm ghost" data-act="drawer-close">Fechar</button></header><div class="body" id="drawer-body"></div></aside>
+<div class="bench" id="bench" hidden>
+  <div class="bench-top"><svg class="logo" viewBox="0 0 181 56" role="img" aria-label="NovArc"><path d="M19 6 H6 V50 H19 V44 H12 V12 H19 Z" fill="#04122E"/><path d="M162 6 H175 V50 H162 V44 H169 V12 H162 Z" fill="#04122E"/><text x="85" y="38" text-anchor="end" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#04122E">Nov</text><path d="M95 12 H103 L95 44 H87 Z" fill="#0A6CFF"/><text x="105" y="38" font-family="Sora, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="-0.98" fill="#0A6CFF">Arc</text></svg><div class="crumb"><span class="sep"></span><span>simulador</span><span>/</span><b id="bench-title"></b></div>
+    <div class="seg" id="bench-versao" role="group" aria-label="Versão por fase"></div><select class="fsel" id="bench-ticket" aria-label="Ticket" hidden></select><button class="btn sm" data-act="sem-painel" id="bench-sem-painel" aria-pressed="false" title="Esconde ou mostra o painel de mudanças, decisões e pendências">Ocultar painel</button><a class="btn sm" id="bench-open" target="_blank" rel="noopener">Tela cheia</a><div class="quem" id="quem-b" hidden></div><button class="btn sm dark" data-act="bench-close">Fechar</button></div>
+  <div class="bench-body"><div class="bench-frame"><iframe id="bench-frame" title="Simulador"></iframe></div>
+    <div class="bench-side"><div class="bench-tabs" id="bench-tabs"></div><div class="bench-screen" id="bench-screen"></div><div class="bench-list" id="bench-list"></div></div></div>
+</div>
+
+<script>
+// ============================================================ ESTADO
+// Conteúdo do plano: plano.json (publicado com a página). Estado vivo no banco do artefato:
+// plano/estado, plano/fluxo, config/exibicao, historico, pendencias/{id}, fases/{id}, notas, documentos, horas, videos.
+// Quem é da NOVARC: dono ou editor do artefato (a página não recebe e-mail, só nome). Cliente entra como colaborador.
+// A trava real fica nas regras do banco (config e horas só para editores); a interface só esconde.
+const STATUS = [
+  { id: 'rascunho', n: 'Rascunho', c: 'neutral', who: 'NOVARC', d: 'Em construção pela NOVARC.' },
+  { id: 'aprovacao-interna', n: 'Aprovação interna', c: 'warn', who: 'NOVARC', d: 'Esperando o responsável da NOVARC revisar.' },
+  { id: 'reuniao-cliente', n: 'Reunião com o cliente', c: 'info', who: 'Cliente', d: 'Aprovado internamente; falta apresentar ao cliente.' },
+  { id: 'aprovacao-cliente', n: 'Aprovação do cliente', c: 'warn', who: 'Cliente', d: 'Apresentado; esperando o aceite do cliente.' },
+  { id: 'ajustes', n: 'Ajustes solicitados', c: 'bad', who: 'NOVARC', d: 'Voltou com pedidos de mudança. O parecer está abaixo e no histórico.' },
+  { id: 'aprovado', n: 'Aprovado', c: 'ok', who: 'Todos', d: 'Plano aprovado; as fases podem ir para execução.' },
+  { id: 'execucao', n: 'Em execução', c: 'info', who: 'Execução', d: 'Fases em desenvolvimento.' },
+];
+// Mudanças, decisões, pendências e vídeos vivem dentro do simulador (bancada); a página fica com o que é do projeto.
+const SECOES = [['status', 'Status', 'Status e aprovação'], ['simuladores', 'Simul.', 'Simuladores'], ['fases', 'Fases', 'Fases e prazos'], ['execucao', 'Exec.', 'Specs e execução'],
+  ['biblioteca', 'Bibl.', 'Biblioteca do projeto'], ['aberto', 'Aberto', 'Em aberto'], ['horas', 'Horas', 'Horas ativas'], ['historico', 'Hist.', 'Histórico']];
+// Modo de exibição: o que cada público vê. Configurações podem ligar e desligar seção por seção.
+const MODOS = {
+  cliente: { n: 'Cliente', d: 'Apresentação ao cliente: status, simuladores, fases e o andamento da execução. Sem dívida técnica, biblioteca, horas e histórico.', on: ['status', 'simuladores', 'fases', 'execucao'] },
+  interno: { n: 'Interno', d: 'Tudo, para a NOVARC acompanhar o projeto.', on: SECOES.map((s) => s[0]) },
+  dev: { n: 'Desenvolvimento', d: 'Para quem vai construir: simuladores, fases, specs, biblioteca, dívida técnica e horas.', on: ['simuladores', 'fases', 'execucao', 'biblioteca', 'aberto', 'horas'] },
+};
+const TIPO_NOTA = { logica: 'Lógica planejada', prova: 'Prova encontrada', regra: 'Regra de negócio', duvida: 'Dúvida' };
+const TIPO_DOC = { spec: 'Spec', plano: 'Plano', revisao: 'Revisão de código', reuniao: 'Reunião', pesquisa: 'Pesquisa', outro: 'Outro' };
+const CAMADA = { front: 'Front-end', back: 'Back-end', dados: 'Dados', infra: 'Infra', geral: 'Geral' };
+// Mensagens (opcional no plano.json): comunicações que o sistema manda, com prévia dentro do simulador.
+const CANAL = { whatsapp: 'WhatsApp', email: 'E-mail', sms: 'SMS', push: 'Notificação push', sistema: 'Aviso no sistema' };
+const REMET = { automatico: 'automático', agente: 'agente', equipe: 'equipe', pessoa: 'pessoa' };
+const ORIG_MSG = { existe: '<span class="pill neutral">Existe hoje</span>', alterada: '<span class="pill warn">Alterada</span>', nova: '<span class="pill info">Nova</span>' };
+const S = { plano: null, estado: null, cfg: null, orq: null, hist: [], aud: [], resp: {}, fasesOv: {}, notas: [], docs: [], horas: [], videos: [], exec: {}, specDb: {}, db: null, user: null, comments: null, downloads: null,
+  me: null, owner: false, editor: false, prof: {}, notaTipo: 'logica', bench: null, docTipo: 'all' };
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ICON = { play: '<path d="M7 5v14l11-7z" fill="currentColor"/>', copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  msg: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', down: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>', plus: '<path d="M12 5v14M5 12h14"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>' };
+const ic = (n, s = 16) => `<svg class="i" viewBox="0 0 24 24" style="width:${s}px;height:${s}px" aria-hidden="true">${ICON[n]}</svg>`;
+const statusDe = (id) => STATUS.find((x) => x.id === id) || STATUS[0];
+const fluxo = () => S.plano.fluxo;
+const fase = (id) => ({ ...S.plano.fases.find((f) => f.id === id), ...(S.fasesOv[id] || {}) });
+const faseIx = (id) => S.plano.fases.findIndex((f) => f.id === id) + 1;
+// Com exibicao.fasesPorSimulador, cada simulador é uma fase e as fases do plano viram slices dela, na ordem do plano
+// (Fase 1 · Slice 2, curto F1.S2). Fase nova entra sozinha no simulador das suas mudanças.
+const COR_SIM = ['#0a6cff', '#7c3aed', '#0d9488', '#d97706'];
+const porSim = () => !!(S.plano.exibicao && S.plano.exibicao.fasesPorSimulador);
+const simDaFase = (id) => S.plano.simuladores.findIndex((s) => S.plano.mudancas.some((m) => m.sim === s.id && m.fase === id));
+const sliceDe = (id) => { const si = simDaFase(id); if (si < 0) return null; return { f: si + 1, s: S.plano.fases.filter((f) => simDaFase(f.id) === si).findIndex((f) => f.id === id) + 1 }; };
+const faseNome = (id) => { const i = faseIx(id); if (!i) return 'Plano inteiro'; const x = porSim() && sliceDe(id); return x ? `Fase ${x.f} · Slice ${x.s}` : `Fase ${i}`; };
+const faseCurta = (id) => { const x = porSim() && sliceDe(id); return x ? `F${x.f}.S${x.s}` : `F${faseIx(id)}`; };
+const fmtData = (iso) => iso ? iso.split('-').reverse().join('/') : 'sem data';
+const nome = (id) => (id && S.prof[id] && S.prof[id].name) || (id ? 'Alguém da equipe' : 'Sem autor');
+const quando = (iso) => { try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+// Resposta parcial não destrava: só conta como resolvida com texto e situação diferente de parcial (resposta antiga sem situação vale).
+const pendAberta = (p) => { const r = S.resp[p.id]; return !(r && r.resposta && r.situacao !== 'parcial'); };
+// Leitor e comentarista não gravam no banco (regra da plataforma): não mostra botão que vai falhar. null = plataforma não disse; deixa a gravação decidir.
+const podeEscrever = () => !!S.db && S.grava !== false;
+const interno = () => S.owner || S.editor;
+// Horas para quem é de fora: só o resumo por fase que um editor publica em config/exibicao; a coleção horas continua só para editores.
+const horasPub = () => !!(S.cfg && S.cfg.horasPublicas);
+const veHoras = () => interno() || (horasPub() && !!(S.cfg && S.cfg.horasResumo));
+const ativasPrev = (f) => +f.horasAtivasPrevistas || 0;
+// Horas ativas (atenção de quem conduz) e de execução (trabalho do Claude) ficam na mesma coleção, separadas por tipo; sem tipo é ativa.
+const tipoH = (h) => (h.tipo === 'execucao' ? 'execucao' : 'ativa');
+const horasDo = (t) => (S.horas || []).filter((h) => tipoH(h) === t);
+const doisBlocos = () => S.plano.fases.some((f) => ativasPrev(fase(f.id))) || horasDo('execucao').length > 0;
+const num = (v) => (+v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+const modo = () => (S.cfg && S.cfg.modo) || (S.plano.exibicao && S.plano.exibicao.modo) || 'interno';
+const visivel = (sec) => { if (sec === 'execucao' && !(S.plano.conjuntos || []).length) return false; const ov = S.cfg && S.cfg.secoes && S.cfg.secoes[sec]; if (ov === true || ov === false) return ov; if (sec === 'horas' && horasPub()) return true; return MODOS[modo()].on.includes(sec); };
+const linkBase = () => { try { return location.href.split('#')[0]; } catch (e) { return ''; } };
+const notasDe = (mid) => S.notas.filter((n) => n.mudanca === mid);
+const horas = (mins) => (mins / 60).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+
+// ============================================================ ÍNDICE, CAPA E STATUS
+function renderToc() {
+  const ab = S.plano.pendencias.filter(pendAberta).length;
+  $('#toc').innerHTML = `<p class="cap">Índice</p>${SECOES.filter(([k]) => visivel(k)).map(([k, , l], i) => `<a href="#${k}"><span class="n">${i + 1}</span><span>${l}</span>${k === 'simuladores' && ab ? `<span class="badge" title="Pendências abertas">${ab}</span>` : ''}</a>`).join('')}
+    ${interno() ? `<div class="gear"><button class="btn sm" data-act="config">${ic('gear', 14)}Configurações</button></div>` : ''}`;
+}
+function renderHero() {
+  const p = S.plano.projeto, st = statusDe(S.estado && S.estado.status);
+  const ms = S.plano.mudancas.length, ab = S.plano.pendencias.filter(pendAberta).length, tp = S.plano.pendencias.length;
+  const fs = S.plano.fases.map((f) => fase(f.id)); const ini = fs.map((f) => f.inicio).filter(Boolean).sort()[0], fim = fs.map((f) => f.fim).filter(Boolean).sort().pop();
+  $('#meta').innerHTML = `${esc(p.cliente)}<br>${esc(p.codigo)}<br>${esc(p.versao)} · ${esc(p.data)}`;
+  $('#hero').innerHTML = `${S.plano.template ? `<div class="callout" style="margin-bottom:24px"><p class="lbl" style="color:var(--signal-600)">Template de planejamento NOVARC</p><p class="small" style="margin-top:4px">Esta página é o template, preenchida com um projeto de exemplo. Um planejamento novo é uma duplicata desta casca com outro <span class="ref">plano.json</span> e outros simuladores. O guia para agentes está em <span class="ref">TEMPLATE.md</span>, publicado junto com a página.</p></div>` : ''}<p class="kicker"><span class="slash"></span>Planejamento · ${esc(p.cliente)}</p>
+    <h1 class="frame"><span class="br l" aria-hidden="true"></span><span class="tx">${esc(p.nome)}</span><span class="br r" aria-hidden="true"></span></h1><span class="sweep" aria-hidden="true"></span><p class="lead">${esc(p.resumo)}</p>
+    <div class="byline"><span>Preparado por <b>${esc(p.responsavel)}, NOVARC</b></span><span>Status <b>${esc(st.n)}</b></span><span>Desenvolvimento <b>${fluxo().execucao === 'cliente' ? esc(fluxo().timeCliente || 'time do cliente') : 'NOVARC'}</b></span><span>Prazo <b>${esc(fmtData(ini))} a ${esc(fmtData(fim))}</b></span></div>
+    <div class="stats">
+      <div class="stat" style="--i:0"><div class="v"><span data-count="${ms}">${ms}</span></div><div class="k">Mudanças</div><div class="dist" style="margin-top:8px" title="Por fase">${S.plano.fases.map((f, i) => `<i style="flex:${S.plano.mudancas.filter((m) => m.fase === f.id).length};background:${['#0a6cff', '#0554cc', '#1b3e78', '#6ba6ff', '#04122e'][i % 5]}"></i>`).join('')}</div></div>
+      <div class="stat" style="--i:1">${(() => { const n = porSim() ? new Set(S.plano.fases.map((f) => simDaFase(f.id)).filter((x) => x >= 0)).size : S.plano.fases.length; return `<div class="v"><span data-count="${n}">${n}</span><small>${porSim() ? `fases · ${S.plano.fases.length} slices` : 'fases'}</small></div>`; })()}<div class="k">Entrega</div><p class="small muted" style="margin-top:6px">${S.plano.fases.map((f) => faseCurta(f.id)).join(' · ')}</p>${veHoras() && S.plano.fases.some((f) => ativasPrev(fase(f.id))) ? `<p class="small muted">previsto: ${num(S.plano.fases.reduce((a, f) => a + (+fase(f.id).horasPrevistas || 0), 0))} h de execução · ~${num(S.plano.fases.reduce((a, f) => a + ativasPrev(fase(f.id)), 0))} h ativas</p>` : ''}</div>
+      <button class="stat go" style="--i:2" data-act="bench-aba" data-v="dec"><div class="v"><span data-count="${S.plano.decisoes.length}">${S.plano.decisoes.length}</span></div><div class="k">Decisões</div><p class="small muted" style="margin-top:6px">ver no simulador</p></button>
+      <button class="stat go" style="--i:3" data-act="bench-aba" data-v="pend"><div class="v"><span data-count="${tp - ab}">${tp - ab}</span><small>de ${tp}</small></div><div class="k">Pendências respondidas</div><div class="meter ok"><i style="width:${tp ? (tp - ab) / tp * 100 : 0}%"></i></div></button>
+    </div>`;
+}
+function passosFluxo() { const f = fluxo(); const ids = ['rascunho', 'aprovacao-interna']; if (f.aprovacao.includes('cliente')) ids.push('reuniao-cliente', 'aprovacao-cliente'); ids.push('aprovado', 'execucao'); return ids; }
+function renderStatus() {
+  const f = fluxo(); const atual = (S.estado && S.estado.status) || 'rascunho'; const passos = passosFluxo();
+  const ix = passos.indexOf(atual === 'ajustes' ? (S.estado.voltarPara || 'aprovacao-interna') : atual); const st = statusDe(atual);
+  const prox = { rascunho: ['aprovacao-interna'], 'aprovacao-interna': f.aprovacao.includes('cliente') ? ['reuniao-cliente', 'ajustes'] : ['aprovado', 'ajustes'], 'reuniao-cliente': ['aprovacao-cliente', 'ajustes'],
+    'aprovacao-cliente': ['aprovado', 'ajustes'], ajustes: ['aprovacao-interna'], aprovado: ['execucao', 'ajustes'], execucao: ['aprovado'] }[atual] || [];
+  const rot = { 'aprovacao-interna': 'Enviar para aprovação interna', 'reuniao-cliente': 'Aprovar e marcar reunião', 'aprovacao-cliente': 'Apresentado ao cliente', aprovado: 'Aprovar', ajustes: 'Pedir ajustes', execucao: 'Iniciar execução' };
+  $('#status').innerHTML = `<div class="sec-head"><div><p class="kicker">Status</p><h2>${esc(st.n)}</h2><p>${esc(st.d)}${S.estado && S.estado.at ? ` Última mudança por ${esc(nome(S.estado.by))}, ${esc(quando(S.estado.at))}.` : ''}</p></div>
+      <div class="row">${podeEscrever() ? prox.map((p) => `<button class="btn ${p === 'aprovado' || p === 'execucao' ? 'primary' : ''}" data-act="status" data-to="${p}">${esc(rot[p])}</button>`).join('') : `<span class="small muted row">${ic('lock')}${S.grava === false ? 'Você está como leitor. Para aprovar, peça acesso de Colaborador, ou comente o parecer.' : 'Entre no Claude com acesso ao plano para mudar o status.'}</span>`}</div></div>
+    <div class="flow">${passos.map((p, i) => `<div class="node ${i < ix ? 'done' : i === ix ? 'now' : ''}" style="--i:${i}"><i class="pt"></i><div class="who">${i < ix ? 'Feito' : i === ix ? 'Agora' : 'Depois'} · ${esc(statusDe(p).who)}</div><div class="t">${esc(statusDe(p).n)}</div></div>`).join('')}</div>
+    ${S.estado && S.estado.nota ? `<div class="callout ${atual === 'ajustes' ? 'bad' : ''}" style="margin-top:14px"><p class="lbl" style="color:var(--signal-600)">Último parecer · ${esc(nome(S.estado.by))}</p><p style="margin-top:4px">${esc(S.estado.nota)}</p></div>` : ''}
+    <div class="facts">
+      <div class="fact"><p class="lbl">Quem aprova</p><p class="fv">${f.aprovacao.includes('cliente') ? 'NOVARC e cliente' : 'Só NOVARC'}</p><p class="small muted">NOVARC: ${esc(f.aprovadorInterno)}${f.aprovacao.includes('cliente') ? ` · Cliente: ${esc(f.aprovadorCliente)}` : ''}</p></div>
+      <div class="fact"><p class="lbl">Quem desenvolve</p><p class="fv">${f.execucao === 'cliente' ? esc(f.timeCliente || 'Time do cliente') : 'NOVARC'}</p><p class="small muted">${f.execucao === 'cliente' ? 'Cada fase sai com um pacote de repasse: spec, decisões, pendências respondidas e o simulador.' : 'Cada fase sai com o spec e o prompt do /session-build; specs, planos e revisões voltam para a biblioteca.'}</p></div>
+    </div>`;
+}
+
+// ============================================================ SIMULADORES
+function renderSims() {
+  const unico = S.plano.simuladores.length === 1; const sec = $('#simuladores');
+  if (!sec.dataset.pronto) {
+    sec.innerHTML = `<div class="sec-head"><div><p class="kicker">Simuladores</p><h2>Explore as telas como vão ficar</h2><p>Cada simulador reproduz a interface real, com um marcador numerado em cada mudança. Ao lado do simulador ficam as mudanças da tela, as decisões que as sustentam, as pendências que as seguram e os vídeos.</p></div></div>
+      <div style="display:grid;gap:20px">${S.plano.simuladores.map((s, si) => `<div class="card simx"${unico ? '' : ` style="border-top:4px solid ${COR_SIM[si % COR_SIM.length]}"`}>
+        <button class="pv" data-act="bench" data-id="${esc(s.id)}" aria-label="Abrir ${esc(s.titulo)}"><div class="live" id="live-${esc(s.id)}" data-src="${esc(s.arquivo)}"><div class="shot" aria-hidden="true"><i><b></b><b></b><b></b><b></b><b></b></i><div><b style="width:45%;background:#94a3b8"></b><div class="ks"><b class="k"></b><b class="k"></b><b class="k"></b></div><b></b><b style="width:80%"></b><b style="width:65%"></b><b style="width:72%"></b></div></div></div>
+          <span class="pv-tag"><i></i>${esc(s.arquivo)} · ao vivo</span></button>
+        <div class="info" id="simi-${esc(s.id)}"></div><div class="simv" id="simv-${esc(s.id)}"></div></div>`).join('')}</div>`;
+    sec.dataset.pronto = '1'; previas();
+  }
+  for (const s of S.plano.simuladores) {
+    const ms = S.plano.mudancas.filter((m) => m.sim === s.id); const ids = new Set(ms.map((m) => m.id));
+    const decs = S.plano.decisoes.filter((d) => d.mudancas.some((id) => ids.has(id)) || unico).length;
+    const pends = S.plano.pendencias.filter((p) => p.mudancas.some((id) => ids.has(id)) || unico); const ab = pends.filter(pendAberta).length;
+    const cont = (k) => ms.filter((m) => sitMud(m) === k).length; const vs = S.videos.filter((v) => v.sim === s.id || (unico && !v.sim));
+    const nMsg = (S.plano.mensagens || []).filter((x) => x.sim === s.id).length, nSup = (s.superficies || []).length;
+    const si = S.plano.simuladores.indexOf(s), cor = COR_SIM[si % COR_SIM.length];
+    document.getElementById('simi-' + s.id).innerHTML = `${!unico ? `<p class="kicker" style="color:${cor}">${porSim() ? `Fase ${si + 1} · ${((n) => `${n} ${n === 1 ? 'slice' : 'slices'}`)(S.plano.fases.filter((f) => simDaFase(f.id) === si).length)}` : `Simulador ${si + 1}`}</p>` : ''}<p class="lbl">${esc(s.nTelas || '')} telas${nSup ? ` · ${nSup} superfícies` : ''}${nMsg ? ` · ${nMsg} mensagens` : ''}</p><h3>${esc(s.titulo)}</h3><p class="small">${esc(s.descricao)}</p>${s.fonte ? `<p class="small muted sim-fonte" title="${esc(s.fonte)}">Fonte: ${esc(s.fonte)}</p>` : ''}
+      <div class="kpis">
+        <button class="kpi" data-act="bench-aba" data-id="${esc(s.id)}" data-v="todas"><b>${ms.length}</b><span>mudanças</span></button>
+        <button class="kpi" data-act="bench-aba" data-id="${esc(s.id)}" data-v="dec"><b>${decs}</b><span>decisões</span></button>
+        <button class="kpi ${ab ? 'warn' : ''}" data-act="bench-aba" data-id="${esc(s.id)}" data-v="pend"><b>${ab}</b><span>pendências abertas</span></button>
+        <button class="kpi" data-act="bench-aba" data-id="${esc(s.id)}" data-v="vid"><b>${vs.length}</b><span>vídeos</span></button>
+      </div>
+      <div><div class="health">${Object.entries(SIT).map(([k, [, c]]) => `<i style="flex:${cont(k)};background:${c}" title="${SIT[k][0]}: ${cont(k)}"></i>`).join('')}</div>
+        <div class="legend">${Object.entries(SIT).map(([k, [l, c]]) => `<span><i style="background:${c}"></i>${l} <b>${cont(k)}</b></span>`).join('')}</div></div>
+      <div class="row"><button class="btn primary" data-act="bench" data-id="${esc(s.id)}">${ic('code', 14)}Abrir o simulador</button></div>`;
+    document.getElementById('simv-' + s.id).innerHTML = `<div class="row" style="justify-content:space-between"><p class="lbl">Vídeos deste simulador</p>${podeEscrever() ? `<button class="btn sm" data-act="add-video" data-id="${esc(s.id)}">${ic('plus', 14)}Adicionar vídeo</button>` : ''}</div>
+      ${vs.length ? `<div class="vgrid">${vs.map(vidCard).join('')}</div>` : `<p class="small muted">Nenhum vídeo ainda. Grave a tela com voz explorando o simulador (Loom, ou Win+Alt+R no Windows) ou a reunião com o cliente (Fathom) e cole o link.</p>`}`;
+  }
+}
+// Prévia ao vivo: o simulador real, em 1440 x 900, reduzido para caber no cartão. Só carrega quando o cartão aparece.
+function previas() {
+  for (const box of document.querySelectorAll('.live[data-src]')) {
+    const monta = () => { if (box.querySelector('iframe')) return; const fr = document.createElement('iframe'); fr.src = box.dataset.src; fr.tabIndex = -1; fr.setAttribute('aria-hidden', 'true'); fr.title = 'Prévia do simulador';
+      fr.onload = () => box.classList.add('ok'); box.appendChild(fr); };
+    const escala = () => box.style.setProperty('--s', box.clientWidth / 1440);
+    escala(); if ('ResizeObserver' in window) new ResizeObserver(escala).observe(box);
+    if ('IntersectionObserver' in window) { const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); monta(); } }, { rootMargin: '200px' }); io.observe(box); } else monta();
+  }
+}
+const vidCard = (v) => `<a class="vcard" href="${esc(v.url)}" target="_blank" rel="noopener"><span class="play">${ic('play', 18)}</span><span style="min-width:0"><b>${esc(v.titulo)}</b><span class="small muted">${esc(v.descricao || '')}${v.descricao ? ' · ' : ''}${esc(faseNome(v.fase))} · ${esc(nome(v.by))}</span></span></a>`;
+
+// ============================================================ FASES E PRAZOS
+function bloqueios(fid) { return S.plano.pendencias.filter((p) => p.fase === fid && pendAberta(p)); }
+function renderFases() {
+  const fs = S.plano.fases.map((f) => fase(f.id)); const exec = fluxo().execucao;
+  // Com mais de um simulador, cada fase leva a cor e o nome do simulador das suas mudanças.
+  const multi = S.plano.simuladores.length > 1; const simDe = (f) => { const i = simDaFase(f.id); return i < 0 ? null : { i, s: S.plano.simuladores[i], cor: COR_SIM[i % COR_SIM.length] }; };
+  const cabSim = (f, i) => { const x = multi && simDe(f); if (!x || (i && (simDe(fs[i - 1]) || {}).i === x.i)) return ''; return `<div class="trow" style="height:30px;margin-top:${i ? 10 : 0}px"><span class="gl" style="color:${x.cor}"><b style="color:${x.cor}">${porSim() ? `Fase ${x.i + 1}` : 'Simulador'}</b>${esc(x.s.titulo)}</span><div style="border-bottom:2px solid ${x.cor};height:50%"></div></div>`; };
+  const ds = fs.flatMap((f) => [f.inicio, f.fim]).filter(Boolean).map((d) => new Date(d + 'T12:00').getTime());
+  const ini = Math.min(...ds), fim = Math.max(...ds), span = Math.max(1, fim - ini); const pos = (d) => ((new Date(d + 'T12:00').getTime() - ini) / span) * 100;
+  const hoje = Date.now(); const meses = []; for (let d = new Date(ini); d.getTime() <= fim; d.setMonth(d.getMonth() + 1, 1)) meses.push(new Date(d.getFullYear(), d.getMonth(), 1));
+  const aprovado = ['aprovado', 'execucao'].includes(S.estado && S.estado.status);
+  $('#fases').innerHTML = `<div class="sec-head"><div><p class="kicker">Fases e prazos</p><h2>Como a entrega se divide</h2><p>Cada fase tem objetivo, mudanças, prazo e o que precisa estar resolvido antes de ir para execução. ${exec === 'cliente' ? `Desenvolvimento pelo ${esc(fluxo().timeCliente || 'time do cliente')}.` : 'Desenvolvimento pela NOVARC.'}</p></div></div>
+    <div class="card tl"><div class="tl-in">
+      ${fs.map((f, i) => `${cabSim(f, i)}<div class="trow"><span class="gl"${multi && simDe(f) ? ` style="padding-left:14px;border-left:3px solid ${simDe(f).cor}"` : ''}><b${multi && simDe(f) ? ` style="color:${simDe(f).cor}"` : ''}>${faseCurta(f.id)}</b>${esc(f.nome)}</span><div class="track">${f.inicio && f.fim ? `<div class="tb ${f.executor && f.executor !== 'NOVARC' ? 'cli' : ''} ${f.concluida ? 'done' : ''}" style="--i:${i};${multi && simDe(f) && !f.concluida ? `background:${simDe(f).cor};` : ''}left:${pos(f.inicio)}%;width:${Math.max(3, pos(f.fim) - pos(f.inicio))}%" title="${esc(fmtData(f.inicio))} a ${esc(fmtData(f.fim))}${veHoras() && f.horasPrevistas ? ` · ${num(f.horasPrevistas)} h de sessão do Claude` : ''}${veHoras() && ativasPrev(f) ? ` · ~${num(ativasPrev(f))} h ativas` : ''}">${esc(fmtData(f.inicio).slice(0, 5))} a ${esc(fmtData(f.fim).slice(0, 5))}</div>` : ''}${hoje >= ini && hoje <= fim ? `<span class="today" style="left:${((hoje - ini) / span) * 100}%" title="Hoje"></span>` : ''}</div></div>`).join('')}
+      <div class="trow" style="height:auto"><span></span><div class="ticks">${meses.filter((d) => d.getTime() >= ini - 86400000 * 31).map((d) => `<span style="left:${Math.max(0, Math.min(100, ((d.getTime() - ini) / span) * 100))}%">${d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}</span>`).join('')}</div></div>
+    </div></div>
+    <div class="grid2" style="margin-top:16px">${fs.map((f, i) => { const bl = bloqueios(f.id); const its = S.plano.mudancas.filter((m) => m.fase === f.id); const pend = S.plano.pendencias.filter((p) => p.fase === f.id);
+      const docs = S.docs.filter((d) => d.fase === f.id).length; const mins = horasDo('ativa').filter((h) => h.fase === f.id).reduce((a, h) => a + (+h.minutos || 0), 0); const minsE = horasDo('execucao').filter((h) => h.fase === f.id).reduce((a, h) => a + (+h.minutos || 0), 0);
+      const pronta = aprovado && !bl.length && f.executor;
+      const sx = multi && simDe(f);
+      return `<div class="card phase" id="fase-${esc(f.id)}"${sx ? ` style="border-top:4px solid ${sx.cor}"` : ''}>${sx ? `<button class="btn sm ghost" style="justify-self:start;align-self:flex-start;padding-left:0;color:${sx.cor}" data-act="bench" data-id="${esc(sx.s.id)}">${ic('code', 14)}${porSim() ? `Fase ${sx.i + 1} · ` : ''}${esc(sx.s.titulo)}</button>` : ''}<div class="ph"><span class="kicker">${faseNome(f.id)} · ${esc(fmtData(f.inicio).slice(0, 5))} a ${esc(fmtData(f.fim).slice(0, 5))}</span><span class="pill ${f.executor && f.executor !== 'NOVARC' ? 'warn' : 'info'}">${esc(f.executor || 'Executor a definir')}</span></div>
+        <h3>${esc(f.nome)}</h3><p class="small">${esc(f.objetivo)}</p>${conjsDaFase(f.id).length ? `<div class="refs" style="margin-top:0">${conjsDaFase(f.id).map((c) => `<span class="ref" title="${esc(c.titulo)}">${esc(c.id)}</span>`).join('')}</div>` : ''}
+        <div class="meters">
+          <div class="mtr"><b>${its.length}</b>mudanças</div>
+          <div class="mtr"><b>${pend.length - bl.length} de ${pend.length}</b>pendências<div class="bar ${bl.length ? 'warn' : 'ok'}"><i style="width:${pend.length ? (pend.length - bl.length) / pend.length * 100 : 100}%"></i></div></div>
+          ${(() => { const m = interno() ? mins : (((S.cfg && S.cfg.horasResumo) || {}).porFase || {})[f.id] || 0; const ref = ativasPrev(f) || f.horasPrevistas;
+            return `<div class="mtr"><b>${veHoras() ? horas(m) + ' h' : docs + ' docs'}</b>${veHoras() ? `ativas${ref ? ` de ${num(ref)}` : ''}` : 'na biblioteca'}${veHoras() && ref ? `<div class="bar"><i style="width:${Math.min(100, m / 60 / ref * 100)}%"></i></div>` : ''}</div>`; })()}
+        </div>
+        ${veHoras() && (f.horasPrevistas || ativasPrev(f)) ? `<p class="small muted">Previsto: ${f.horasPrevistas ? `<b>${num(f.horasPrevistas)} h</b> de sessão do Claude` : ''}${f.horasPrevistas && ativasPrev(f) ? ' e ' : ''}${ativasPrev(f) ? `<b>~${num(ativasPrev(f))} h</b> ativas de quem conduz` : ''}.${interno() && minsE ? ` Execução medida: <b>${horas(minsE)} h</b>.` : ''}</p>` : ''}
+        <div class="ready ${pronta ? 'ok' : 'block'}">${pronta ? ic('check') + 'Pronta para ir para execução' : ic('lock') + (!aprovado ? 'Espera a aprovação do plano' : bl.length ? `Bloqueada por ${bl.length} pendência(s)` : 'Falta definir quem executa')}</div>
+        ${bl.length ? `<div><p class="lbl" style="margin-bottom:4px">Precisa de resposta antes</p><ul>${bl.map((p) => `<li><button class="lnk" data-act="ir" data-k="p" data-id="${esc(p.id)}">${esc(p.titulo)}</button> <span class="muted small">· ${esc(p.quem)}</span></li>`).join('')}</ul></div>` : ''}
+        <div><p class="lbl" style="margin-bottom:4px">Pronto quando</p><ul>${f.pronto.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div class="row"><button class="btn sm" data-act="ver-fase" data-f="${esc(f.id)}">${ic('eye', 14)}Ver a versão desta fase</button>${conjsDaFase(f.id).length ? `<a class="btn sm" href="#execucao">Conjuntos</a>` : ''}${interno() && podeEscrever() ? `<button class="btn sm ghost" data-act="editar-fase" data-f="${esc(f.id)}">Prazo e executor</button>` : ''}</div>
+      </div>`; }).join('')}</div>`;
+}
+
+// ============================================================ MUDANÇAS
+// Situação de cada mudança no planejamento: segura por pendência aberta, sustentada por decisão, ou sem decisão ligada.
+const pend = (id) => S.plano.pendencias.find((p) => p.id === id);
+const deci = (id) => S.plano.decisoes.find((d) => d.id === id);
+// Pill e texto da resposta: parcial continua aberta e mostra o que falta.
+const respPill = (p) => { const r = S.resp[p.id]; return !pendAberta(p) ? '<span class="pill ok">Respondida</span>' : r && r.resposta ? '<span class="pill warn">Parcial</span>' : '<span class="pill warn">Aberta</span>'; };
+const respTxt = (p) => { const r = S.resp[p.id]; return r && r.resposta ? 'Resposta: ' + r.resposta + (r.situacao === 'parcial' && r.falta ? ' Falta: ' + r.falta : '') : p.texto; };
+const sitMud = (m) => m.pendencias.some((id) => pendAberta(pend(id))) ? 'bloqueada' : m.decisoes.length ? 'decidida' : 'livre';
+const SIT = { bloqueada: ['Segura por pendência aberta', 'var(--warn)'], decidida: ['Sustentada por decisão', 'var(--ok)'], livre: ['Sem decisão ligada', 'var(--navy-100)'] };
+const SITF = { all: 'Todas as situações', bloqueada: 'Segura por pendência aberta', decidida: 'Sustentada por decisão', livre: 'Sem decisão ligada', duvida: 'Com dúvida registrada', semnota: 'Sem nota de lógica' };
+// Filtros da aba Mudanças da bancada.
+function filtraMud(todas, f) {
+  const b = (f.q || '').toLowerCase();
+  return todas.filter((m) => (f.fase === 'all' || m.fase === f.fase)
+    && (f.sit === 'all' || (f.sit === 'duvida' ? notasDe(m.id).some((n) => n.tipo === 'duvida') : f.sit === 'semnota' ? !notasDe(m.id).length : sitMud(m) === f.sit))
+    && (!f.lig || (f.lig.k === 'd' ? m.decisoes : m.pendencias).includes(f.lig.id))
+    && (!f.rev || f.rev === 'all' || (m.revisoes || []).includes(f.rev))
+    && (!b || (m.titulo + ' ' + m.porque + ' ' + m.tela + ' ' + m.id).toLowerCase().includes(b)));
+}
+const flags = (m) => { const np = m.pendencias.filter((id) => pendAberta(pend(id))).length, nd = m.decisoes.length, nn = notasDe(m.id).length;
+  return `${np ? `<span class="flag p" title="${np} pendência(s) aberta(s)">${ic('lock')}${np}</span>` : ''}${nd ? `<span class="flag d" title="${nd} decisão(ões) ligada(s)">${ic('check')}${nd}</span>` : ''}${nn ? `<span class="flag n" title="${nn} nota(s) de lógica e prova">${ic('file')}${nn}</span>` : ''}`; };
+// Painel de detalhe de uma mudança, na bancada.
+function detMud(m, ctx) {
+  const ds = m.decisoes.map(deci), ps = m.pendencias.map(pend), ns = notasDe(m.id); const ab = ps.filter(pendAberta);
+  return `<div class="det" id="det-${ctx}" data-comment-target>
+    <div class="row"><span class="nmark" title="Marcador no simulador">${esc(m.n)}</span><span class="chip t-${esc(m.tipo)}">${esc(m.tipo)}</span><span class="chip">${esc(faseNome(m.fase))}</span><span class="chip">${esc(m.tela)}</span></div>
+    <h3 id="tit-${ctx}"><span class="mid">${esc(m.id)} · </span>${esc(m.titulo)}</h3>${ctx === 'bench' ? vendoMud(m.id) : ''}
+    <div class="ready ${ab.length ? 'block' : ds.length ? 'ok' : 'neutral'}">${ab.length ? `${ic('lock')}Segura por ${ab.length} pendência(s) aberta(s): espera a resposta antes do spec` : ds.length ? `${ic('check')}Sustentada por decisão: pode ir para o spec` : `${ic('list')}Sem pendência aberta e sem decisão ligada`}</div>
+    <div class="blk"><p class="lbl">O que muda e por quê</p><p>${esc(m.porque)}</p></div>
+    <div class="blk"><p class="lbl">Decisões que sustentam (${ds.length})</p>${ds.map((d) => `<button class="lk" data-act="ir" data-k="d" data-id="${esc(d.id)}"><span class="pill ok">${ic('check', 12)}</span><b>${esc(d.titulo)}</b><span class="tx">${esc(d.texto)}</span></button>`).join('')
+      || '<p class="small muted">Nenhuma decisão ligada. Se a mudança depende de uma escolha, registre a decisão antes do spec.</p>'}</div>
+    <div class="blk"><p class="lbl">Pendências que seguram (${ps.length})</p>${ps.map((p) => { const r = S.resp[p.id]; const ok = r && r.resposta;
+      return `<div class="lk">${respPill(p)}<span><b>${esc(p.titulo)}</b> <span class="small muted">· ${esc(p.quem)}</span></span><span class="tx ${ok ? 'ans' : ''}">${esc(respTxt(p))}</span>
+        <span class="row" style="grid-column:2">${podeEscrever() ? `<button class="btn sm" data-act="responder" data-id="${esc(p.id)}">${ok ? 'Editar resposta' : 'Responder'}</button>` : ''}<button class="btn sm ghost" data-act="ir" data-k="p" data-id="${esc(p.id)}">Ver na lista</button></span></div>`; }).join('')
+      || '<p class="small muted">Nenhuma pendência ligada.</p>'}</div>
+    ${(() => { const mg = (S.plano.mensagens || []).filter((x) => (x.mudancas || []).includes(m.id)); return mg.length ? `<div class="blk"><p class="lbl">Mensagens (${mg.length})</p>${mg.map((x) => `<button class="lk" data-act="bench-msg" data-id="${esc(x.id)}">${ORIG_MSG[x.origem] || ''}<b>${esc(CANAL[x.canal] || x.canal)} · ${esc(x.titulo)}</b><span class="tx">${esc(x.gatilho || '')}</span></button>`).join('')}</div>` : ''; })()}
+    <div class="blk"><p class="lbl">Lógica e provas (${ns.length})</p>
+      ${ns.map((n) => `<div class="note ${esc(n.tipo)}"><span class="nt">${esc(TIPO_NOTA[n.tipo] || n.tipo)}</span><p>${esc(n.texto)}</p>${n.ref ? `<span class="ref">${esc(n.ref)}</span>` : ''}<span class="who">${esc(n.origem === 'agente' ? 'agente' : nome(n.by))}, ${esc(quando(n.at))}</span></div>`).join('') || '<p class="small muted">Sem notas. A lógica planejada e a prova que a sustenta são o que o spec de back-end e de front-end vai citar.</p>'}
+      ${podeEscrever() ? `<div class="note" style="gap:8px"><div class="opts">${Object.entries(TIPO_NOTA).map(([k, l]) => `<button data-act="nota-tipo" data-v="${k}" aria-pressed="${S.notaTipo === k}">${l}</button>`).join('')}</div>
+        <textarea id="nota-txt-${ctx}" placeholder="A regra, o cálculo ou o comportamento que esta mudança precisa ter"></textarea><input type="text" id="nota-ref-${ctx}" placeholder="Prova ou fonte: arquivo:linha, consulta, reunião (opcional)">
+        <div><button class="btn sm dark" data-act="nota-salva" data-ctx="${ctx}" data-id="${esc(m.id)}">Registrar nota</button></div></div>` : ''}</div>
+    <div class="blk"><p class="lbl">Fontes</p><div class="refs" style="margin-top:0">${m.refs.map((r) => `<span class="ref" title="${esc(r.tipo)}">${esc(r.ref)}</span>`).join('')}<span class="ref">id ${esc(m.id)}</span></div></div>
+    ${m.spec ? `<div class="blk"><p class="lbl">Spec</p><div class="row"><span class="ref">${esc(m.spec)}</span><button class="btn sm" data-act="ver-spec" data-s="${esc(m.spec)}">${ic('eye', 14)}Ver spec</button></div></div>` : ''}
+    <div class="row" data-uncommentable>${m.tecnica ? '<span class="small muted">Trabalho técnico: não tem marcador no simulador.</span>' : ctx === 'bench' ? `<button class="btn sm primary" data-act="bench-goto" data-id="${esc(m.id)}">Ir até o marcador</button>` : `<button class="btn sm primary" data-act="bench-at" data-id="${esc(m.id)}">${ic('eye', 14)}Ver no simulador</button>`}
+      <button class="btn sm" data-act="cite" data-k="m" data-id="${esc(m.id)}">${ic('copy', 14)}Copiar citação</button><button class="btn sm" data-act="comentar" data-el="tit-${ctx}">${ic('msg', 14)}Comentar</button></div>
+  </div>`;
+}
+function renderAb() {
+  $('#aberto').innerHTML = `<div class="sec-head"><div><p class="kicker">Em aberto</p><h2>Dívida técnica e o que falta organizar</h2><p>Não bloqueia a aprovação. A dívida que o plano resolve mostra a fase e a mudança; o resto entra numa fase quando for decidido.</p></div></div>
+    <div class="card">${S.plano.abertos.map((a) => `<div class="item" id="a-${esc(a.id)}">${(() => { const m = a.mudanca && S.plano.mudancas.find((x) => x.id === a.mudanca); return m ? `<span class="chip ok" style="margin-top:4px">${esc(faseNome(m.fase))}</span><div style="min-width:0"><h4>${esc(a.titulo)}</h4><p>${esc(a.texto)}</p><p class="small muted">Resolvida no plano pela mudança ${esc(m.n)}: ${esc(m.titulo)}.</p></div>` : `<span class="chip" style="margin-top:4px">aberto</span><div style="min-width:0"><h4>${esc(a.titulo)}</h4><p>${esc(a.texto)}</p></div>`; })()}<div class="acts"><button class="btn sm ghost" data-act="comentar" data-el="a-${esc(a.id)}">${ic('msg', 14)}Comentar</button></div></div>`).join('')}</div>`;
+}
+
+// ============================================================ BIBLIOTECA
+// Os specs do plano entram na biblioteca sem registro no banco: vêm de plano.json e abrem o espelho publicado.
+function docsDoPlano() {
+  const cs = new Map((S.plano.conjuntos || []).map((c) => [c.id, c]));
+  return (S.plano.specs || []).map((s) => ({ tipo: 'spec', camada: 'geral', titulo: `${s.id} · ${s.titulo}`, fase: (cs.get(s.conjunto) || {}).fase || '', spec: s.id,
+    resumo: `${(s.mudancas || []).length} mudanças · conjunto ${s.conjunto} · ${((s.arquivos && s.arquivos.itens) || []).map((x) => x.nome.replace(/\.md$/, '')).join(', ')}`,
+    ref: s.arquivos ? s.arquivos.repo : '', commit: s.arquivos && s.arquivos.commit }));
+}
+function renderBib() {
+  const tipos = Object.keys(TIPO_DOC); const todos = [...docsDoPlano(), ...S.docs]; const ds = todos.filter((d) => S.docTipo === 'all' || d.tipo === S.docTipo);
+  $('#biblioteca').innerHTML = `<div class="sec-head"><div><p class="kicker">Biblioteca do projeto</p><h2>Specs, planos, revisões e reuniões</h2><p>Os specs gerados pela session-plan aparecem aqui sozinhos, ligados à fase. Planos, revisões de código e reuniões entram pelo banco do artefato (agentes) ou pelo botão ao lado (pessoas).</p></div>
+      ${podeEscrever() ? `<button class="btn primary" data-act="add-doc">${ic('plus', 14)}Adicionar documento</button>` : ''}</div>
+    <div class="card"><div class="toolbar"><div class="seg">${[['all', `Todos (${todos.length})`], ...tipos.map((t) => [t, `${TIPO_DOC[t]} (${todos.filter((d) => d.tipo === t).length})`])].map(([k, l]) => `<button data-act="doc-tipo" data-v="${k}" aria-pressed="${S.docTipo === k}">${esc(l)}</button>`).join('')}</div></div>
+      ${ds.length ? ds.map((d) => `<div class="doc"><span class="dico ${esc(d.tipo)}">${ic(d.tipo === 'reuniao' ? 'users' : d.tipo === 'revisao' ? 'check' : d.tipo === 'plano' ? 'list' : 'file', 18)}</span>
+        <div style="min-width:0"><div class="row"><h4 style="font-size:15px">${esc(d.titulo)}</h4><span class="chip">${esc(TIPO_DOC[d.tipo] || d.tipo)}</span>${d.fase ? `<span class="chip">${esc(faseNome(d.fase))}</span>` : ''}${d.camada ? `<span class="chip">${esc(CAMADA[d.camada] || d.camada)}</span>` : ''}</div>
+          ${d.resumo ? `<p class="small" style="margin-top:2px">${esc(d.resumo)}</p>` : ''}<p class="small muted" style="margin-top:2px">${d.ref && !/^https:\/\//.test(d.ref) ? `<span class="ref">${esc(d.ref)}</span> · ` : ''}${d.spec ? `gerado pela session-plan${d.commit ? `, commit ${esc(String(d.commit).slice(0, 7))}` : ''}` : `${esc(d.origem === 'agente' ? 'registrado por agente' : nome(d.by))}, ${esc(quando(d.at))}`}</p></div>
+        ${d.spec ? `<button class="btn sm" data-act="ver-spec" data-s="${esc(d.spec)}">${ic('eye', 14)}Ver spec</button>` : /^https:\/\//.test(d.ref || '') ? `<a class="btn sm" href="${esc(d.ref)}" target="_blank" rel="noopener">Abrir</a>` : '<span></span>'}</div>`).join('')
+      : `<div style="padding:20px"><div class="empty"><b>Nenhum documento ainda</b>Os specs da seção Specs e execução, os planos e as revisões de código das sessões de desenvolvimento e as reuniões gravadas aparecem aqui, cada um ligado à fase.</div></div>`}</div>`;
+}
+
+// ============================================================ SPECS E EXECUÇÃO
+// Status de execução é derivado na leitura, nunca gravado: execucao/{C} guarda só {sessao, iniciadoEm, bloqueios};
+// specs/{id} guarda etapa, branch, headSha, pr, revisao, validacao, desvios, pendings e bloqueios. Docs com id fora do plano são ignorados.
+const ETAPAS = ['iniciado', 'plano-aprovado', 'implementando', 'branch-publicada', 'pr-aberto', 'merge'];
+const ETAPA = { iniciado: 'Iniciado', 'plano-aprovado': 'Plano aprovado', implementando: 'Em implementação', 'branch-publicada': 'Branch publicada', 'pr-aberto': 'PR aberto', merge: 'Mergeado' };
+const ST_EXEC = { 'nao-iniciado': ['Não iniciado', 'neutral'], 'em-andamento': ['Em andamento', 'info'], concluido: ['Concluído', 'ok'], bloqueado: ['Bloqueado', 'bad'] };
+const conjsDaFase = (fid) => (S.plano.conjuntos || []).filter((c) => c.fase === fid);
+const temBloqueio = (d) => !!(d && d.bloqueios && Object.keys(d.bloqueios).length);
+const motivos = (d) => Object.entries((d && d.bloqueios) || {}).map(([k, b]) => (b && b.motivo) || k);
+function stSpec(e) {
+  e = e || {};
+  if (temBloqueio(e)) return { s: 'bloqueado', motivos: motivos(e) };
+  if (e.etapa === 'merge') return { s: 'concluido' };
+  return e.etapa ? { s: 'em-andamento', etapa: e.etapa } : { s: 'nao-iniciado' };
+}
+function stConj(c) {
+  const d = S.exec[c.id] || {}, es = (c.specs || []).map((sid) => S.specDb[sid] || {}), sts = es.map(stSpec);
+  // Etapa do conjunto = a mais atrasada entre os specs; spec sem etapa ainda deixa o conjunto sem rótulo de etapa.
+  const ixs = es.map((e) => ETAPAS.indexOf(e.etapa)); const mn = ixs.length ? Math.min(...ixs) : -1; const etapa = mn >= 0 ? ETAPAS[mn] : null;
+  if (temBloqueio(d) || sts.some((x) => x.s === 'bloqueado')) return { s: 'bloqueado', motivos: [...motivos(d), ...sts.flatMap((x) => x.motivos || [])] };
+  if (es.length && es.every((e) => e.etapa === 'merge')) return { s: 'concluido' };
+  return es.some((e) => e.etapa) || d.iniciadoEm ? { s: 'em-andamento', etapa } : { s: 'nao-iniciado' };
+}
+const pillSt = (x) => { const [n, c] = ST_EXEC[x.s]; return `<span class="pill ${c}"${x.motivos ? ` title="${esc(x.motivos.join('; '))}"` : ''}>${esc(n)}${x.s === 'em-andamento' && x.etapa ? ` · ${esc(ETAPA[x.etapa] || x.etapa)}` : ''}</span>`; };
+// Validação vale só para o commit validado (validacao.sha igual ao headSha do spec).
+const valAtual = (e) => !!(e.validacao && (e.validacao.sha || null) === (e.headSha || null));
+function pillVal(e) {
+  if (!e.validacao) return '';
+  if (!valAtual(e)) return '<span class="pill warn">Validação desatualizada: nova versão publicada</span>';
+  return e.validacao.resultado === 'aprovado' ? '<span class="pill ok">Validado no simulador</span>' : `<span class="pill bad">${(e.validacao.falhas || []).length} falha(s) na validação</span>`;
+}
+// Trilho de etapas: um marco por etapa; o marco atual pisca em azul (ou vermelho, se bloqueado), os anteriores ficam verdes.
+function trilho(etapa, bloq) {
+  const ix = ETAPAS.indexOf(etapa);
+  return `<span class="trilho ${bloq ? 'bloq' : ''}" role="img" aria-label="${esc(etapa ? ETAPA[etapa] : 'Não iniciado')}">${ETAPAS.map((k, i) => `<i class="${i < ix || (i === ix && k === 'merge') ? 'feito' : i === ix ? 'agora' : ''}" title="${esc(ETAPA[k])}"></i>`).join('')}</span>`;
+}
+const etapaTxt = (x) => x.s === 'bloqueado' ? 'Bloqueado' : x.s === 'concluido' ? 'Mergeado' : x.etapa ? ETAPA[x.etapa] : x.s === 'em-andamento' ? 'Em andamento' : 'Não iniciado';
+function promptOrq() { // the page does not know its own link; every set prompt starts with it
+  const u = ((S.plano.conjuntos || []).map((c) => (c.prompt || '').match(/https:\/\/claude\.ai\/artifact\/[\w-]+/)).find(Boolean) || [])[0];
+  return u ? `/novarc-session-build orquestrar ${u}\n\nSessão orquestradora do planejamento ${(S.plano.projeto || {}).codigo || ''}. Nome: ${(S.plano.execucao || {}).orquestrador || ''}.` : ''; }
+function conjPrompt(id) { return id === 'orq' ? { id: 'Orquestrador', titulo: (S.plano.execucao || {}).orquestrador || '', prompt: promptOrq() } : (S.plano.conjuntos || []).find((x) => x.id === id); }
+const travasDe = (s) => (s.bloqueadoPor || []).map(pend).filter((p) => p && pendAberta(p));
+function linhaSpec(s, e, dev) {
+  const x = stSpec(e), trava = travasDe(s);
+  const it = ((s.arquivos && s.arquivos.itens) || []).find((f) => f.nome === 'spec.md'); const alterado = e.etapa && e.revisao && it && e.revisao !== it.sha256;
+  const sit = [pillVal(e), (e.desvios || []).length ? `<span class="pill warn">${e.desvios.length} desvio(s)</span>` : '', alterado ? '<span class="pill warn">Spec alterado depois do início</span>' : '',
+    x.s === 'bloqueado' ? `<span class="pill bad" title="${esc(x.motivos.join('; '))}">${ic('lock', 12)}Bloqueado</span>` : '',
+    dev && e.branch ? `<span class="ref" title="Branch">${esc(e.branch)}</span>` : '', dev && /^https:\/\//.test(e.pr || '') ? `<a class="btn sm ghost" href="${esc(e.pr)}" target="_blank" rel="noopener">PR</a>` : ''].join('');
+  return `<div class="spec-row"><span class="sid">${esc(s.id)}</span><span class="t">${esc(s.titulo)}<small>${(s.mudancas || []).length} mudanças${(s.arquivos && s.arquivos.itens) ? ` · ${s.arquivos.itens.length} arquivos` : ''}</small></span>
+    <span class="ep">${trilho(e.etapa, x.s === 'bloqueado')}<span class="etapa-lbl">${esc(etapaTxt(x))}</span></span><span class="sit">${sit || (trava.length ? '' : '<span class="pill neutral">Pronto para construir</span>')}</span>
+    <button class="btn sm" data-act="ver-spec" data-s="${esc(s.id)}">${ic('eye', 14)}Ver spec</button>
+    ${trava.length ? `<details class="trava"><summary>${ic('lock', 14)}Espera ${trava.length === 1 ? '1 pendência' : `${trava.length} pendências`}</summary><ul>${trava.map((p) => `<li><button class="lnk" data-act="ir" data-k="p" data-id="${esc(p.id)}">${esc(p.titulo)}</button> <span class="muted small">· ${esc(p.quem)}</span></li>`).join('')}</ul></details>` : ''}</div>`;
+}
+// Auditoria (C03-S01): cada ação automática do Maestro e do orquestrador com motivo e regra; só dono e editor, fora do formato cliente.
+const hmAud = (iso) => { const t = new Date(iso); if (isNaN(t)) return ''; const p = (n) => String(n).padStart(2, '0'); return `${p(t.getDate())}/${p(t.getMonth() + 1)} ${p(t.getHours())}:${p(t.getMinutes())}`; };
+const linhaAud = (a) => `<p class="small aud-linha">${esc(`${hmAud(a.at)} ${a.acao} · ${a.alvo} · ${a.motivo} · regra ${a.regra}`)}</p>`;
+function cardAuditoria(dev) {
+  if (!dev) return '';
+  const rows = S.aud || [];
+  return `<div class="card locks-vivo"><p class="lbl">Auditoria · cada diretiva com motivo e regra</p>
+    ${rows.length ? rows.slice(0, 20).map(linhaAud).join('') : '<p class="small muted">nenhuma ação ainda</p>'}
+    ${rows.length > 20 ? '<div class="row"><button class="btn sm" data-act="auditoria-todas">ver as 50 mais recentes</button></div>' : ''}</div>`;
+}
+// Locks ao vivo: o espelho que o mod do Maestro grava em execucao/{C}.espelho e config/orquestracao (só dono e editor, fora do formato cliente).
+function cardLocks(dev) {
+  if (!dev) return '';
+  const agora = Date.now(), min = (iso) => Math.floor((agora - Date.parse(iso)) / 60000);
+  const es = Object.entries(S.exec || {}).filter(([, d]) => d && d.espelho && d.espelho.at).map(([c, d]) => ({ c, e: d.espelho }));
+  if (!es.length && !S.orq) return '<div class="card locks-vivo"><p class="lbl">Locks ao vivo · espelho do Maestro</p><p class="small muted">Sem execução ainda.</p></div>';
+  const ultimo = es.length ? Math.max(...es.map((x) => Date.parse(x.e.at))) : null, idade = ultimo === null ? null : Math.floor((agora - ultimo) / 60000);
+  const limiar = (S.orq && S.orq.limiares && +S.orq.limiares.lockOrfao) || 20;
+  const locks = es.flatMap((x) => Object.entries(x.e.locks || {}).map(([k, v]) => ({ recurso: k.slice(k.indexOf(' ') + 1), spec: v.spec, desde: v.desde, espera: v.espera || [] })))
+    .filter((l) => !isNaN(Date.parse(l.desde))).sort((a, b) => Date.parse(a.desde) - Date.parse(b.desde)).slice(0, 30);
+  const linha = (l) => { const m = min(l.desde), orf = m >= limiar;
+    return `<div class="lv-linha${orf ? ' orf' : ''}"><b>${esc(l.recurso)}</b><span class="ref">${esc(l.spec)}</span><span class="tnum">${orf ? `${m} min sem RELEASE` : `${m} min`}</span>${l.espera.length ? `<span class="small muted">espera ${esc(l.espera.join(' › '))}</span>` : ''}</div>`; };
+  return `<div class="card locks-vivo"><p class="lbl">Locks ao vivo · espelho do Maestro · há ${idade === null ? '—' : idade < 1 ? 'menos de 1 min' : `${idade} min`}</p>
+    ${idade !== null && idade > 15 ? `<p class="small parado">espelho parado há ${idade} min: a máquina que orquestra pode estar desligada</p>` : ''}
+    ${locks.length ? locks.map(linha).join('') : '<p class="small muted">Nenhum lock aberto.</p>'}</div>`;
+}
+function renderExec() {
+  const cs = [...(S.plano.conjuntos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)), sp = new Map((S.plano.specs || []).map((s) => [s.id, s]));
+  if (!cs.length) { $('#execucao').innerHTML = ''; return; }
+  // Formato cliente esconde prompt, branch e PR por clareza; não é segredo (plano.json e o banco são legíveis por quem abre o artefato).
+  const dev = interno() && modo() !== 'cliente';
+  const st = new Map(cs.map((c) => [c.id, stConj(c)]));
+  const specs = S.plano.specs || [], feitosC = cs.filter((c) => st.get(c.id).s === 'concluido').length, feitosS = specs.filter((s) => stSpec(S.specDb[s.id]).s === 'concluido').length;
+  const presos = specs.filter((s) => travasDe(s).length).length, horasTot = cs.reduce((a, c) => a + (+c.estimativaHoras || 0), 0);
+  const fases = S.plano.fases.filter((f) => cs.some((c) => c.fase === f.id));
+  // Planta de execução: uma linha por conjunto, barra proporcional às horas estimadas, na ordem em que as sessões rodam
+  // (uma depois da outra, porque o schema é um arquivo só; com paraleloCom, a barra começa junto com o par).
+  const agenda = new Map(); let fimAnterior = 0;
+  for (const c of cs) { const dep = Math.max(0, ...(c.dependeDe || []).map((d) => (agenda.get(d) || {}).fim || 0));
+    const par = (c.paraleloCom || []).map((d) => agenda.get(d)).filter(Boolean); const ini = par.length ? Math.max(dep, Math.min(...par.map((x) => x.ini))) : Math.max(dep, fimAnterior);
+    const h = +c.estimativaHoras || 1; agenda.set(c.id, { ini, fim: ini + h }); fimAnterior = Math.max(fimAnterior, ini + h); }
+  const tot = Math.max(1, fimAnterior); const passo = tot > 600 ? 100 : tot > 240 ? 50 : 20; const pct = (v) => (v / tot) * 100;
+  const prog = (c) => { const x = st.get(c.id); if (x.s === 'concluido') return 100; const es = (c.specs || []).map((sid) => S.specDb[sid] || {});
+    return es.length ? es.reduce((a, e) => a + (e.etapa === 'merge' ? 1 : (ETAPAS.indexOf(e.etapa) + 1) / (ETAPAS.length + 1)), 0) / es.length * 100 : 0; };
+  const marcas = []; for (let v = 0; v <= tot; v += passo) marcas.push(v);
+  const planta = `<div class="planta">
+    <div class="pl-eixo" aria-hidden="true"><span class="lbl">Conjunto</span><div class="pl-reg">${marcas.map((v) => `<span style="left:${pct(v)}%">${v} h</span>`).join('')}</div></div>
+    ${fases.map((f) => { const cf = cs.filter((c) => c.fase === f.id); const a = Math.min(...cf.map((c) => agenda.get(c.id).ini)), b = Math.max(...cf.map((c) => agenda.get(c.id).fim)); const ff = fase(f.id);
+      return `<div class="pl-fase"><span class="pl-fn"><b>${faseCurta(f.id)}</b>${esc(f.nome)}</span><div class="pl-reg"><span class="pl-chave" style="left:${pct(a)}%;width:${pct(b - a)}%"><em>${b - a} h${ff.inicio && ff.fim ? ` · ${esc(fmtData(ff.inicio).slice(0, 5))} a ${esc(fmtData(ff.fim).slice(0, 5))}` : ''}</em></span></div></div>
+      ${cf.map((c) => { const g = agenda.get(c.id), x = st.get(c.id); return `<a class="pl-linha" href="#conj-${esc(c.id)}" style="--i:${cs.indexOf(c)}"><span class="pl-rot"><b>${esc(c.id)}</b><span>${esc(c.titulo)}<small>${(c.specs || []).length} ${(c.specs || []).length === 1 ? 'spec' : 'specs'} · ${(c.dependeDe || []).length ? `depois de ${esc(c.dependeDe.join(', '))}` : 'início'}</small></span></span>
+        <span class="pl-reg">${marcas.map((v) => `<i class="pl-grade" style="left:${pct(v)}%"></i>`).join('')}<span class="pl-barra ${esc(x.s)}" style="left:${pct(g.ini)}%;width:${pct(g.fim - g.ini)}%;--p:${prog(c).toFixed(0)}%" title="${esc(etapaTxt(x))}"><i></i><em>${esc(c.estimativaHoras || '')} h</em></span></span></a>`; }).join('')}`; }).join('')}
+    <div class="pl-leg"><span><i class="pl-amostra nao-iniciado"></i>Não iniciado</span><span><i class="pl-amostra em-andamento"></i>Em andamento (a cor avança com a etapa)</span><span><i class="pl-amostra concluido"></i>Concluído</span><span><i class="pl-amostra bloqueado"></i>Bloqueado</span><span class="muted">Largura proporcional às horas estimadas</span></div>
+  </div>`;
+  const bloco = (c) => { const x = st.get(c.id), es = (c.specs || []).map((sid) => S.specDb[sid] || {}); const nm = (c.specs || []).reduce((a, sid) => a + ((sp.get(sid) || {}).mudancas || []).length, 0);
+    const valSet = es.length && es.every((e) => e.validacao && e.validacao.resultado === 'aprovado' && valAtual(e)) ? '<span class="pill ok">Validado no simulador</span>' : es.some((e) => e.validacao && !valAtual(e)) ? '<span class="pill warn">Validação desatualizada</span>' : '';
+    const branches = es.filter((e) => e.branch);
+    return `<article class="conj" id="conj-${esc(c.id)}"><div class="conj-id">${esc(c.id)}<small>${faseNome(c.fase)}</small></div><div class="conj-corpo">
+      <div class="conj-top"><div style="min-width:0"><h3>${esc(c.titulo)}</h3><p class="conj-meta"><span><b>${(c.specs || []).length}</b> ${(c.specs || []).length === 1 ? 'spec' : 'specs'}</span><span><b>${nm}</b> mudanças</span>${c.estimativaHoras ? `<span><b>${esc(c.estimativaHoras)}</b> h de Claude</span>` : ''}<span>${(c.dependeDe || []).length ? `depois de <b>${esc(c.dependeDe.join(', '))}</b>` : 'começa a ordem'}</span></p></div>
+        <div class="conj-est"><span class="row">${valSet}${pillSt(x)}</span>${trilho(x.etapa || (x.s === 'concluido' ? 'merge' : null), x.s === 'bloqueado')}</div></div>
+      ${x.s === 'bloqueado' && x.motivos.length ? x.motivos.map((m) => `<p class="motivo">${ic('lock', 14)}${esc(m)}</p>`).join('') : ''}
+      <div class="specs">${(c.specs || []).map((sid) => linhaSpec(sp.get(sid) || { id: sid, titulo: sid, mudancas: [] }, S.specDb[sid] || {}, dev)).join('')}</div>
+      ${dev ? `<div class="conj-pe"><span class="small muted">${branches.length ? `${branches.length} de ${es.length} specs com branch` : 'Nenhuma branch ainda: o prompt abre a sessão deste conjunto.'}</span><span class="row"><button class="btn sm ghost" data-act="ver-prompt" data-c="${esc(c.id)}">Ver prompt</button><button class="btn sm primary" data-act="copiar-prompt" data-c="${esc(c.id)}">${ic('copy', 14)}Copiar prompt</button></span></div>` : ''}
+    </div></article>`; };
+  $('#execucao').innerHTML = `<div class="sec-head"><div><p class="kicker">Specs e execução</p><h2>Conjuntos na ordem de implementação</h2><p>Cada conjunto é uma sessão de desenvolvimento com um ou mais specs, construída depois dos conjuntos de que depende. Os specs moram no repositório do cliente; aqui fica o espelho para leitura.</p></div></div>
+    <div class="facts facts-4" style="margin-top:0">
+      <div class="fact"><p class="lbl">Conjuntos</p><p class="fv tnum">${feitosC} de ${cs.length}</p><p class="small muted">concluídos</p></div>
+      <div class="fact"><p class="lbl">Specs</p><p class="fv tnum">${feitosS} de ${specs.length}</p><p class="small muted">mergeados</p></div>
+      <div class="fact"><p class="lbl">Esperando resposta</p><p class="fv tnum">${presos}</p><p class="small muted">${presos === 1 ? 'spec segura' : 'specs seguras'} por pendência aberta</p></div>
+      ${horasTot ? `<div class="fact"><p class="lbl">Estimativa</p><p class="fv tnum">${horasTot} h</p><p class="small muted">horas de sessão do Claude, somando os conjuntos</p></div>` : ''}
+    </div>
+    ${cardLocks(dev)}
+    ${cardAuditoria(dev)}
+    <p class="lbl" style="margin:32px 0 12px">Planta de execução</p>${planta}
+    ${fases.map((f) => { const cf = cs.filter((c) => c.fase === f.id); const hf = cf.reduce((a, c) => a + (+c.estimativaHoras || 0), 0);
+      const sf = cf.flatMap((c) => c.specs || []); const okf = sf.filter((sid) => stSpec(S.specDb[sid]).s === 'concluido').length; const ff = fase(f.id);
+      return `<div class="fase-cab"><span class="fase-n">${faseCurta(f.id)}</span><div class="fase-tx"><h3>${esc(f.nome)}</h3><p class="conj-meta"><span><b>${cf.length}</b> ${cf.length === 1 ? 'conjunto' : 'conjuntos'}</span><span><b>${sf.length}</b> specs</span>${hf ? `<span><b>${hf}</b> h</span>` : ''}${ff.inicio && ff.fim ? `<span>${esc(fmtData(ff.inicio))} a ${esc(fmtData(ff.fim))}</span>` : ''}</p></div>
+        <div class="fase-prog"><span class="small muted tnum">${okf} de ${sf.length} specs mergeados</span><div class="bar ${okf === sf.length && sf.length ? 'ok' : ''}"><i style="width:${sf.length ? okf / sf.length * 100 : 0}%"></i></div></div></div>${cf.map(bloco).join('')}`; }).join('')}`;
+}
+// Markdown do espelho em HTML: títulos, listas, tabelas, código e ênfase. Tudo passa por esc antes de virar marcação.
+function mdHtml(md) {
+  const inl = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  const L = md.replace(/\r/g, '').split('\n'); const out = []; let i = 0;
+  while (i < L.length) {
+    const l = L[i];
+    if (/^```/.test(l)) { const b = []; i++; while (i < L.length && !/^```/.test(L[i])) b.push(L[i++]); i++; out.push(`<pre class="code">${esc(b.join('\n'))}</pre>`); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { const n = Math.min(3, h[1].length); out.push(`<h${n}>${inl(h[2])}</h${n}>`); i++; continue; }
+    if (/^\|/.test(l)) { const rows = []; while (i < L.length && /^\|/.test(L[i])) rows.push(L[i++]);
+      const cel = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim()); const corpo = rows.filter((r, k) => k !== 1 || !/^\|[\s:|-]+\|?$/.test(r));
+      const td = (c) => /^[\w@.-]+(\/[\w@.-]+)+(:[\d,-]+)?$/.test(c) ? `<code>${esc(c)}</code>` : inl(c); // caminho de arquivo sozinho na célula vira código
+      out.push(`<div class="tbl"><table><thead><tr>${cel(corpo[0]).map((c) => `<th>${inl(c)}</th>`).join('')}</tr></thead><tbody>${corpo.slice(1).map((r) => `<tr>${cel(r).map((c) => `<td>${td(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`); continue; }
+    if (/^\s*([-*]|\d+\.)\s+/.test(l)) { const ord = /^\s*\d+\./.test(l); const it = []; while (i < L.length && /^\s*([-*]|\d+\.)\s+/.test(L[i])) it.push(L[i++].replace(/^\s*([-*]|\d+\.)\s+/, ''));
+      out.push(`<${ord ? 'ol' : 'ul'}>${it.map((t) => `<li>${inl(t)}</li>`).join('')}</${ord ? 'ol' : 'ul'}>`); continue; }
+    if (!l.trim()) { i++; continue; }
+    const p = []; while (i < L.length && L[i].trim() && !/^(#{1,4}\s|\||```|\s*([-*]|\d+\.)\s)/.test(L[i])) p.push(L[i++]); out.push(`<p>${inl(p.join(' '))}</p>`);
+  }
+  return out.join('');
+}
+// Abre um arquivo do espelho (specs/<id>/) e confere o SHA-256 com o registrado no plano.json.
+// O hash do TextEncoder bate com o sha256 do arquivo porque o espelho é texto UTF-8 sem BOM, gravado pela session-plan.
+async function verSpec(sid, nomeArq) {
+  const s = (S.plano.specs || []).find((x) => x.id === sid); if (!s) return;
+  const itens = (s.arquivos && s.arquivos.itens) || []; const it = itens.find((x) => x.nome === nomeArq);
+  let txt = '', aviso = '';
+  try {
+    const r = await fetch(s.espelho + nomeArq, { cache: 'reload' }); if (!r.ok) throw new Error('http ' + r.status); txt = await r.text();
+    if (it && window.crypto && crypto.subtle) { const h = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt)))].map((b) => b.toString(16).padStart(2, '0')).join(''); if (h !== it.sha256) aviso = 'Espelho desatualizado: o arquivo publicado não bate com o registrado. A fonte é o repositório.'; }
+  } catch (e) { txt = ''; aviso = 'Arquivo do espelho não encontrado.'; }
+  const outros = itens.map((x) => `<button class="btn sm ${x.nome === nomeArq ? 'primary' : ''}" data-act="ver-espelho" data-s="${esc(sid)}" data-f="${esc(x.nome)}">${esc(x.nome)}</button>`).join('');
+  modal(`<h3>${esc(s.id)} · ${esc(s.titulo)}</h3><p class="small muted">Fonte: <span class="ref">${esc(s.arquivos ? s.arquivos.repo : '')}${esc(nomeArq)}</span>${s.arquivos && s.arquivos.commit ? ` no commit <span class="ref">${esc(String(s.arquivos.commit).slice(0, 7))}</span>` : ''}</p>${aviso ? `<div class="ready block">${ic('lock')}${esc(aviso)}</div>` : ''}<div class="row">${outros}</div>${txt ? `<div class="md">${mdHtml(txt.replace(/^```json ficha[\s\S]*?```\s*/, ''))}</div>` : ''}<div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Fechar</button></div>`);
+}
+// Copia o roteiro da entrevista de pendências com o link deste artefato.
+async function entrevista() {
+  let txt;
+  try { const r = await fetch('entrevista-pendencias.md', { cache: 'reload' }); if (!r.ok) throw new Error('http ' + r.status); txt = (await r.text()).split('{{ARTEFATO}}').join(linkBase()); } catch (e) { toast('Não foi possível carregar o roteiro da entrevista.'); return; }
+  try { await navigator.clipboard.writeText(txt); toast('Prompt copiado: cole numa sessão do Claude Code'); } catch (e) { copiar(txt); }
+}
+
+// ============================================================ HORAS
+function resumoHoras() {
+  const hs = horasDo('ativa'); const porFase = {}; for (const f of S.plano.fases) porFase[f.id] = hs.filter((h) => h.fase === f.id).reduce((a, h) => a + (+h.minutos || 0), 0);
+  return { total: hs.reduce((a, h) => a + (+h.minutos || 0), 0), semFase: hs.filter((h) => !h.fase).reduce((a, h) => a + (+h.minutos || 0), 0), porFase };
+}
+// Com as horas públicas ligadas, a visita de um editor mantém o resumo em dia (só grava quando mudou).
+function sincronizaResumoHoras() {
+  if (!interno() || !horasPub() || !podeEscrever() || !S.horasCarregadas) return;
+  const r = resumoHoras(); const atual = S.cfg && S.cfg.horasResumo; const sem = (x) => JSON.stringify({ total: x.total, semFase: x.semFase, porFase: x.porFase });
+  if (!atual || sem(atual) !== sem(r)) salvarCfg({ horasResumo: { ...r, at: new Date().toISOString() } });
+}
+function renderHorasPublicas() {
+  const r = S.cfg.horasResumo; const prevA = S.plano.fases.reduce((a, f) => a + ativasPrev(fase(f.id)), 0), prevS = S.plano.fases.reduce((a, f) => a + (+fase(f.id).horasPrevistas || 0), 0);
+  const porFase = S.plano.fases.map((f0, i) => { const f = fase(f0.id); return { f, i, m: (r.porFase || {})[f.id] || 0, ref: ativasPrev(f) || +f.horasPrevistas || 0 }; });
+  const mx = Math.max(1, ...porFase.map((x) => Math.max(x.m / 60, x.ref)));
+  $('#horas').innerHTML = `<div class="sec-head"><div><p class="kicker">Horas ativas</p><h2>Horas ativas do projeto</h2><p>Tempo ativo de quem conduz as sessões do Claude Code (escrever, revisar, testar e reunir), contra o previsto de cada fase.${r.at ? ` Atualizado em ${esc(quando(r.at))}.` : ''}</p></div></div>
+    <div class="stats" style="margin-top:0"><div class="stat"><div class="v">${horas(r.total || 0)}<small>h</small></div><div class="k">Horas ativas</div></div>${prevA ? `<div class="stat"><div class="v">${prevA}<small>h</small></div><div class="k">Ativas previstas</div><div class="meter"><i style="width:${Math.min(100, (r.total || 0) / 60 / prevA * 100)}%"></i></div></div>` : ''}${prevS ? `<div class="stat"><div class="v">${prevS}<small>h</small></div><div class="k">Sessão do Claude prevista</div></div>` : ''}</div>
+    <div class="card" style="padding:18px;margin-top:16px"><p class="lbl" style="margin-bottom:12px">Por fase · ativas e previstas</p><div class="bars">${porFase.map((x) => `<div class="brow"><span>${faseCurta(x.f.id)} · ${esc(x.f.nome)}</span><div class="bt"><i class="${x.ref && x.m / 60 > x.ref ? 'over' : ''}" style="width:${x.m / 60 / mx * 100}%"></i></div><span class="bv">${horas(x.m)}${x.ref ? ` / ${x.ref}` : ''} h</span></div>`).join('')}</div></div>`;
+}
+// Um bloco por tipo: previsto x real por fase, total e desvio. Com mais de uma pessoa, a quebra por pessoa aparece no
+// bloco e em cada fase; o previsto por pessoa só existe quando fases[] ou conjuntos[] dizem o responsavel.
+// Horas de execução contam para a pessoa dona da sessão que as gerou (depois de uma passagem, para quem assumiu).
+const somaMin = (xs) => xs.reduce((a, h) => a + (+h.minutos || 0), 0);
+// Fase em jogo: já tem specs nos conjuntos ou horas registradas. O previsto e o desvio contam só essas; uma fase
+// planejada sem spec ainda (F5, F6 no início da execução) não pode aparecer como horas "economizadas".
+const emJogo = (f) => (S.plano.conjuntos || []).some((c) => c.fase === f.id && (c.specs || []).length) || (S.horas || []).some((h) => h.fase === f.id);
+// Barra de uma fase contra o PRÓPRIO previsto: cheia é 100%. Passou do previsto, a parte que excede fica vermelha
+// depois de uma marca no ponto do previsto. Sem previsto, a barra é relativa à maior fase sem previsto (mxSem, em h).
+function barraFase(m, prev, mxSem) {
+  const h = m / 60;
+  if (!prev) return `<div class="bt sem"><i style="width:${Math.min(100, h / Math.max(mxSem, 0.1) * 100)}%"></i></div>`;
+  const r = h / prev, p = 100 / Math.max(r, 1);
+  return `<div class="bt" title="${esc(horas(m))} h de ${esc(num(prev))} h previstas (${Math.round(r * 100)}%)"><i style="width:${Math.min(100, r * 100)}%"></i>${r > 1 ? `<i class="over" style="left:${p}%;width:${100 - p}%"></i><b class="prev" style="left:${p}%"></b>` : ''}</div>`;
+}
+const rotuloFase = (m, prev) => `${horas(m)}${prev ? ` / ${num(prev)} h <small>${Math.round(m / 60 / prev * 100)}%</small>` : ' h'}`;
+const tok = (n) => (n >= 1e6 ? `${num(n / 1e6)} mi` : n >= 1e3 ? `${num(n / 1e3)} mil` : String(n || 0));
+// Uma linha por sessão do Claude Code (os documentos de horas são por sessão, dia e tipo): o id inteiro é o nome do
+// transcript em ~/.claude/projects/<pasta>/<id>.jsonl, por isso aparece completo e copiável.
+function tabelaSessoes(hs) {
+  const g = new Map();
+  for (const h of hs) { const k = h.sessao || h.resumo || '?'; if (!g.has(k)) g.set(k, []); g.get(k).push(h); }
+  const linhas = [...g].map(([sessao, d]) => {
+    const datas = d.map((h) => h.data).filter(Boolean).sort(), ex = d.filter((h) => tipoH(h) === 'execucao'), comTk = ex.filter((h) => h.tokens);
+    const tk = comTk.reduce((a, h) => { for (const k of ['entrada', 'saida', 'cacheCriacao', 'cacheLeitura', 'total']) a[k] += +h.tokens[k] || 0; return a; }, { entrada: 0, saida: 0, cacheCriacao: 0, cacheLeitura: 0, total: 0 });
+    const ult = d.find((h) => h.data === datas[datas.length - 1]) || d[0];
+    return { sessao, d, ult, ini: datas[0], fim: datas[datas.length - 1], ativa: somaMin(d.filter((h) => tipoH(h) === 'ativa')), exec: somaMin(ex), tk: comTk.length ? tk : null,
+      fases: [...new Set(d.map((h) => h.fase).filter(Boolean))], transcript: (d.find((h) => h.transcript) || {}).transcript, branch: (d.find((h) => h.branch) || {}).branch };
+  }).sort((a, b) => String(b.fim).localeCompare(String(a.fim)) || b.exec + b.ativa - a.exec - a.ativa);
+  const uuid = (s) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(s);
+  return `<div class="card tbl hsess" style="margin-top:16px"><table class="t"><thead><tr><th>Sessão</th><th>Fase</th><th>Dias</th><th class="r">Ativas</th><th class="r">Execução</th><th class="r" title="Entrada, saída, cache criado e cache lido, principal e subagentes. O cache lido domina o total.">Tokens</th></tr></thead><tbody>${linhas.map((x) => `<tr>
+    <td><b>${esc(x.ult.resumo || x.sessao)}</b>${x.branch ? ` <span class="ref">${esc(x.branch)}</span>` : ''}<br><button class="sid" data-act="copiar-sessao" data-s="${esc(x.sessao)}" title="Copiar o session id">${ic('copy', 12)}${esc(x.sessao)}</button>${uuid(x.sessao) ? `<span class="small muted mono hpath">${esc(x.transcript || `~/.claude/projects/*/${x.sessao}.jsonl`)}</span>` : ''}${x.ult.pessoa ? `<span class="small muted"> · ${esc(x.ult.pessoa)}</span>` : ''}</td>
+    <td>${x.fases.length ? x.fases.map((f) => esc(faseCurta(f))).join(', ') : '<span class="muted">-</span>'}</td>
+    <td class="tnum">${esc(fmtData(x.ini).slice(0, 5))}${x.fim !== x.ini ? ` a ${esc(fmtData(x.fim).slice(0, 5))}` : ''}</td>
+    <td class="r tnum">${x.d.some((h) => tipoH(h) === 'ativa') ? horas(x.ativa) + ' h' : '<span class="muted">-</span>'}</td>
+    <td class="r tnum">${x.d.some((h) => tipoH(h) === 'execucao') ? horas(x.exec) + ' h' : '<span class="muted">-</span>'}</td>
+    <td class="r tnum">${x.tk ? `<span title="entrada ${tok(x.tk.entrada)} · saída ${tok(x.tk.saida)} · cache criado ${tok(x.tk.cacheCriacao)} · cache lido ${tok(x.tk.cacheLeitura)}">${tok(x.tk.total)}</span>` : '<span class="muted">-</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function blocoHoras(tipo) {
+  const hs = horasDo(tipo), soma = somaMin;
+  const prevF = (f) => (tipo === 'ativa' ? ativasPrev(f) : +f.horasPrevistas || 0);
+  const fs = S.plano.fases.map((f0) => fase(f0.id)), jogo = fs.filter(emJogo), prev = jogo.reduce((a, f) => a + prevF(f), 0), prevPlano = fs.reduce((a, f) => a + prevF(f), 0), tot = soma(hs);
+  const pessoas = [...new Set(hs.map((h) => h.pessoa || 'Sem nome'))], multi = pessoas.length > 1;
+  const prevP = {};
+  if (tipo === 'ativa') for (const f of fs) { if (f.responsavel) prevP[f.responsavel] = (prevP[f.responsavel] || 0) + prevF(f); }
+  else for (const c of S.plano.conjuntos || []) { const p = c.responsavel || (fase(c.fase) || {}).responsavel; if (p) prevP[p] = (prevP[p] || 0) + (+c.estimativaHoras || 0); }
+  const temPrevP = Object.keys(prevP).length > 0;
+  const semFase = soma(hs.filter((h) => !h.fase)), mxSem = Math.max(semFase / 60, ...fs.filter((f) => !prevF(f)).map((f) => soma(hs.filter((h) => h.fase === f.id)) / 60));
+  const naFase = soma(hs.filter((h) => h.fase)), desvio = prev ? naFase / 60 - prev : 0;
+  const quebra = (xs) => multi ? `<p class="small muted hpess">${pessoas.map((p) => `${esc(p)} ${horas(soma(xs.filter((h) => (h.pessoa || 'Sem nome') === p)))} h`).join(' · ')}</p>` : '';
+  const titulo = tipo === 'ativa' ? ['Horas ativas', 'Atenção de quem conduz: escrever, revisar, testar no navegador, deploy e reuniões. Medidas pelo horas-ativas.mjs.']
+    : ['Horas de execução', 'Trabalho do Claude: sessões de build, forks e sessões ligadas, com subagentes. Medidas pelo horas-ativas.mjs --execucao.'];
+  return `<div class="card hbloco" style="padding:18px" data-tipo="${tipo}"><p class="lbl">${titulo[0]}</p><p class="small muted" style="margin:4px 0 12px">${titulo[1]}</p>
+    <div class="hnum"><div><b>${horas(tot)} h</b><span>real</span></div><div><b>${prev ? num(prev) + ' h' : '-'}</b><span>previsto em jogo</span></div><div><b class="${desvio > 0 ? 'over' : ''}">${prev ? (desvio > 0 ? '+' : '') + num(desvio) + ' h' : '-'}</b><span>${prev ? `desvio · ${Math.round(naFase / 60 / prev * 100)}%` : 'desvio'}</span></div></div>
+    ${prevPlano ? `<p class="small muted" style="margin-top:8px">Em jogo: fases com specs ou horas registradas${jogo.length ? ` (${jogo.map((f) => esc(faseCurta(f.id))).join(', ')})` : ''}; o desvio compara só as horas delas.${prevPlano !== prev ? ` Plano inteiro: <b>${num(prevPlano)} h</b>.` : ''}${semFase ? ` ${horas(semFase)} h sem fase ficam fora do desvio.` : ''}</p>` : ''}
+    ${hs.length || prev ? `<div class="bars" style="margin-top:12px">${fs.map((f) => { const xs = hs.filter((h) => h.fase === f.id), m = soma(xs), fo = !emJogo(f); return `<div class="brow${fo ? ' fora' : ''}"><span>${faseCurta(f.id)} · ${esc(f.nome)}</span>${fo ? '<span class="small muted">sem specs ainda</span>' : barraFase(m, prevF(f), mxSem)}<span class="bv">${fo ? (prevF(f) ? `${num(prevF(f))} h prev.` : '-') : rotuloFase(m, prevF(f))}</span></div>${xs.length ? quebra(xs) : ''}`; }).join('')}${semFase ? `<div class="brow"><span class="muted">Sem fase</span>${barraFase(semFase, 0, mxSem)}<span class="bv">${horas(semFase)} h</span></div>${quebra(hs.filter((h) => !h.fase))}` : ''}</div>` : ''}
+    ${multi ? `<p class="lbl" style="margin:16px 0 8px">Por pessoa</p><div class="bars">${pessoas.map((p) => { const m = soma(hs.filter((h) => (h.pessoa || 'Sem nome') === p)); return `<div class="brow"><span>${esc(p)}</span><div class="bt"><i style="width:${m / Math.max(1, tot) * 100}%"></i></div><span class="bv">${horas(m)}${temPrevP && prevP[p] ? ` / ${num(prevP[p])}` : ''} h</span></div>`; }).join('')}</div>${temPrevP ? '' : '<p class="small muted" style="margin-top:6px">Sem responsável no plano: o previsto fica só no total.</p>'}` : ''}
+    ${hs.length ? '' : `<div class="empty" style="margin-top:12px"><b>Nada medido ainda</b>${tipo === 'ativa' ? 'O session-build registra as horas ativas de cada sessão ligada a este plano.' : 'O session-build registra as horas de execução de cada sessão (horas-ativas.mjs --execucao).'}</div>`}</div>`;
+}
+function renderHorasDuas() {
+  $('#horas').innerHTML = `<div class="sec-head"><div><p class="kicker">Horas · interno</p><h2>Horas ativas e de execução</h2><p>Duas medidas, cada uma contra o seu previsto: a atenção de quem conduz (horas ativas) e o trabalho do Claude (horas de execução). Uma não substitui a outra.</p></div></div>
+    <div class="grid2">${blocoHoras('ativa')}${blocoHoras('execucao')}</div>
+    ${S.horas.length ? tabelaSessoes(S.horas) : ''}`;
+}
+function renderHoras() {
+  if (!interno()) { if (veHoras()) renderHorasPublicas(); else $('#horas').innerHTML = ''; return; }
+  sincronizaResumoHoras();
+  if (doisBlocos()) return renderHorasDuas();
+  const tot = S.horas.reduce((a, h) => a + (+h.minutos || 0), 0); const prev = S.plano.fases.reduce((a, f) => a + (ativasPrev(fase(f.id)) || +fase(f.id).horasPrevistas || 0), 0);
+  const porFase = S.plano.fases.map((f0, i) => { const f = fase(f0.id); return { f, i, m: S.horas.filter((h) => h.fase === f.id).reduce((a, h) => a + (+h.minutos || 0), 0) }; });
+  const semFase = S.horas.filter((h) => !h.fase).reduce((a, h) => a + (+h.minutos || 0), 0);
+  const pessoas = [...new Set(S.horas.map((h) => h.pessoa || 'Sem nome'))].map((p) => ({ p, m: S.horas.filter((h) => (h.pessoa || 'Sem nome') === p).reduce((a, h) => a + (+h.minutos || 0), 0) }));
+  const ref = (f) => ativasPrev(f) || +f.horasPrevistas || 0;
+  const mxSem = Math.max(semFase / 60, ...porFase.filter((x) => !ref(x.f)).map((x) => x.m / 60));
+  const nSessoes = new Set(S.horas.map((h) => h.sessao || h.resumo)).size;
+  $('#horas').innerHTML = `<div class="sec-head"><div><p class="kicker">Horas ativas · interno</p><h2>Custo do projeto em horas ativas</h2><p>Só o tempo ativo de quem conduz as sessões do Claude Code: escrever, revisar, testar e reunir. Agente rodando sozinho não conta. As sessões ligadas ao projeto são sincronizadas por fase.</p></div></div>
+    <div class="stats" style="margin-top:0"><div class="stat"><div class="v">${horas(tot)}<small>h</small></div><div class="k">Horas ativas</div></div><div class="stat"><div class="v">${prev || '-'}<small>${prev ? 'h' : ''}</small></div><div class="k">Previstas</div>${prev ? `<div class="meter"><i style="width:${Math.min(100, tot / 60 / prev * 100)}%"></i></div>` : ''}</div>
+      <div class="stat"><div class="v">${nSessoes}</div><div class="k">Sessões</div></div><div class="stat"><div class="v">${pessoas.length}</div><div class="k">Pessoas</div></div></div>
+    ${S.horas.length ? `<div class="grid2" style="margin-top:16px"><div class="card" style="padding:18px"><p class="lbl" style="margin-bottom:12px">Por fase · ativas e previstas</p><div class="bars">${porFase.map((x) => `<div class="brow"><span>${faseCurta(x.f.id)} · ${esc(x.f.nome)}</span>${barraFase(x.m, ref(x.f), mxSem)}<span class="bv">${rotuloFase(x.m, ref(x.f))}</span></div>`).join('')}${semFase ? `<div class="brow"><span class="muted">Sem fase</span>${barraFase(semFase, 0, mxSem)}<span class="bv">${horas(semFase)} h</span></div>` : ''}</div></div>
+      <div class="card" style="padding:18px"><p class="lbl" style="margin-bottom:12px">Por pessoa</p><div class="bars">${pessoas.map((x) => `<div class="brow"><span>${esc(x.p)}</span><div class="bt"><i style="width:${x.m / Math.max(1, tot) * 100}%"></i></div><span class="bv">${horas(x.m)} h</span></div>`).join('')}</div></div></div>
+      ${tabelaSessoes(S.horas)}`
+    : `<div class="empty" style="margin-top:16px"><b>Nenhuma sessão sincronizada ainda</b>O /session-build no modo projetos registra as horas ativas de cada sessão ligada a este plano, por fase e por pessoa.</div>`}`;
+}
+
+// ============================================================ HISTÓRICO
+function renderHist() {
+  $('#historico').innerHTML = `<div class="sec-head"><div><p class="kicker">Histórico</p><h2>Mudanças de status e pareceres</h2></div></div>
+    <div class="card">${S.hist.length ? S.hist.map((h) => `<div class="hist"><span class="small muted tnum">${esc(quando(h.at))}</span><div><span class="pill ${statusDe(h.status).c}"><span class="dot"></span>${esc(statusDe(h.status).n)}</span> <span class="small">por ${esc(nome(h.by))}</span>${h.nota ? `<p class="small" style="margin-top:6px">${esc(h.nota)}</p>` : ''}</div></div>`).join('')
+      : `<div style="padding:20px"><div class="empty"><b>Nada ainda</b>${S.db ? 'Cada mudança de status entra aqui com o parecer.' : 'O histórico aparece para quem abre o plano no Claude.'}</div></div>`}</div>`;
+  const p = S.plano.projeto, st = statusDe(S.estado && S.estado.status), f = fluxo(); const logo = (document.querySelector('.masthead svg.logo') || {}).outerHTML || '';
+  const cel = (l, v) => `<div><span class="lb">${l}</span><span class="vl">${v}</span></div>`;
+  $('#rodape').innerHTML = `<div class="carimbo"><div class="cb-logo">${logo}</div>
+      ${cel('Cliente', esc(p.cliente))}${cel('Projeto', esc(p.nome))}${cel('Código', esc(p.codigo))}${cel('Revisão', `${esc(p.versao)} · ${esc(p.data)}`)}
+      ${cel('Responsável', `${esc(p.responsavel)}, NOVARC`)}${cel('Aprovação', `${esc(f.aprovadorInterno)}${f.aprovacao.includes('cliente') ? ` e ${esc(f.aprovadorCliente)}` : ''}`)}${cel('Desenvolvimento', f.execucao === 'cliente' ? esc(f.timeCliente || 'Time do cliente') : 'NOVARC')}${cel('Situação', `${esc(st.n)}${S.estado && S.estado.at ? ` · ${esc(quando(S.estado.at))}` : ''}`)}</div>
+    <div class="nota"><span>NOVARC · planejamento ${esc(p.codigo)}</span><span>${esc(p.repositorio)}</span></div>`;
+}
+let rascunhos = {};
+function renderAll() {
+  if (!S.plano) return;
+  for (const el of document.querySelectorAll('[id^="nota-txt-"], [id^="nota-ref-"]')) if (el.value) rascunhos[el.id] = el.value;
+  renderToc(); renderHero(); renderStatus(); renderSims(); renderFases(); renderAb(); renderBib(); renderExec(); renderHoras(); renderHist();
+  for (const [k] of SECOES) { const el = document.getElementById(k); el.hidden = !visivel(k) || (k === 'horas' && !veHoras()); }
+  if (S.bench) renderBench();
+  for (const [id, v] of Object.entries(rascunhos)) { const el = document.getElementById(id); if (el && !el.value) el.value = v; }
+}
+
+// ============================================================ BANCADA DO SIMULADOR
+// O simulador é uma página do próprio artefato (mesma origem): a bancada lê a tela atual do estado do simulador,
+// percebe cliques nos marcadores e leva até o marcador escolhido na lista.
+// O simulador guarda a tela em state.screen (const global do script dele); lido por eval na mesma origem.
+// Com superfícies (simuladores[].superficies: site do cliente, painel do operador, WhatsApp, e-mail), guarda também
+// state.telas = { superfície: tela } das superfícies visíveis agora; a bancada lista as mudanças de todas elas.
+function telasAtuais() {
+  try {
+    const w = $('#bench-frame').contentWindow;
+    const j = w.eval('typeof state === "object" && state && state.telas && typeof state.telas === "object" ? JSON.stringify(state.telas) : null');
+    if (j) { const r = {}; for (const [k, v] of Object.entries(JSON.parse(j))) if (typeof v === 'string' && v) r[k] = v; if (Object.keys(r).length) return r; }
+    const s = w.eval('state.screen'); return s ? { '': s } : null;
+  } catch (e) { return null; }
+}
+function telaAtual() { const t = telasAtuais(); return t ? Object.values(t)[0] || null : null; }
+const versaoNome = (v) => v === 'hoje' ? 'Hoje' : faseNome(v);
+// Mensagens do simulador na versão escolhida: nova só aparece quando alguma mudança dela já existe na versão.
+function mensagensDo(simId) {
+  return (S.plano.mensagens || []).filter((x) => x.sim === simId && (x.origem !== 'nova' || (() => { const ms = (x.mudancas || []).map((id) => S.plano.mudancas.find((m) => m.id === id)).filter(Boolean); return ms.length ? ms.some(naVersao) : versaoN() === Infinity; })()));
+}
+// Abre a prévia da mensagem dentro do simulador: go(tela, { mensagem }) é contrato de quem declara mensagens.
+function irMensagem(id) {
+  const x = (S.plano.mensagens || []).find((m) => m.id === id); if (!x) return;
+  if (!S.bench || S.bench.sim !== x.sim) { abrirBench(x.sim); S.bench.msg = id; return; }
+  try { $('#bench-frame').contentWindow.eval(`go(${JSON.stringify(x.tela)}, ${JSON.stringify({ mensagem: x.id })})`); } catch (e) { toast('Não foi possível abrir a mensagem no simulador.'); }
+}
+const cardMsg = (x, chips) => `<div class="bx" id="bmsg-${esc(x.id)}"><div class="row">${ORIG_MSG[x.origem] || ''}<b>${esc(x.titulo)}</b></div>
+  <p class="small muted">${[x.gatilho && 'Quando: ' + x.gatilho, x.para && 'Para: ' + x.para, x.remetente && 'Envio: ' + (REMET[x.remetente] || x.remetente)].filter(Boolean).map(esc).join(' · ')}</p>
+  ${x.resumo ? `<p>${esc(x.resumo)}</p>` : ''}${(x.mudancas || []).length ? `<div class="mini"><span class="lbl">Mudanças</span>${chips(x.mudancas)}</div>` : ''}
+  <div class="row"><button class="btn sm" data-act="bench-msg" data-id="${esc(x.id)}">${ic('eye', 14)}Ver a mensagem</button></div></div>`;
+// Painel de planejamento da bancada: mudanças da tela, todas, decisões e pendências (as ligadas à tela atual primeiro) e o detalhe.
+function renderBench() {
+  setTimeout(() => publicaPresenca(PRES.ultimo), 0);
+  const b = S.bench; const sim = S.plano.simuladores.find((s) => s.id === b.sim); const ts = telasAtuais(); if (ts) b.telas = ts; b.tela = Object.values(b.telas || {})[0] || b.tela; b.chave = JSON.stringify(b.telas || null);
+  const sups = sim.superficies || [], multi = sups.length > 0 && b.telas && !('' in b.telas), vis = Object.values(b.telas || {});
+  const todas = S.plano.mudancas.filter((m) => m.sim === b.sim && naVersao(m)); const daTela = todas.filter((m) => vis.includes(m.telaId) || m.telaId === '*');
+  const nomeT = (id) => { const t = (sim.telas || []).find((x) => x.id === id); return t ? t.nome : id || 'inicial'; }; const nomeSup = (id) => (sups.find((x) => x.id === id) || {}).nome || id;
+  const idsTela = new Set(daTela.map((m) => m.id));
+  // Decisões e pendências da bancada são só as ligadas a mudanças deste simulador (com um simulador só, todas).
+  const idsSim = new Set(S.plano.mudancas.filter((m) => m.sim === b.sim).map((m) => m.id));
+  const doSim = (x) => S.plano.simuladores.length === 1 || (x.mudancas || []).some((id) => idsSim.has(id));
+  const decsSim = S.plano.decisoes.filter(doSim), pendsSim = S.plano.pendencias.filter(doSim);
+  const abertas = pendsSim.filter(pendAberta).length;
+  const vids = S.videos.filter((v) => v.sim === b.sim || (S.plano.simuladores.length === 1 && !v.sim));
+  const temMsg = (S.plano.mensagens || []).some((x) => x.sim === b.sim), msgs = temMsg ? mensagensDo(b.sim) : [];
+  const tk = ticketSel();
+  $('#bench-tabs').innerHTML = [...(tk ? [['tk', 'Ticket', '']] : []), ['tela', 'Tela', daTela.length], ['todas', 'Mudanças', todas.length], ['dec', 'Decisões', decsSim.length], ['pend', 'Pendências', abertas], ...(temMsg ? [['msg', 'Mensagens', msgs.length]] : []), ['vid', 'Vídeos', vids.length], ['nota', 'Detalhe', '']]
+    .map(([k, l, n]) => `<button data-act="bench-tab" data-v="${k}" aria-pressed="${b.tab === k}">${l}${n !== '' ? ` <span class="bt-n">${n}</span>` : ''}</button>`).join('');
+  $('#bench-screen').innerHTML = `<span>${b.versao === 'all' ? '' : `versão <b>${esc(versaoNome(b.versao))}</b> · `}${multi ? Object.entries(b.telas).map(([s, t]) => `${esc(nomeSup(s))} <b>${esc(nomeT(t))}</b>`).join(' · ') : `tela <b>${esc(nomeT(b.tela))}</b>`}</span><span>${daTela.filter((m) => sitMud(m) === 'bloqueada').length} seguras · ${S.notas.filter((n) => idsTela.has(n.mudanca)).length} notas</span>`;
+  const linha = (m) => `<div class="bm ${b.sel === m.id ? 'sel' : ''}" data-act="bench-sel" data-id="${esc(m.id)}"><span class="nm">${esc(m.n)}</span><div style="min-width:0"><div class="tt">${esc(m.titulo)}</div><div class="mt">${esc(m.tipo.toLowerCase())}${m.tecnica ? ' · técnica' : ''} · ${esc(faseNome(m.fase))}${b.tab === 'todas' ? ` · ${esc(m.tela)}` : ''}</div><div class="flags" style="margin-top:4px">${flags(m)}</div></div></div>`;
+  const chipsB = (ids) => ids.map((id) => todas.find((m) => m.id === id)).filter(Boolean).map((m) => `<button data-act="bench-sel" data-id="${esc(m.id)}" title="${esc(m.tela)}" class="${idsTela.has(m.id) ? 'here' : ''}"><span class="nm">${esc(m.n)}</span><span>${esc(m.titulo)}</span></button>`).join('');
+  const ordena = (xs) => [...xs].sort((x, y) => (y.mudancas || []).some((id) => idsTela.has(id)) - (x.mudancas || []).some((id) => idsTela.has(id)));
+  const marcaTela = (x) => (x.mudancas || []).some((id) => idsTela.has(id)) ? '<span class="chip" style="color:var(--signal-600);border-color:var(--signal-100)">nesta tela</span>' : '';
+  let html;
+  const f = b.f; const lig = f.lig && (f.lig.k === 'd' ? deci(f.lig.id) : pend(f.lig.id));
+  if (b.tab === 'tk' && tk) { const DEC = { entra: 'Entra neste plano', fora: 'Fica de fora', decidir: 'A decidir' }; const tm = tk.mudancas || [];
+    html = `<div class="bfil"><div class="tk-card"><div class="row"><span class="chip">${tk.tipo === 'bug' ? 'Bug' : 'Melhoria'}</span>${tk.severidade ? `<span class="chip">Severidade ${esc(tk.severidade)}</span>` : ''}<span class="chip">${esc(DEC[tk.decisao] || tk.decisao || '')}</span></div>
+      <h4>${esc(tk.titulo)}</h4><p class="small muted">${esc(tk.id)}${tk.data ? ` · aberto em ${esc(tk.data)}` : ''}${tk.origem ? ` · ${esc(tk.origem)}` : ''}</p>
+      <div><span class="lbl">O que o ticket pede</span><p class="q">${esc(tk.descricao)}</p></div>
+      ${tk.achado ? `<div><span class="lbl">O que a investigação achou</span><p>${esc(tk.achado)}</p></div>` : ''}
+      ${tk.solucao ? `<div><span class="lbl">Solução</span><p>${esc(tk.solucao)}</p></div>` : ''}
+      ${tm.length ? `<div class="mini"><span class="lbl">Entregue por</span>${chipsB(tm)}</div>` : '<p class="small muted">Ainda sem implementação: decisão pendente.</p>'}</div></div>`; }
+  else if (b.tab === 'tela' && multi) { const gerais = daTela.filter((m) => m.telaId === '*' && !m.tecnica), tecnicas = daTela.filter((m) => m.tecnica);
+    html = Object.entries(b.telas).map(([s, t]) => { const ms = daTela.filter((m) => m.telaId === t); return `<div class="bsup"><span>${esc(nomeSup(s))}</span><span>${esc(nomeT(t))} · ${ms.length}</span></div>${ms.map(linha).join('') || '<p class="bdet muted">Nenhuma mudança marcada nesta tela.</p>'}`; }).join('')
+      + (gerais.length ? `<div class="bsup"><span>Em todas as telas</span><span>${gerais.length}</span></div>${gerais.map(linha).join('')}` : '')
+      + (tecnicas.length ? `<div class="bsup"><span>Trabalho técnico, sem tela</span><span>${tecnicas.length}</span></div>${tecnicas.map(linha).join('')}` : ''); }
+  else if (b.tab === 'tela') html = daTela.map(linha).join('') || '<p class="bdet muted">Nenhuma mudança marcada nesta tela.</p>';
+  else if (b.tab === 'msg') html = msgs.length ? Object.entries(CANAL).filter(([k]) => msgs.some((x) => x.canal === k)).map(([k, l]) => { const xs = msgs.filter((x) => x.canal === k); return `<div class="bsup"><span>${esc(l)}</span><span>${xs.length}</span></div>${xs.map((x) => cardMsg(x, chipsB)).join('')}`; }).join('')
+    : `<p class="bdet muted">${b.versao === 'all' ? 'Nenhuma mensagem neste simulador.' : 'Nenhuma mensagem nesta versão.'}</p>`;
+  else if (b.tab === 'todas') { const ms = filtraMud(todas, f); const cont = (k) => todas.filter((m) => sitMud(m) === k).length;
+    html = `<div class="bfil"><div class="health">${Object.entries(SIT).map(([k, [, c]]) => `<i style="flex:${cont(k)};background:${c}"></i>`).join('')}</div>
+      <div class="legend">${Object.entries(SIT).map(([k, [l, c]]) => `<button data-act="bf" data-k="sit" data-v="${k}" aria-pressed="${f.sit === k}"><i style="background:${c}"></i>${l} <b>${cont(k)}</b></button>`).join('')}</div>
+      <label class="srch">${ic('search')}<input type="text" id="bq" placeholder="Buscar por título, tela ou id" value="${esc(f.q)}" aria-label="Buscar mudança"></label>
+      <div class="row"><select class="fsel" id="bfase" aria-label="Fase"><option value="all">Todas as fases</option>${fasesDoSim(b.sim).map((x) => `<option value="${esc(x.id)}" ${f.fase === x.id ? 'selected' : ''}>${faseNome(x.id)}: ${esc(x.nome)}</option>`).join('')}</select>
+        <select class="fsel" id="bsit" aria-label="Situação">${Object.entries(SITF).map(([k, l]) => `<option value="${k}" ${f.sit === k ? 'selected' : ''}>${l}</option>`).join('')}</select>${(S.plano.revisoes || []).length ? `<select class="fsel" id="brev" aria-label="Revisão"><option value="all">Todas as revisões</option>${S.plano.revisoes.map((r) => `<option value="${esc(r.id)}" ${f.rev === r.id ? 'selected' : ''}>${esc(r.titulo)}${r.versao ? ' · ' + esc(r.versao) : ''} (${todas.filter((m) => (m.revisoes || []).includes(r.id)).length})</option>`).join('')}</select>` : ''}</div>
+      ${lig ? `<div><button class="fchip" data-act="bf" data-k="lig" data-v="">${f.lig.k === 'd' ? 'Decisão' : 'Pendência'}: ${esc(lig.titulo)}<span aria-label="Remover">×</span></button></div>` : ''}
+      <p class="small muted tnum">${ms.length} de ${todas.length}${f.q || f.fase !== 'all' || f.sit !== 'all' || (f.rev && f.rev !== 'all') || f.lig ? ' · <button class="lnk" data-act="bf" data-k="tudo">limpar filtros</button>' : ''}</p></div>` + (ms.map(linha).join('') || '<p class="bdet muted">Nada com esses filtros.</p>'); }
+  else if (b.tab === 'vid') html = `<div class="bfil">${podeEscrever() ? `<div><button class="btn sm" data-act="add-video" data-id="${esc(b.sim)}">${ic('plus', 14)}Adicionar vídeo</button></div>` : ''}${vids.length ? vids.map(vidCard).join('') : '<p class="small muted">Nenhum vídeo deste simulador ainda.</p>'}</div>`;
+  else if (b.tab === 'dec') html = ordena(decsSim).map((d) => `<div class="bx" id="bd-${esc(d.id)}"><div class="row"><b>${esc(d.titulo)}</b>${marcaTela(d)}</div><p>${esc(d.texto)}</p><span class="small muted">${esc(d.data)}</span>${d.mudancas.length ? `<div class="mini"><span class="lbl">Sustenta</span>${chipsB(d.mudancas)}</div>` : ''}<div class="row">${d.mudancas.length > 1 ? `<button class="btn sm ghost" data-act="lig" data-k="d" data-id="${esc(d.id)}">Filtrar as ${d.mudancas.length}</button>` : ''}<button class="btn sm ghost" data-act="cite" data-k="d" data-id="${esc(d.id)}">${ic('copy', 14)}Citação</button></div></div>`).join('');
+  else if (b.tab === 'pend') html = (podeEscrever() ? `<div class="bfil"><div><button class="btn sm" data-act="entrevista">${ic('msg', 14)}Responder com o Claude</button></div></div>` : '') + ordena([...pendsSim].sort((x, y) => pendAberta(y) - pendAberta(x))).map((p) => { const r = S.resp[p.id]; const ok = r && r.resposta;
+    return `<div class="bx" id="bp-${esc(p.id)}"><div class="row">${respPill(p)}<b>${esc(p.titulo)}</b>${marcaTela(p)}</div><p class="small muted">${esc(p.quem)} · ${esc(faseNome(p.fase))}</p><p>${esc(respTxt(p))}</p>
+      ${p.mudancas.length ? `<div class="mini"><span class="lbl">${pendAberta(p) ? 'Segura' : 'Liberou'}</span>${chipsB(p.mudancas)}</div>` : ''}<div class="row">${podeEscrever() ? `<button class="btn sm" data-act="responder" data-id="${esc(p.id)}">${ok ? 'Editar resposta' : 'Responder'}</button>` : ''}${p.mudancas.length > 1 ? `<button class="btn sm ghost" data-act="lig" data-k="p" data-id="${esc(p.id)}">Filtrar as ${p.mudancas.length}</button>` : ''}</div></div>`; }).join('');
+  else { const m = S.plano.mudancas.find((x) => x.id === b.sel && x.sim === b.sim); html = m ? detMud(m, 'bench') : '<p class="bdet muted">Escolha uma mudança na lista ou clique num marcador do simulador.</p>'; }
+  $('#bench-list').innerHTML = html;
+}
+function abrirBench(simId, sel) {
+  if (S.bench && S.bench.sim === simId) { if (sel) { S.bench.sel = sel; S.bench.tab = 'nota'; renderBench(); irMarcador(sel); } return; }
+  const sim = S.plano.simuladores.find((s) => s.id === simId); S.bench = { sim: simId, tab: sel ? 'nota' : 'tela', sel: sel || null, tela: null, telas: null, chave: null, msg: null, versao: 'all', ticket: null, semPainel: false, f: { q: '', fase: 'all', sit: 'all', rev: 'all', lig: null } };
+  $('#bench-title').textContent = sim.titulo; $('#bench-open').href = sim.arquivo; const fr = $('#bench-frame'); fr.src = sim.arquivo; $('#bench').hidden = false;
+  fr.onload = () => { aplicaVersao(); try { fr.contentDocument.addEventListener('pointermove', (e) => { const r = fr.getBoundingClientRect(); moverPresenca({ clientX: r.left + e.clientX, clientY: r.top + e.clientY, pageX: 0, pageY: 0 }); }, { passive: true }); } catch (e) {} try { fr.contentDocument.addEventListener('click', (e) => { const mk = e.target.closest && e.target.closest('[data-chg]'); if (mk) { S.bench.sel = mk.getAttribute('data-chg'); S.bench.tab = 'nota'; renderBench(); } }, true); } catch (e) {}
+    if (S.bench && S.bench.ticket) irTicket(); else if (S.bench && S.bench.sel) setTimeout(() => irMarcador(S.bench.sel), 600);
+    if (S.bench && S.bench.msg) { const m = S.bench.msg; S.bench.msg = null; S.bench.tab = 'msg'; setTimeout(() => { irMensagem(m); renderBench(); }, 400); } };
+  aplicaVersao(); renderBench(); clearInterval(S.benchTimer); S.benchTimer = setInterval(() => { if (S.bench && JSON.stringify(telasAtuais()) !== S.bench.chave) renderBench(); }, 700);
+}
+// Abre a bancada na decisão (k = 'd') ou na pendência (k = 'p') e destaca o item.
+function irItem(k, id) {
+  if (!S.bench) abrirBench(S.plano.simuladores[0].id); S.bench.tab = k === 'd' ? 'dec' : 'pend'; renderBench();
+  const el = document.getElementById((k === 'd' ? 'bd-' : 'bp-') + id); if (el) { el.scrollIntoView({ block: 'start' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+}
+// Versão por fase: com a Fase N escolhida, o simulador mostra só o que existe até ela.
+// Novidade de fase futura some; alteração de fase futura fica como está hoje, sem marcador; tela que nasce depois sai do menu.
+// Versão Hoje (simuladores[].hoje): N = 0, nada do plano aparece; o simulador recebe versaoSimulador('hoje') e pode
+// desenhar o que era diferente antes (o e-mail antigo, o texto que mudou). Tela com existe: true nunca sai do menu.
+const versaoN = () => !S.bench || S.bench.versao === 'all' ? Infinity : S.bench.versao === 'hoje' ? 0 : faseIx(S.bench.versao);
+// Ticket escolhido (plano com tickets[]): o simulador e as listas mostram só as mudanças que entregam o ticket.
+// Ticket ainda sem mudança não filtra nada; o cartão dele diz que a decisão está pendente.
+// Cada ticket pertence ao simulador do campo sim ou, sem ele, aos simuladores das mudanças que o entregam (plano com
+// um simulador só: esse). Ticket de outro simulador nunca aparece no seletor nem filtra a bancada.
+const simsDoTicket = (t) => t.sim ? [t.sim] : [...new Set(S.plano.mudancas.filter((m) => (t.mudancas || []).includes(m.id)).map((m) => m.sim))].concat(S.plano.simuladores.length === 1 ? [S.plano.simuladores[0].id] : []);
+const ticketsDoSim = (simId) => (S.plano.tickets || []).filter((t) => simsDoTicket(t).includes(simId));
+const ticketSel = () => S.bench && S.bench.ticket ? ticketsDoSim(S.bench.sim).find((t) => t.id === S.bench.ticket) || null : null;
+const noTicket = (m) => { const t = ticketSel(); return !t || !(t.mudancas || []).length || t.mudancas.includes(m.id); };
+const naVersao = (m) => faseIx(m.fase) <= versaoN() && noTicket(m);
+// Leva o simulador até a tela da primeira mudança do ticket e destaca o marcador dela.
+// Simulador com abrirMudanca(id) (opcional, TEMPLATE.md): ele mesmo leva ao item, ao perfil ou ao modal em que a mudança aparece.
+// Sem o gancho, só a tela da mudança abre, e mudança de tela de detalhe fica sem o item escolhido.
+const ganchoSim = () => { try { const w = $('#bench-frame').contentWindow; return w && typeof w.abrirMudanca === 'function' ? w : null; } catch (e) { return null; } };
+function irTicket() { const t = ticketSel(); const m = t && S.plano.mudancas.find((x) => x.id === (t.mudancas || [])[0]); if (!m) return;
+  const w = ganchoSim(); if (w) { try { w.abrirMudanca(m.id); } catch (e) {} } else if (m.telaId !== '*') try { $('#bench-frame').contentWindow.eval(`go(${JSON.stringify(m.telaId)})`); } catch (e) {}
+  setTimeout(() => irMarcador(m.id, true), 400); }
+const fasesDoSim = (simId) => S.plano.simuladores.length === 1 ? S.plano.fases : S.plano.fases.filter((f) => S.plano.mudancas.some((m) => m.sim === simId && m.fase === f.id));
+function aplicaVersao() {
+  const b = S.bench; if (!b) return; const sim = S.plano.simuladores.find((s) => s.id === b.sim); const N = versaoN();
+  $('#bench-sem-painel').setAttribute('aria-pressed', b.semPainel); $('#bench-sem-painel').textContent = b.semPainel ? 'Mostrar painel' : 'Ocultar painel'; $('#bench').classList.toggle('sem-painel', b.semPainel);
+  $('#bench-versao').innerHTML = [...(sim.hoje ? [['hoje', 'Hoje']] : []), ...fasesDoSim(b.sim).map((f) => [f.id, `${faseCurta(f.id)}`]), ['all', 'Completa']].map(([k, l]) => `<button data-act="versao" data-v="${k}" aria-pressed="${b.versao === k}" title="${k === 'all' ? 'Tudo o que foi planejado' : k === 'hoje' ? 'Como o sistema é hoje, antes do plano' : 'Como fica ao fim da ' + faseNome(k)}">${l}</button>`).join('');
+  const tks = ticketsDoSim(b.sim); if (b.ticket && !tks.some((t) => t.id === b.ticket)) b.ticket = null; $('#bench-ticket').hidden = !tks.length;
+  $('#bench-ticket').innerHTML = `<option value="">Todos os tickets</option>${tks.map((t) => `<option value="${esc(t.id)}" ${b.ticket === t.id ? 'selected' : ''}>${esc(t.id)} · ${esc(t.titulo)}</option>`).join('')}`;
+  let doc, w; try { doc = $('#bench-frame').contentDocument; w = $('#bench-frame').contentWindow; } catch (e) { return; } if (!doc || !doc.head) return;
+  const escondida = (id) => { const t = (sim.telas || []).find((x) => x.id === id); return !!(t && t.fase && faseIx(t.fase) > N && !t.existe); };
+  const css = [];
+  if (N !== Infinity || ticketSel()) {
+    for (const m of S.plano.mudancas.filter((x) => x.sim === b.sim && !naVersao(x))) css.push(m.tipo === 'NOVO' && m.oculta !== false ? `[data-chg="${m.id}"]{display:none!important}` : `[data-chg="${m.id}"]{outline:none!important}[data-chg="${m.id}"]::after{display:none!important}`);
+    for (const t of (sim.telas || []).filter((t) => escondida(t.id))) css.push(`[data-go="${t.id}"]{display:none!important}`);
+  }
+  // Filtro Revisão: no simulador, só as mudanças da rodada escolhida mantêm o marcador; o conteúdo não some.
+  const rev = b.f && b.f.rev; if (rev && rev !== 'all') for (const m of S.plano.mudancas.filter((x) => x.sim === b.sim && !(x.revisoes || []).includes(rev))) css.push(`[data-chg="${m.id}"]{outline:none!important}[data-chg="${m.id}"]::after{display:none!important}`);
+  let st = doc.getElementById('versao-fase'); if (!st) { st = doc.createElement('style'); st.id = 'versao-fase'; doc.head.appendChild(st); }
+  st.textContent = css.join('\n');
+  try { if (w && typeof w.versaoSimulador === 'function') w.versaoSimulador(b.versao); } catch (e) {}
+  // Cada superfície visível numa tela que ainda não existe volta para a primeira tela dela que existe nesta versão.
+  for (const [sup, id] of Object.entries(telasAtuais() || {})) if (escondida(id)) {
+    const ini = (sim.telas || []).find((t) => t.id !== '*' && (sup === '' || t.superficie === sup) && !escondida(t.id));
+    if (ini) try { w.eval(`go(${JSON.stringify(ini.id)})`); } catch (e) {}
+  }
+}
+function irMarcador(id, tentativa = 0) {
+  { const m = S.plano.mudancas.find((x) => x.id === id); if (m && !naVersao(m)) { toast(noTicket(m) ? `Essa mudança é da ${faseNome(m.fase)}. Escolha essa versão ou Completa no topo.` : 'Essa mudança não entrega o ticket escolhido. Escolha Todos os tickets no topo.'); return; } }
+  const m = S.plano.mudancas.find((x) => x.id === id); let doc; try { doc = $('#bench-frame').contentDocument; } catch (e) { return; } if (!doc || !m) return;
+  const w = ganchoSim(); if (w && !tentativa && !doc.querySelector(`[data-chg="${id}"]`)) { try { w.abrirMudanca(id); } catch (e) {} setTimeout(() => irMarcador(id, 1), 500); return; }
+  if (!w && m.telaId && m.telaId !== '*' && !Object.values(telasAtuais() || {}).includes(m.telaId) && tentativa < 2) {
+    const nav = doc.querySelector(`[data-go="${m.telaId}"]`);
+    if (nav) nav.click(); else try { $('#bench-frame').contentWindow.eval(`go(${JSON.stringify(m.telaId)})`); } catch (e) {}
+    setTimeout(() => irMarcador(id, tentativa + 1), 500); return;
+  }
+  const el = doc.querySelector(`[data-chg="${id}"]`); if (!el) { toast('O marcador fica numa tela que se abre por dentro de outra (um detalhe). Navegue até ela no simulador.'); return; }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.animate([{ boxShadow: '0 0 0 0 rgba(10,108,255,0.0)' }, { boxShadow: '0 0 0 6px rgba(10,108,255,0.55)' }, { boxShadow: '0 0 0 0 rgba(10,108,255,0.0)' }], { duration: 1400 });
+}
+
+// ============================================================ CONFIGURAÇÕES
+function abrirConfig() {
+  if (!interno()) return;
+  const m = modo();
+  $('#drawer-body').innerHTML = `<div style="display:grid;gap:8px"><p class="lbl">Acesso</p><p class="small">Configurações e horas ficam com o dono e os editores do artefato. Você entrou como <b>${esc(nome(S.me))}</b>, ${S.owner ? 'dono' : 'editor'}.</p>
+      <p class="small muted">Compartilhe com a equipe NOVARC como Editor e com o cliente como Colaborador (aprova, responde e comenta) ou Leitor. Editor de fora da organização perde esse nível se o artefato também for compartilhado por link.</p></div>
+    ${S.plano.organizacao && S.plano.organizacao.emailProjetos ? `<div style="display:grid;gap:8px"><p class="lbl">Compartilhamento</p><p class="small">Todo planejamento é compartilhado com <b>${esc(S.plano.organizacao.emailProjetos)}</b> como Editor. A página não consegue fazer isso sozinha: use o menu Compartilhar do artefato.</p><div><button class="btn sm" data-act="copiar-email">${ic('copy', 14)}Copiar e-mail</button></div></div>` : ''}
+    <div style="display:grid;gap:10px"><p class="lbl">Formato do artefato</p><div class="seg">${Object.entries(MODOS).map(([k, x]) => `<button data-act="cfg-modo" data-v="${k}" aria-pressed="${m === k}">${x.n}</button>`).join('')}</div><p class="small muted">${esc(MODOS[m].d)}</p></div>
+    <div style="display:grid;gap:8px"><p class="lbl">Horas ativas para quem é de fora</p><label class="tog"><span>Mostrar o resumo de horas ativas (total e por fase) a colaboradores e leitores</span><input type="checkbox" data-act="cfg-horas-pub" ${horasPub() ? 'checked' : ''}></label><p class="small muted">O detalhe por sessão e por pessoa continua só para a NOVARC. Ligado, a página publica um resumo que se atualiza a cada visita de um editor.</p></div>
+    <div><p class="lbl" style="margin-bottom:6px">Seções visíveis</p>${SECOES.map(([k, , l]) => `<label class="tog"><span>${esc(l)}${k === 'horas' ? ' <span class="small muted">(só interno)</span>' : ''}</span><input type="checkbox" data-act="cfg-sec" data-k="${k}" ${visivel(k) ? 'checked' : ''}></label>`).join('')}
+      <button class="btn sm ghost" style="margin-top:10px" data-act="cfg-reset">Voltar ao padrão do formato</button></div>
+    <div style="display:grid;gap:6px"><p class="lbl">Banco do artefato</p><p class="small muted">${S.db ? 'Conectado. Status, notas, documentos, horas e vídeos ficam guardados para todos.' : 'Indisponível nesta visualização.'}</p></div>`;
+  $('#drawer').hidden = false;
+}
+async function salvarCfg(patch) { try { await S.db.doc('config/exibicao').set({ ...(S.cfg || {}), ...patch, by: S.me, at: new Date().toISOString() }); } catch (e) { toast('Só editores da NOVARC mudam as configurações.'); } }
+
+// ============================================================ MODAL, CÓPIA E AVISOS
+function modal(html) { $('#modal-panel').innerHTML = html; $('#modal').hidden = false; const f = $('#modal-panel').querySelector('textarea, input, button'); if (f) f.focus(); }
+function fecharModal() { $('#modal').hidden = true; $('#modal-panel').innerHTML = ''; }
+function toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
+async function copiar(txt) { try { await navigator.clipboard.writeText(txt); toast('Copiado'); } catch (e) { modal(`<h3>Copiar</h3><textarea id="copy-area" rows="10">${esc(txt)}</textarea><div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Fechar</button></div>`); const a = $('#copy-area'); a.focus(); a.select(); } }
+function citacao(k, id) {
+  const it = k === 'm' ? S.plano.mudancas.find((x) => x.id === id) : S.plano.decisoes.find((x) => x.id === id);
+  return k === 'm' ? `[${S.plano.projeto.codigo}#m-${id}] ${it.titulo} (marcador ${it.n}, ${it.tela}, ${faseNome(it.fase)}) ${linkBase()}#m-${id}` : `[${S.plano.projeto.codigo}#d-${id}] Decisão: ${it.titulo} (${it.data}) ${linkBase()}#d-${id}`;
+}
+const salvar = async (fn, ok) => { try { await fn(); fecharModal(); if (ok) toast(ok); } catch (e) { toast('Não foi possível salvar' + (e && e.code ? ` (${e.code})` : '') + '.'); } };
+
+// ============================================================ AÇÕES
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-act]'); if (!t) { if (e.target.id === 'modal') fecharModal(); return; }
+  const a = t.dataset.act;
+  if (a === 'fechar') return fecharModal();
+  if (a === 'auditoria-todas') return modal(`<h3>Auditoria · as 50 mais recentes</h3>${(S.aud || []).slice(0, 50).map(linhaAud).join('')}`);
+  if (a === 'drawer-close') { $('#drawer').hidden = true; return; }
+  if (a === 'config') return abrirConfig();
+  if (a === 'bench') return abrirBench(t.dataset.id);
+  if (a === 'bench-at') { const m = S.plano.mudancas.find((x) => x.id === t.dataset.id); return abrirBench(m.sim, m.id); }
+  if (a === 'bench-close') { $('#bench').hidden = true; $('#bench-frame').src = 'about:blank'; clearInterval(S.benchTimer); S.bench = null; publicaPresenca(null); renderCursores(); return; }
+  if (a === 'bench-tab') { S.bench.tab = t.dataset.v; return renderBench(); }
+  if (a === 'bench-sel') { S.bench.sel = t.dataset.id; S.bench.tab = 'nota'; renderBench(); return irMarcador(t.dataset.id); }
+  if (a === 'bench-goto') return irMarcador(t.dataset.id);
+  if (a === 'bench-msg') return irMensagem(t.dataset.id);
+  if (a === 'nota-tipo') { S.notaTipo = t.dataset.v; for (const b of document.querySelectorAll('[data-act="nota-tipo"]')) b.setAttribute('aria-pressed', b.dataset.v === S.notaTipo); return; }
+  if (a === 'bench-aba') { abrirBench(t.dataset.id || S.plano.simuladores[0].id); S.bench.tab = t.dataset.v; return renderBench(); }
+  if (a === 'sem-painel') { S.bench.semPainel = !S.bench.semPainel; return aplicaVersao(); }
+  if (a === 'versao') { S.bench.versao = t.dataset.v; aplicaVersao(); return renderBench(); }
+  if (a === 'bf') { const f = S.bench.f; if (t.dataset.k === 'tudo') S.bench.f = { q: '', fase: 'all', sit: 'all', rev: 'all', lig: null }; else if (t.dataset.k === 'lig') f.lig = null; else f[t.dataset.k] = f[t.dataset.k] === t.dataset.v ? 'all' : t.dataset.v; aplicaVersao(); return renderBench(); }
+  if (a === 'lig') { S.bench.f = { q: '', fase: 'all', sit: 'all', rev: 'all', lig: { k: t.dataset.k, id: t.dataset.id } }; S.bench.tab = 'todas'; return renderBench(); }
+  if (a === 'ir') { fecharModal(); return irItem(t.dataset.k, t.dataset.id); }
+  if (a === 'doc-tipo') { S.docTipo = t.dataset.v; return renderBib(); }
+  if (a === 'ver-fase') { const sf = S.plano.simuladores.find((s) => S.plano.mudancas.some((m) => m.sim === s.id && m.fase === t.dataset.f)) || S.plano.simuladores[0]; if (S.bench && S.bench.sim !== sf.id) { S.bench = null; } abrirBench(sf.id); S.bench.versao = t.dataset.f; S.bench.f = { q: '', fase: t.dataset.f, sit: 'all', lig: null }; S.bench.tab = 'todas'; aplicaVersao(); return renderBench(); }
+  if (a === 'cite') return copiar(citacao(t.dataset.k, t.dataset.id));
+  if (a === 'comentar') { const el = document.getElementById(t.dataset.el); if (S.comments && el) { try { let alvo = { element: el }; try { const rg = document.createRange(); rg.selectNodeContents(el); alvo = { range: rg }; } catch (e) {} const r = await S.comments.openComposer(alvo); if (!r.opened) toast('Use o modo de comentário do Claude, no topo da página.'); } catch (err) { toast('Comentário indisponível nesta visualização.'); } } else toast('Comentários aparecem para quem abre o plano no Claude.'); return; }
+  if (a === 'copiar-email') return copiar(S.plano.organizacao.emailProjetos);
+  if (a === 'copiar-sessao') return copiar(t.dataset.s);
+  if (a === 'copiar-prompt') { const c = conjPrompt(t.dataset.c); return copiar(c ? c.prompt : ''); }
+  if (a === 'ver-prompt') { const c = conjPrompt(t.dataset.c); if (!c) return;
+    return modal(`<h3>Prompt do ${esc(c.id)} · ${esc(c.titulo)}</h3><p class="small muted">Cole numa sessão nova do Claude Code aberta no repositório do cliente.</p><pre>${esc(c.prompt || '')}</pre><div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Fechar</button><button class="btn primary" data-act="copiar-prompt" data-c="${esc(c.id)}">${ic('copy', 14)}Copiar</button></div>`); }
+  if (a === 'ver-spec') return verSpec(t.dataset.s, 'spec.md');
+  if (a === 'ver-espelho') return verSpec(t.dataset.s, t.dataset.f);
+  if (a === 'entrevista') return entrevista();
+  if (!podeEscrever()) return;
+  if (a === 'cfg-modo') { await salvarCfg({ modo: t.dataset.v, secoes: {} }); return abrirConfig(); }
+  if (a === 'cfg-sec') { const k = t.dataset.k; await salvarCfg({ secoes: { ...((S.cfg && S.cfg.secoes) || {}), [k]: t.checked } }); return; }
+  if (a === 'cfg-horas-pub') { await salvarCfg(t.checked ? { horasPublicas: true, horasResumo: { ...resumoHoras(), at: new Date().toISOString() } } : { horasPublicas: false, horasResumo: null }); return abrirConfig(); }
+  if (a === 'cfg-reset') { await salvarCfg({ secoes: {} }); return abrirConfig(); }
+  if (a === 'nota-salva') { const c = t.dataset.ctx; const tx = $('#nota-txt-' + c), rf = $('#nota-ref-' + c); const txt = tx.value.trim(); if (!txt) { tx.style.borderColor = 'var(--bad)'; return; }
+    try { await S.db.collection('notas').add({ mudanca: t.dataset.id, tipo: S.notaTipo, texto: txt, ref: rf.value.trim(), by: S.me, at: new Date().toISOString(), origem: 'pessoa' }); rascunhos = {}; toast('Nota registrada'); fecharModal(); } catch (err) { toast('Não foi possível salvar a nota.'); } return; }
+  if (a === 'status') { const to = t.dataset.to; const precisa = to === 'ajustes' || to === 'aprovado';
+    return modal(`<h3>${esc(statusDe(to).n)}</h3><p class="small muted">${to === 'ajustes' ? 'Diga o que precisa mudar. Fica no histórico e no topo do status.' : 'Deixe um parecer para o histórico.'}</p>
+      <label class="f">Parecer${precisa ? ' (obrigatório)' : ''}<textarea id="nota-status" placeholder="${to === 'ajustes' ? 'O que precisa mudar e por quê' : 'Opcional'}"></textarea></label>
+      <div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Cancelar</button><button class="btn primary" data-act="confirma-status" data-to="${to}" data-req="${precisa}">Confirmar</button></div>`); }
+  if (a === 'confirma-status') { const nota = $('#nota-status').value.trim(); if (t.dataset.req === 'true' && !nota) { $('#nota-status').style.borderColor = 'var(--bad)'; return; }
+    const at = new Date().toISOString(); const atual = (S.estado && S.estado.status) || 'rascunho';
+    return salvar(async () => { await S.db.doc('plano/estado').set({ status: t.dataset.to, nota, by: S.me, at, voltarPara: t.dataset.to === 'ajustes' ? atual : null }); await S.db.collection('historico').add({ status: t.dataset.to, nota, by: S.me, at }); }, 'Status atualizado'); }
+  if (a === 'responder') { const p = S.plano.pendencias.find((x) => x.id === t.dataset.id); const r = S.resp[p.id];
+    return modal(`<h3>${esc(p.titulo)}</h3><p class="small">${esc(p.texto)}</p><label class="f">Resposta<textarea id="resp-txt">${esc(r && r.resposta || '')}</textarea></label><div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Cancelar</button><button class="btn primary" data-act="salva-resp" data-id="${esc(p.id)}">Salvar resposta</button></div>`); }
+  if (a === 'salva-resp') { const v = $('#resp-txt').value.trim(); return salvar(() => S.db.doc('pendencias/' + t.dataset.id).set({ resposta: v, by: S.me, at: new Date().toISOString() }), v ? 'Resposta salva' : 'Resposta removida'); }
+  if (a === 'editar-fase') { const f = fase(t.dataset.f);
+    return modal(`<h3>${esc(f.nome)}</h3><div class="grid2" style="gap:12px"><label class="f">Início<input type="date" id="fi" value="${esc(f.inicio || '')}"></label><label class="f">Fim<input type="date" id="ff" value="${esc(f.fim || '')}"></label></div>
+      <div class="grid2" style="gap:12px"><label class="f">Quem executa<input type="text" id="fe" value="${esc(f.executor || '')}" placeholder="NOVARC ou o time do cliente"></label><label class="f">Horas previstas<input type="number" id="fh" min="0" value="${esc(f.horasPrevistas || '')}"></label></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Cancelar</button><button class="btn primary" data-act="salva-fase" data-f="${esc(f.id)}">Salvar</button></div>`); }
+  if (a === 'salva-fase') { const ini = $('#fi').value, fim = $('#ff').value; if (ini && fim && fim < ini) { $('#ff').style.borderColor = 'var(--bad)'; return; }
+    return salvar(() => S.db.doc('fases/' + t.dataset.f).set({ inicio: ini, fim, executor: $('#fe').value.trim(), horasPrevistas: +$('#fh').value || null, by: S.me, at: new Date().toISOString() }), 'Fase atualizada'); }
+  if (a === 'add-doc') return modal(`<h3>Adicionar à biblioteca</h3><div class="grid2" style="gap:12px"><label class="f">Tipo<select id="d-tipo">${Object.entries(TIPO_DOC).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label><label class="f">Camada<select id="d-cam">${Object.entries(CAMADA).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label></div>
+    <label class="f">Título<input type="text" id="d-tit" placeholder="Spec do custo médio, back-end"></label><label class="f">Onde está<input type="text" id="d-ref" placeholder="Link https://, ou caminho no repositório (.novarc/plans/...md)"></label>
+    <label class="f">Fase<select id="d-fase"><option value="">Plano inteiro</option>${S.plano.fases.map((f, i) => `<option value="${esc(f.id)}">${faseNome(f.id)}: ${esc(f.nome)}</option>`).join('')}</select></label><label class="f">Resumo<textarea id="d-res" placeholder="O que o documento decide ou mostra"></textarea></label>
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Cancelar</button><button class="btn primary" data-act="salva-doc">Adicionar</button></div>`);
+  if (a === 'salva-doc') { const tit = $('#d-tit').value.trim(); if (!tit) { $('#d-tit').style.borderColor = 'var(--bad)'; return; }
+    return salvar(() => S.db.collection('documentos').add({ tipo: $('#d-tipo').value, camada: $('#d-cam').value, titulo: tit, ref: $('#d-ref').value.trim(), fase: $('#d-fase').value, resumo: $('#d-res').value.trim(), by: S.me, at: new Date().toISOString(), origem: 'pessoa' }), 'Documento adicionado'); }
+  if (a === 'add-video') return modal(`<h3>Adicionar vídeo</h3><input type="hidden" id="v-sim" value="${esc(t.dataset.id || S.plano.simuladores[0].id)}"><p class="small muted">Cole o link da gravação (Loom, Google Drive, YouTube não listado ou Fathom). Quem tiver acesso ao link assiste.</p>
+    <label class="f">Título<input type="text" id="v-tit" placeholder="Tour pela sugestão de compra"></label><label class="f">Link<input type="url" id="v-url" placeholder="https://"></label>
+    <label class="f">Fase<select id="v-fase"><option value="">Plano inteiro</option>${S.plano.fases.map((f, i) => `<option value="${esc(f.id)}">${faseNome(f.id)}: ${esc(f.nome)}</option>`).join('')}</select></label><label class="f">O que mostra<textarea id="v-desc" placeholder="Telas e decisões explicadas"></textarea></label>
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="fechar">Cancelar</button><button class="btn primary" data-act="salva-video">Adicionar</button></div>`);
+  if (a === 'salva-video') { const url = $('#v-url').value.trim(), tit = $('#v-tit').value.trim(); if (!/^https:\/\//.test(url) || !tit) { (tit ? $('#v-url') : $('#v-tit')).style.borderColor = 'var(--bad)'; return; }
+    return salvar(() => S.db.collection('videos').add({ titulo: tit, url, descricao: $('#v-desc').value.trim(), fase: $('#v-fase').value, sim: $('#v-sim').value, by: S.me, at: new Date().toISOString() }), 'Vídeo adicionado'); }
+});
+document.addEventListener('change', (e) => { if (e.target.id === 'bench-ticket') { const id = e.target.value || null; const t = id && (S.plano.tickets || []).find((x) => x.id === id); const m = t && S.plano.mudancas.find((x) => x.id === (t.mudancas || [])[0]);
+    const outro = m && m.sim !== S.bench.sim; if (outro) abrirBench(m.sim); // o onload do outro simulador chama irTicket
+    S.bench.ticket = id; S.bench.tab = id ? 'tk' : 'tela'; aplicaVersao(); renderBench(); if (!outro) irTicket(); return; }
+  if (e.target.id === 'bfase') { S.bench.f.fase = e.target.value; renderBench(); } if (e.target.id === 'bsit') { S.bench.f.sit = e.target.value; renderBench(); } if (e.target.id === 'brev') { S.bench.f.rev = e.target.value; aplicaVersao(); renderBench(); } });
+document.addEventListener('input', (e) => { if (e.target.id === 'bq') { S.bench.f.q = e.target.value; const pos = e.target.selectionStart; renderBench(); const b = $('#bq'); b.focus(); b.setSelectionRange(pos, pos); } });
+document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!$('#modal').hidden) return fecharModal(); if (!$('#drawer').hidden) { $('#drawer').hidden = true; return; } if (!$('#bench').hidden) { $('#bench').hidden = true; $('#bench-frame').src = 'about:blank'; clearInterval(S.benchTimer); S.bench = null; publicaPresenca(null); renderCursores(); } });
+// índice: marca a seção visível
+const obs = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { for (const en of es) if (en.isIntersecting) for (const a of document.querySelectorAll('#toc a')) a.classList.toggle('on', a.getAttribute('href') === '#' + en.target.id); }, { rootMargin: '-30% 0px -60% 0px' }) : null;
+
+// ============================================================ MOVIMENTO
+const calmo = matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!calmo) document.documentElement.classList.add('anim');
+function contar(root) {
+  if (calmo) return;
+  for (const el of root.querySelectorAll('[data-count]')) { const fim = +el.dataset.count, t0 = performance.now(), dur = 1100;
+    // sem quadro de animação (aba em segundo plano), o número fica no valor final
+    const passo = (t) => { const k = Math.max(0, Math.min(1, (t - t0 - 900) / dur)); el.textContent = Math.round(fim * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(passo); }; requestAnimationFrame(passo); }
+}
+// Cada bloco anima uma vez, quando entra na tela. Re-renderizações depois disso já nascem no estado final.
+function revelar() {
+  const els = [$('#hero'), ...document.querySelectorAll('section.sec')];
+  // setTimeout e não requestAnimationFrame: em aba em segundo plano o quadro não vem e a página ficaria escondida
+  const liga = (el) => { if (el.classList.contains('in')) return; setTimeout(() => { el.classList.add('in'); if (el.id === 'hero') contar(el); }, 40); };
+  liga(els[0]); // a capa está sempre na primeira dobra: revela já, sem depender do observador (que não dispara em aba oculta)
+  if (calmo || !('IntersectionObserver' in window)) { els.slice(1).forEach(liga); return; }
+  const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { liga(e.target); io.unobserve(e.target); } }, { rootMargin: '0px 0px -10% 0px' });
+  els.slice(1).forEach((el) => io.observe(el));
+}
+// Grade de pontos da capa acende em volta do mouse.
+if (!calmo && matchMedia('(pointer: fine)').matches) {
+  let pend = null; const hero = $('#hero');
+  hero.addEventListener('pointermove', (e) => { const r = hero.getBoundingClientRect(); pend = [e.clientX - r.left + 24, e.clientY - r.top];
+    requestAnimationFrame(() => { if (pend) { hero.style.setProperty('--mx', pend[0] + 'px'); hero.style.setProperty('--my', pend[1] + 'px'); pend = null; } }); });
+  hero.addEventListener('pointerleave', () => { hero.style.setProperty('--mx', '-999px'); });
+}
+
+// ============================================================ CARGA
+// Nome do artefato e da aba: "Planejamento <cliente> · <nome curto>" (TEMPLATE.md, passo 6); a vitrine é o Template.
+const tituloPlano = (p) => p.template ? 'Planejamento NOVARC · Template' : `Planejamento ${p.projeto.cliente} · ${p.projeto.nomeCurto || p.projeto.nome}`;
+// Presença (capacidade room): cada visitante publica onde está (documento ou bancada), o cursor normalizado e a seção
+// ou a mudança que vê. Nada é gravado: some quando a pessoa sai. Sem room, a página segue igual.
+const PRES = { room: null, peers: [], chaveQuem: '', chaveVendo: '', ultimo: null, enviado: '' };
+const outros = () => PRES.peers.filter((x) => !x.isMe && x.presence && typeof x.presence.x === 'number');
+const nomeDe = (x) => (x.by && S.prof[x.by] && S.prof[x.by].name) || 'Alguém';
+const corDe = (x) => (x.by && S.prof[x.by] && S.prof[x.by].color) || 'var(--navy-500)';
+function vendoMud(id) {
+  const v = outros().filter((x) => x.presence.modo === 'bench' && x.presence.chg === id);
+  return v.length ? `<span class="vendo" id="vendo">${v.map((x) => `<i style="--c:${esc(corDe(x))}"></i>`).join('')}${esc(v.map(nomeDe).join(', '))} ${v.length > 1 ? 'estão' : 'está'} vendo esta mudança</span>` : '';
+}
+function renderQuem() {
+  const pessoas = []; const vistos = new Set();
+  for (const x of PRES.peers) { const k = x.by || x.peer; if (x.kind !== 'viewer' || vistos.has(k)) continue; vistos.add(k); pessoas.push(x); }
+  pessoas.sort((a, b) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0));
+  const html = pessoas.length > 1 ? pessoas.slice(0, 6).map((x) => { const pf = x.by && S.prof[x.by]; const nm = x.isMe ? 'você' : nomeDe(x);
+    return `<span class="av" style="--c:${esc(corDe(x))}" title="${esc(nm)}">${pf && pf.avatarUrl ? `<img src="${esc(pf.avatarUrl)}" alt="">` : esc((nm[0] || '?').toUpperCase())}</span>`; }).join('') + `<span class="n">${pessoas.length} no planejamento</span>` : '';
+  for (const id of ['quem', 'quem-b']) { const el = document.getElementById(id); if (el) { el.innerHTML = html; el.hidden = !html; } }
+}
+function renderCursores() {
+  const box = document.getElementById('cursores'); if (!box) return;
+  const meu = S.bench ? 'bench' : 'doc'; const de = document.documentElement;
+  const W = meu === 'bench' ? (window.innerWidth || 0) : (de.scrollWidth || 0), H = meu === 'bench' ? (window.innerHeight || 0) : (de.scrollHeight || 0);
+  box.classList[meu === 'bench' ? 'add' : 'remove']('fixo');
+  box.innerHTML = outros().filter((x) => x.presence.modo === meu && (meu === 'doc' || x.presence.sim === (S.bench && S.bench.sim))).map((x) =>
+    `<div class="cur" style="--c:${esc(corDe(x))};transform:translate(${Math.round(x.presence.x * W)}px,${Math.round(x.presence.y * H)}px)"><svg width="16" height="18" viewBox="0 0 16 18"><path d="M1 1 L1 15 L5 11 L8 17 L10.5 16 L7.5 10 L13 10 Z" fill="${esc(corDe(x))}" stroke="#fff" stroke-width="1.2"/></svg><span>${esc(nomeDe(x))}</span></div>`).join('');
+}
+function secaoAtual() { const h = window.innerHeight || 800; let atual = 'hero'; for (const [k] of SECOES) { const el = document.getElementById(k); const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null; if (r && r.top <= h * 0.3) atual = k; } return atual; }
+function publicaPresenca(e) {
+  if (!PRES.room) return; const de = document.documentElement; const b = S.bench;
+  const x = e ? (b ? e.clientX / (window.innerWidth || 1) : e.pageX / (de.scrollWidth || 1)) : -1, y = e ? (b ? e.clientY / (window.innerHeight || 1) : e.pageY / (de.scrollHeight || 1)) : -1;
+  const pr = { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000, modo: b ? 'bench' : 'doc', sim: b ? b.sim : null, chg: b ? b.sel : null, sec: b ? null : secaoAtual() };
+  const k = JSON.stringify(pr); if (k === PRES.enviado) return; PRES.enviado = k; PRES.room.presence(pr).catch(() => {});
+}
+// Agrupa os movimentos num por quadro. O simulador (iframe) repassa os seus já convertidos para a janela.
+let agendadoPres = false;
+function moverPresenca(e) { PRES.ultimo = e; if (agendadoPres || !PRES.room) return; agendadoPres = true; requestAnimationFrame(() => { agendadoPres = false; publicaPresenca(PRES.ultimo); }); }
+function ligarPresenca(room) {
+  PRES.room = room;
+  document.addEventListener('pointermove', (e) => moverPresenca(e), { passive: true });
+  document.addEventListener('pointerleave', () => publicaPresenca(null));
+  room.onPeers(async (ch) => {
+    PRES.peers = ch.peers; await resolverNomes(ch.peers.map((x) => x.by));
+    const kq = PRES.peers.map((x) => (x.by || x.peer) + (x.isMe ? '*' : '')).sort().join(); if (kq !== PRES.chaveQuem) { PRES.chaveQuem = kq; renderQuem(); }
+    renderCursores();
+    const kv = S.bench && S.bench.sel ? vendoMud(S.bench.sel) : ''; if (kv !== PRES.chaveVendo) { PRES.chaveVendo = kv; if (S.bench) renderBench(); }
+  }, () => { PRES.peers = []; renderQuem(); renderCursores(); });
+  publicaPresenca(null);
+}
+async function resolverNomes(ids) { const novos = [...new Set(ids.filter((x) => x && !S.prof[x]))]; if (!novos.length || !S.user) return; try { Object.assign(S.prof, await S.user.profiles(novos)); } catch (e) {} }
+async function conectar() {
+  if (!window.claude || !window.claude.use) return;
+  const [db, user, comments, downloads, room] = await Promise.all(['db', 'user', 'comments', 'downloads', 'room'].map((n) => window.claude.use(n).catch(() => null)));
+  S.user = user; S.comments = comments; S.downloads = downloads;
+  if (user) { try { const me = await user.me(); S.me = me.id; S.owner = !!me.isOwner; S.editor = !!me.canEdit; S.grava = await user.can('data.write'); } catch (e) {} }
+  if (db) {
+    S.db = db; const refaz = async (ids) => { await resolverNomes(ids); renderAll(); };
+    db.doc('plano/estado').onSnapshot((s) => { S.estado = s.exists ? s.data() : null; refaz([S.estado && S.estado.by]); });
+    db.doc('config/exibicao').onSnapshot((s) => { S.cfg = s.exists ? s.data() : null; renderAll(); });
+    db.collection('historico').orderBy('at', 'desc').limit(50).onSnapshot((q) => { S.hist = q.docs.map((d) => d.data()); refaz(S.hist.map((h) => h.by)); });
+    db.collection('pendencias').onSnapshot((q) => { S.resp = Object.fromEntries(q.docs.map((d) => [d.id, d.data()])); refaz(Object.values(S.resp).map((r) => r.by)); });
+    db.collection('fases').onSnapshot((q) => { S.fasesOv = Object.fromEntries(q.docs.map((d) => [d.id, d.data()])); renderAll(); });
+    db.collection('execucao').onSnapshot((q) => { S.exec = Object.fromEntries(q.docs.map((d) => [d.id, d.data()])); renderAll(); }, () => {});
+    db.collection('specs').onSnapshot((q) => { S.specDb = Object.fromEntries(q.docs.map((d) => [d.id, d.data()])); renderAll(); }, () => {});
+    db.doc('config/orquestracao').onSnapshot((s) => { S.orq = s.exists ? s.data() : null; renderAll(); }, () => {});
+    db.collection('notas').orderBy('at', 'asc').onSnapshot((q) => { S.notas = q.docs.map((d) => d.data()); refaz(S.notas.map((n) => n.by)); });
+    db.collection('documentos').orderBy('at', 'desc').onSnapshot((q) => { S.docs = q.docs.map((d) => d.data()); refaz(S.docs.map((d) => d.by)); });
+    db.collection('videos').orderBy('at', 'desc').onSnapshot((q) => { S.videos = q.docs.map((d) => d.data()); refaz(S.videos.map((v) => v.by)); });
+    if (interno()) db.collection('auditoria').orderBy('at', 'desc').limit(50).onSnapshot((q) => { S.aud = q.docs.map((d) => d.data()); renderAll(); }, () => {});
+    if (interno()) db.collection('horas').orderBy('data', 'desc').onSnapshot((q) => { S.horas = q.docs.map((d) => d.data()); S.horasCarregadas = true; renderAll(); }, () => {});
+  }
+  if (room) ligarPresenca(room);
+  renderAll();
+}
+fetch('plano.json').then((r) => r.json()).then((p) => {
+  S.plano = p; document.title = tituloPlano(p); renderAll(); revelar(); if (obs) for (const [k] of SECOES) obs.observe(document.getElementById(k));
+  const h = (location.hash || '').slice(1); const k = h.slice(0, 2), id = h.slice(2);
+  if (k === 'm-' && S.plano.mudancas.some((m) => m.id === id)) abrirBench(S.plano.mudancas.find((m) => m.id === id).sim, id);
+  else if ((k === 'd-' || k === 'p-') && id) irItem(k[0], id);
+  else if (h) { const el = document.getElementById(h); if (el) el.scrollIntoView(); }
+  conectar();
+}).catch(() => { $('#hero').innerHTML = '<p class="kicker">Planejamento</p><h1>Não foi possível carregar o plano.json</h1>'; });
+</script>
